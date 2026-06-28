@@ -18,6 +18,7 @@ export class WorldbookStore {
   }
 
   matchByKeywords(keywords: string[], scope?: string): WorldbookEntry[] {
+    // Fetch all entries matching any keyword (OR logic initially)
     let query = 'SELECT * FROM worldbook_entries WHERE ';
     const conditions: string[] = [];
     const params: string[] = [];
@@ -36,7 +37,17 @@ export class WorldbookStore {
     query += ' ORDER BY priority DESC';
 
     const rows = this.db.prepare(query).all(...params) as Record<string, unknown>[];
-    const entries = rows.map(r => this.rowToEntry(r));
+    let entries = rows.map(r => this.rowToEntry(r));
+
+    // For 'all' mode entries, require every keyword to match (AND logic)
+    entries = entries.filter(e => {
+      if (e.trigger_mode !== 'all') return true;
+      // All keywords must appear in the trigger_keys string
+      return keywords.every(k => e.trigger_keys.toLowerCase().includes(k.toLowerCase()));
+    });
+
+    // For 'regex' mode entries, trigger_keys is a regex pattern — currently unsupported, skip
+    entries = entries.filter(e => e.trigger_mode !== 'regex');
 
     // Filter out items still on cooldown
     const now = new Date();
