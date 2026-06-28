@@ -1,11 +1,12 @@
 // src/memory/PromptAssembler.ts
-// Minimal stub for Task 5.2; will be replaced by full implementation in Task 6.1.
 import type { ProfileStore } from './stores/ProfileStore';
 import type { PersonaStore } from './stores/PersonaStore';
 import type { ConversationStore } from './stores/ConversationStore';
 import type { KnowledgeStore } from './stores/KnowledgeStore';
 import type { WorldbookStore } from './stores/WorldbookStore';
 import type { CodeContextStore } from './stores/CodeContextStore';
+import type { SearchResult, WorldbookEntry } from './types';
+import { TokenBudget } from './TokenBudget';
 
 export class PromptAssembler {
   constructor(
@@ -17,67 +18,122 @@ export class PromptAssembler {
     private codeContextStore: CodeContextStore,
   ) {}
 
-  async assemble(mode: 'chat' | 'code'): Promise<string> {
+  async assemble(mode: 'chat' | 'code', extraRetrieved: SearchResult[] = [], worldbookTriggers: WorldbookEntry[] = []): Promise<string> {
+    if (mode === 'chat') {
+      return this.assembleChat(extraRetrieved, worldbookTriggers);
+    } else {
+      return this.assembleCode(extraRetrieved, worldbookTriggers);
+    }
+  }
+
+  private async assembleChat(retrieved: SearchResult[], triggers: WorldbookEntry[]): Promise<string> {
     const persona = this.personaStore.get();
     const profile = this.profileStore.get();
+    const recentConvs = this.conversationStore.getRecent(3);
+    const budget = new TokenBudget(3200);
 
-    if (mode === 'chat') {
-      return this.assembleChat(persona.name, profile);
-    }
+    const blocks: string[] = [];
 
-    return this.assembleCode(profile);
-  }
+    // Persona block
+    const tone = JSON.parse(persona.tone);
+    const speechStyle = JSON.parse(persona.speech_style);
+    const emotionalRange = JSON.parse(persona.emotional_range);
+    blocks.push(`[角色设定]
+你是${persona.name}。
+语气: 形式度=${tone.formality}, 温暖度=${tone.warmth}, 幽默感=${tone.humor}, 直接程度=${tone.directness}
+说话风格: 句子长度=${speechStyle.sentence_length}, 表情使用=${speechStyle.emoji_usage}, 代码倾向=${speechStyle.code_heavy}
+情感表达: 表现力=${emotionalRange.expressiveness}, 共情=${emotionalRange.empathy}, playful=${emotionalRange.playfulness}`);
 
-  private assembleChat(personaName: string, profile: { basics: string; preferences: string; facts: string }): string {
-    const parts: string[] = [
-      `你是${personaName}，一个温柔贴心的AI助手。你总是用中文回应用户，语气亲切自然，善于倾听并给予温暖的反馈。`,
-      '请根据以下用户信息来调整你的回应方式：',
-    ];
-
-    const basics = JSON.parse(profile.basics || '{}') as Record<string, unknown>;
+    // User profile block
+    const basics = JSON.parse(profile.basics);
+    const prefs = JSON.parse(profile.preferences);
     if (Object.keys(basics).length > 0) {
-      parts.push(`用户基本信息：${JSON.stringify(basics, null, 2)}`);
+      blocks.push(`[关于你]
+${JSON.stringify(basics, null, 2)}`);
     }
-
-    const facts = JSON.parse(profile.facts || '[]') as Array<{ fact: string }>;
-    if (facts.length > 0) {
-      const factList = facts.map(f => f.fact).join('；');
-      parts.push(`关于用户已知事实：${factList}`);
-    }
-
-    const prefs = JSON.parse(profile.preferences || '{}') as Record<string, unknown>;
     if (Object.keys(prefs).length > 0) {
-      parts.push(`用户偏好：${JSON.stringify(prefs, null, 2)}`);
+      blocks.push(`[你的偏好]
+${JSON.stringify(prefs, null, 2)}`);
     }
 
-    return parts.join('\n\n');
+    // Recent conversations
+    if (recentConvs.length > 0) {
+      blocks.push(`[最近对话]
+${recentConvs.map(c => `- ${c.summary}`).join('\n')}`);
+    }
+
+    // Retrieved memories
+    if (retrieved.length > 0) {
+      blocks.push(`[相关记忆]
+${retrieved.map(r => `- ${r.text}`).join('\n')}`);
+    }
+
+    // Worldbook triggers
+    if (triggers.length > 0) {
+      blocks.push(`[情境提示]
+${triggers.map(w => w.content).join('\n')}`);
+    }
+
+    return blocks.join('\n\n');
   }
 
-  private assembleCode(profile: { basics: string; preferences: string }): string {
-    const parts: string[] = [
-      '你是一个AI代码助手。以下是与当前编程任务相关的上下文信息：',
-    ];
-
-    const basics = JSON.parse(profile.basics || '{}') as Record<string, unknown>;
-    if (basics.occupation) {
-      parts.push(`用户职业：${basics.occupation}`);
-    }
-
-    const prefs = JSON.parse(profile.preferences || '{}') as Record<string, unknown>;
-    if (prefs.code_languages && Array.isArray(prefs.code_languages)) {
-      parts.push(`用户常用编程语言：${(prefs.code_languages as string[]).join(', ')}`);
-    }
-
+  private async assembleCode(retrieved: SearchResult[], triggers: WorldbookEntry[]): Promise<string> {
+    const persona = this.personaStore.get();
+    const profile = this.profileStore.get();
     const codeCtx = this.codeContextStore.getActive();
-    if (codeCtx) {
-      parts.push(`当前项目：${codeCtx.project_name}`);
-      parts.push(`项目路径：${codeCtx.project_path}`);
-      const techStack = JSON.parse(codeCtx.tech_stack || '{}') as Record<string, unknown>;
-      if (Object.keys(techStack).length > 0) {
-        parts.push(`技术栈：${JSON.stringify(techStack, null, 2)}`);
-      }
+    const budget = new TokenBudget(2450);
+
+    const blocks: string[] = [];
+
+    // Compressed persona — only key tone dimensions for code mode
+    const tone = JSON.parse(persona.tone);
+    blocks.push(`[角色设定]
+${persona.name} 编程助手模式。语气: ${tone.formality < 0 ? '随意' : '正式'}，直接程度: ${tone.directness > 0 ? '直接' : '委婉'}`);
+
+    // Filtered profile — technical fields only (occupation, experience, code_languages, code_style, comment_style)
+    const basics = JSON.parse(profile.basics);
+    const prefs = JSON.parse(profile.preferences);
+    const techProfile: string[] = [];
+    if (basics.occupation) techProfile.push(`角色: ${basics.occupation}`);
+    if (basics.experience) techProfile.push(`经验: ${basics.experience}`);
+    if (prefs.code_languages) techProfile.push(`技术栈: ${JSON.stringify(prefs.code_languages)}`);
+    if (prefs.code_style) techProfile.push(`代码风格: ${prefs.code_style}`);
+    if (prefs.comment_style) techProfile.push(`注释: ${prefs.comment_style}`);
+    if (techProfile.length > 0) {
+      blocks.push(`[编程用户画像]
+${techProfile.join('\n')}`);
     }
 
-    return parts.join('\n\n');
+    // Code-specific preferences (duplicate prevention: these already appear in techProfile above)
+    if (prefs.code_style || prefs.comment_style) {
+      blocks.push(`[编码偏好]
+- 代码风格: ${prefs.code_style || '未指定'}
+- 注释: ${prefs.comment_style || '未指定'}`);
+    }
+
+    // Project context
+    if (codeCtx) {
+      const tech = JSON.parse(codeCtx.tech_stack);
+      blocks.push(`[当前项目]
+- 项目: ${codeCtx.project_name}
+- 技术栈: ${JSON.stringify(tech)}
+- 架构: ${codeCtx.architecture_notes}
+- 最近: ${codeCtx.recent_changes}`);
+    }
+
+    // Worldbook triggers (code scope only)
+    const codeTriggers = triggers.filter(w => w.scope === 'code' || w.scope === 'both');
+    if (codeTriggers.length > 0) {
+      blocks.push(`[情境提示]
+${codeTriggers.map(w => w.content).join('\n')}`);
+    }
+
+    // Retrieved knowledge
+    if (retrieved.length > 0) {
+      blocks.push(`[相关知识]
+${retrieved.map(r => `- ${r.text}`).join('\n')}`);
+    }
+
+    return blocks.join('\n\n');
   }
 }
