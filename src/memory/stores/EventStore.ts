@@ -40,6 +40,13 @@ export class EventStore {
     ).run(flag, id);
   }
 
+  getBySession(sessionId: string): MemoryEvent[] {
+    const rows = this.db.prepare(
+      'SELECT * FROM events WHERE session_id = ? ORDER BY created_at ASC'
+    ).all(sessionId) as Record<string, unknown>[];
+    return rows.map(r => this.rowToEvent(r));
+  }
+
   countBySession(sessionId: string): number {
     const row = this.db.prepare(
       'SELECT COUNT(*) as count FROM events WHERE session_id = ?'

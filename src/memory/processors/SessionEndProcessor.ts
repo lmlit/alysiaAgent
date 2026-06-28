@@ -98,31 +98,7 @@ export class SessionEndProcessor {
   }
 
   private getSessionEvents(sessionId: string): MemoryEvent[] {
-    // Since EventStore doesn't expose getBySession, we fetch a large batch
-    // of unprocessed events from the DB directly.
-    // For integration we query all events with this session_id via raw DB.
-    // But we only have access through the store. Let's use the database
-    // through the event store's existing methods.
-    // Actually EventStore only has getUnprocessed(limit). We'll create a helper
-    // using the fact that we can get events. But we need all events for the session.
-    // Let's use the db directly from the store — actually we can't access private db.
-    //
-    // Instead, we'll batch-fetch unprocessed events and filter by session.
-    // For a complete solution, this could be optimized with a direct DB query,
-    // but since EventStore doesn't expose it, we collect via batch.
-    // In practice, the EventStore should have a getBySession method.
-    // For now, we'll collect unprocessed events.
-    const allEvents: MemoryEvent[] = [];
-    let offset = 0;
-    const batchSize = 100;
-    let batch = this.eventStore.getUnprocessed(batchSize);
-    while (batch.length > 0) {
-      allEvents.push(...batch.filter(e => e.session_id === sessionId));
-      if (batch.length < batchSize) break;
-      offset += batchSize;
-      batch = this.eventStore.getUnprocessed(batchSize);
-    }
-    return allEvents;
+    return this.eventStore.getBySession(sessionId);
   }
 
   private async generateSummary(
