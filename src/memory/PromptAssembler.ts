@@ -46,21 +46,25 @@ export class PromptAssembler {
     budget.reserve(personaBlock);
     blocks.push(personaBlock);
 
-    // User profile block
-    const basics = JSON.parse(profile.basics);
-    const prefs = JSON.parse(profile.preferences);
-    if (Object.keys(basics).length > 0) {
-      const basicsBlock = `[关于你]\n${JSON.stringify(basics, null, 2)}`;
-      if (budget.canFit(basicsBlock)) {
-        budget.reserve(basicsBlock);
-        blocks.push(basicsBlock);
+    // User profile — handles both JSON (manual input) and plain text (LLM summary from Cron)
+    if (profile.basics && profile.basics !== '{}') {
+      const basicsText = this.parseOrPlain(profile.basics);
+      if (basicsText) {
+        const basicsBlock = `[关于你]\n${basicsText}`;
+        if (budget.canFit(basicsBlock)) {
+          budget.reserve(basicsBlock);
+          blocks.push(basicsBlock);
+        }
       }
     }
-    if (Object.keys(prefs).length > 0) {
-      const prefsBlock = `[你的偏好]\n${JSON.stringify(prefs, null, 2)}`;
-      if (budget.canFit(prefsBlock)) {
-        budget.reserve(prefsBlock);
-        blocks.push(prefsBlock);
+    if (profile.preferences && profile.preferences !== '{}') {
+      const prefsText = this.parseOrPlain(profile.preferences);
+      if (prefsText) {
+        const prefsBlock = `[你的偏好]\n${prefsText}`;
+        if (budget.canFit(prefsBlock)) {
+          budget.reserve(prefsBlock);
+          blocks.push(prefsBlock);
+        }
       }
     }
 
@@ -109,21 +113,33 @@ ${persona.name} 编程助手模式。语气: ${tone.formality < 0 ? '随意' : '
     budget.reserve(personaBlock);
     blocks.push(personaBlock);
 
-    // Filtered profile — technical fields only (occupation, experience, code_languages, code_style, comment_style)
-    // Code preferences are included here; no separate [编码偏好] block to avoid duplication.
-    const basics = JSON.parse(profile.basics);
-    const prefs = JSON.parse(profile.preferences);
-    const techProfile: string[] = [];
-    if (basics.occupation) techProfile.push(`角色: ${basics.occupation}`);
-    if (basics.experience) techProfile.push(`经验: ${basics.experience}`);
-    if (prefs.code_languages) techProfile.push(`技术栈: ${JSON.stringify(prefs.code_languages)}`);
-    if (prefs.code_style) techProfile.push(`代码风格: ${prefs.code_style}`);
-    if (prefs.comment_style) techProfile.push(`注释: ${prefs.comment_style}`);
-    if (techProfile.length > 0) {
-      const techBlock = `[编程用户画像]\n${techProfile.join('\n')}`;
-      if (budget.canFit(techBlock)) {
-        budget.reserve(techBlock);
-        blocks.push(techBlock);
+    // Filtered profile — technical fields only.
+    // Handles both JSON (structured) and plain text (LLM summary from Cron deep rewrite).
+    try {
+      const basics = JSON.parse(profile.basics);
+      const prefs = JSON.parse(profile.preferences);
+      const techProfile: string[] = [];
+      if (basics.occupation) techProfile.push(`角色: ${basics.occupation}`);
+      if (basics.experience) techProfile.push(`经验: ${basics.experience}`);
+      if (prefs.code_languages) techProfile.push(`技术栈: ${JSON.stringify(prefs.code_languages)}`);
+      if (prefs.code_style) techProfile.push(`代码风格: ${prefs.code_style}`);
+      if (prefs.comment_style) techProfile.push(`注释: ${prefs.comment_style}`);
+      if (techProfile.length > 0) {
+        const techBlock = `[编程用户画像]\n${techProfile.join('\n')}`;
+        if (budget.canFit(techBlock)) {
+          budget.reserve(techBlock);
+          blocks.push(techBlock);
+        }
+      }
+    } catch {
+      // basics is not JSON (LLM summary) — include a short snippet as context
+      if (profile.basics && profile.basics !== '{}') {
+        const snippet = profile.basics.slice(0, 200);
+        const techBlock = `[编程用户画像]\n${snippet}`;
+        if (budget.canFit(techBlock)) {
+          budget.reserve(techBlock);
+          blocks.push(techBlock);
+        }
       }
     }
 
@@ -161,5 +177,19 @@ ${persona.name} 编程助手模式。语气: ${tone.formality < 0 ? '随意' : '
     }
 
     return blocks.join('\n\n');
+  }
+
+  /** Parse JSON if possible, else return the text as-is (LLM summary from Cron) */
+  private parseOrPlain(raw: string): string {
+    try {
+      const parsed = JSON.parse(raw);
+      if (typeof parsed === 'object' && parsed !== null && Object.keys(parsed).length > 0) {
+        return JSON.stringify(parsed, null, 2);
+      }
+      return '';
+    } catch {
+      // Not JSON — use as plain text (LLM-generated natural language summary)
+      return raw;
+    }
   }
 }
