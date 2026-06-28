@@ -105,7 +105,11 @@ export class MemoryManager {
         .sort((a, b) => b.score - a.score)
         .slice(0, req.limit);
     } catch {
-      // Fallback: no vector retrieval
+      // Fallback: SQLite LIKE search when embed API fails
+      retrieved = [
+        ...this.conversationStore.searchByText(req.query, req.limit),
+        ...this.knowledgeStore.searchByText(req.query, Math.min(3, req.limit)),
+      ].sort((a, b) => b.score - a.score).slice(0, req.limit);
     }
 
     return {

@@ -40,6 +40,18 @@ export class KnowledgeStore {
     return this.vectorStore.search(vector, topK);
   }
 
+  searchByText(query: string, limit: number): SearchResult[] {
+    const rows = this.db.prepare(
+      'SELECT id, title, source, status FROM knowledge_docs WHERE title LIKE ? AND status = \'active\' ORDER BY created_at DESC LIMIT ?'
+    ).all(`%${query}%`, limit) as Record<string, unknown>[];
+    return rows.map(r => ({
+      id: r.id as string,
+      score: 0.5,
+      text: r.title as string,
+      metadata: { source: r.source, status: r.status },
+    }));
+  }
+
   private rowToDoc(row: Record<string, unknown>): KnowledgeDoc {
     return {
       id: row.id as string,

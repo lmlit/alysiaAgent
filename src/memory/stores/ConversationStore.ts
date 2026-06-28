@@ -45,6 +45,18 @@ export class ConversationStore {
     return this.vectorStore.search(vector, topK);
   }
 
+  searchByText(query: string, limit: number): SearchResult[] {
+    const rows = this.db.prepare(
+      'SELECT id, summary, topics, session_id FROM conversations WHERE summary LIKE ? ORDER BY started_at DESC LIMIT ?'
+    ).all(`%${query}%`, limit) as Record<string, unknown>[];
+    return rows.map(r => ({
+      id: r.id as string,
+      score: 0.5,
+      text: r.summary as string,
+      metadata: { topics: r.topics, session_id: r.session_id },
+    }));
+  }
+
   private rowToConv(row: Record<string, unknown>): Conversation {
     return {
       id: row.id as string,
