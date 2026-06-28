@@ -95,4 +95,16 @@ export function initializeDatabase(db: Database.Database): void {
       updated_at      TEXT NOT NULL
     );
   `);
+
+  // Seed default singleton rows
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT OR IGNORE INTO user_profile (id, basics, preferences, facts, updated_at)
+    VALUES (1, '{}', '{}', '[]', ?)
+  `).run(now);
+
+  db.prepare(`
+    INSERT OR IGNORE INTO persona (id, name, tone, speech_style, emotional_range, adaptation_hints, updated_at)
+    VALUES (1, '昔涟', '{"formality":0,"warmth":0.2,"humor":0.1,"directness":0}', '{"sentence_length":0,"emoji_usage":0,"code_heavy":0}', '{"expressiveness":0.1,"empathy":0.3,"playfulness":0.1}', '[]', ?)
+  `).run(now);
 }

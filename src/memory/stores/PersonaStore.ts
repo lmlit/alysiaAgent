@@ -5,7 +5,16 @@ import type { Persona } from '../types';
 export class PersonaStore {
   constructor(private db: Database.Database) {}
 
+  private ensureRow(): void {
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      INSERT OR IGNORE INTO persona (id, name, tone, speech_style, emotional_range, adaptation_hints, updated_at)
+      VALUES (1, '昔涟', '{"formality":0,"warmth":0.2,"humor":0.1,"directness":0}', '{"sentence_length":0,"emoji_usage":0,"code_heavy":0}', '{"expressiveness":0.1,"empathy":0.3,"playfulness":0.1}', '[]', ?)
+    `).run(now);
+  }
+
   get(): Persona {
+    this.ensureRow();
     return this.db.prepare('SELECT * FROM persona WHERE id = 1').get() as Persona;
   }
 
