@@ -5,7 +5,9 @@ export class ProfileExtractor {
   constructor(private llm: ILLMService) {}
 
   async extract(events: MemoryEvent[]): Promise<ProfileFact[]> {
-    const userMessages = events
+    // Filter by importance threshold as specified in design: only process events with importance > 0.4
+    const significantEvents = events.filter(e => e.importance > 0.4);
+    const userMessages = significantEvents
       .filter(e => e.type === 'message')
       .map(e => `[${e.payload.role}]: ${e.payload.content}`)
       .join('\n');
