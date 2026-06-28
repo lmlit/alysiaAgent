@@ -84,4 +84,131 @@ describe('PersonaAdapter', () => {
     const tone = JSON.parse(persona.tone);
     expect(tone.formality).toBeGreaterThanOrEqual(-1);
   });
+
+  // ---- Safety rule #1: 24h stale regression ----
+
+  it('should regress stale params toward 0 after 24h', () => {
+    // Apply initial adjustment
+    adapter.apply({ param: 'tone.formality', delta: -0.08, reason: 'initial' });
+    let persona = store.get();
+    let tone = JSON.parse(persona.tone);
+    expect(tone.formality).toBeCloseTo(-0.08);
+
+    // Simulate 25h passing
+    const staleTime = Date.now() - 25 * 60 * 60 * 1000;
+    (adapter as any).lastAdjustmentTime.set('tone.formality', staleTime);
+
+    // Apply a different param — triggers regressIfStale first
+    adapter.apply({ param: 'tone.warmth', delta: 0.05, reason: 'other' });
+
+    // formality regressed 0.05 toward 0: -0.08 + 0.05 = -0.03
+    persona = store.get();
+    tone = JSON.parse(persona.tone);
+    expect(tone.formality).toBeCloseTo(-0.03);
+  });
+
+  it('should not regress params adjusted within 24h', () => {
+    adapter.apply({ param: 'tone.formality', delta: -0.08, reason: 'initial' });
+    let persona = store.get();
+    let tone = JSON.parse(persona.tone);
+    expect(tone.formality).toBeCloseTo(-0.08);
+
+    // Apply another param immediately (within 24h)
+    adapter.apply({ param: 'tone.warmth', delta: 0.05, reason: 'other' });
+
+    // formality should be unchanged (not stale)
+    persona = store.get();
+    tone = JSON.parse(persona.tone);
+    expect(tone.formality).toBeCloseTo(-0.08);
+  });
+
+  it('should not overshoot zero during regression', () => {
+    // Set a small value that would overshoot if we naively subtracted 0.05
+    adapter.apply({ param: 'tone.formality', delta: -0.02, reason: 'tiny' });
+    const staleTime = Date.now() - 25 * 60 * 60 * 1000;
+    (adapter as any).lastAdjustmentTime.set('tone.formality', staleTime);
+
+    adapter.apply({ param: 'tone.warmth', delta: 0.05, reason: 'other' });
+
+    const persona = store.get();
+    const tone = JSON.parse(persona.tone);
+    expect(tone.formality).toBe(0); // exactly 0, not -0.03 or positive
+  });
+
+  // ---- Safety rule #2: Explicit directive bypass ----
+
+  it('should bypass delta clamp when explicit flag is set', () => {
+    // Delta of -0.5 exceeds MAX_DELTA (0.1), but explicit bypasses clamp
+    adapter.apply({ param: 'tone.formality', delta: -0.5, reason: 'explicit', explicit: true });
+    const persona = store.get();
+    const tone = JSON.parse(persona.tone);
+    expect(tone.formality).toBe(-0.5); // full delta applied, only [-1,1] clamp applies
+  });
+
+  it('should bypass cooldown when explicit flag is set', () => {
+    // First adjustment starts cooldown
+    adapter.apply({ param: 'tone.formality', delta: -0.08, reason: 'first' });
+    // Second adjustment (same param) bypasses cooldown when explicit
+    const result = adapter.apply({ param: 'tone.formality', delta: -0.05, reason: 'explicit', explicit: true });
+    expect(result).toBe(true);
+    const persona = store.get();
+    const tone = JSON.parse(persona.tone);
+    expect(tone.formality).toBeCloseTo(-0.13); // both applied
+  });
+
+  it('should bypass limits via options.bypassLimits', () => {
+    const result = adapter.apply(
+      { param: 'tone.formality', delta: -0.5, reason: 'explicit' },
+      { bypassLimits: true },
+    );
+    expect(result).toBe(true);
+    const persona = store.get();
+    const tone = JSON.parse(persona.tone);
+    expect(tone.formality).toBe(-0.5);
+  });
+
+  it('should still clamp explicit adjustments to [-1, 1]', () => {
+    adapter.apply({ param: 'tone.formality', delta: -5, reason: 'way too much', explicit: true });
+    const persona = store.get();
+    const tone = JSON.parse(persona.tone);
+    expect(tone.formality).toBe(-1);
+  });
+
+  it('should not reset cooldown timer on explicit bypass', () => {
+    // Normal apply (sets cooldown timer)
+    adapter.apply({ param: 'tone.formality', delta: -0.08, reason: 'normal' });
+    // Explicit bypass (should NOT reset timer)
+    adapter.apply({ param: 'tone.formality', delta: 0.05, reason: 'explicit', explicit: true });
+    // Next normal apply should still be in cooldown (original timer untouched)
+    const result = adapter.apply({ param: 'tone.formality', delta: -0.03, reason: 'should be blocked' });
+    expect(result).toBe(false);
+  });
+
+  it('should detect explicit patterns in processSignal', async () => {
+    const event = makeEvent('不要叫我老师，叫我小明');
+    const adjustment = await adapter.processSignal(event);
+    expect(adjustment).not.toBeNull();
+    expect(adjustment!.explicit).toBe(true);
+  });
+
+  it('should not flag regular signals as explicit', async () => {
+    const event = makeEvent('你说话太正式了，放松一点');
+    const adjustment = await adapter.processSignal(event);
+    expect(adjustment).not.toBeNull();
+    expect(adjustment!.explicit).toBeUndefined();
+  });
+
+  it('should process explicit signal and apply with bypass', async () => {
+    const event = makeEvent('不要叫我老师，叫我小明');
+    const adjustment = await adapter.processSignal(event);
+    expect(adjustment).not.toBeNull();
+
+    // Apply once (normal)
+    const r1 = adapter.apply(adjustment!);
+    expect(r1).toBe(true);
+
+    // Apply again immediately — should still succeed because explicit bypasses cooldown
+    const r2 = adapter.apply(adjustment!);
+    expect(r2).toBe(true);
+  });
 });

@@ -115,6 +115,7 @@ export interface PersonaAdjustment {
   param: string;     // e.g. 'tone.formality'
   delta: number;     // e.g. -0.15
   reason: string;
+  explicit?: boolean; // true = bypass cooldown/delta limits (user explicit directive)
 }
 
 export interface ProfileFact {
