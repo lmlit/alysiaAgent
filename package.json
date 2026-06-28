@@ -1,0 +1,22 @@
+{
+  "name": "alysia-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.11.1",
+    "uuid": "^14.0.1",
+    "vectordb": "^0.21.2"
+  },
+  "devDependencies": {
+    "@rolldown/binding-win32-x64-msvc": "^1.1.3",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/uuid": "^11.0.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.9"
+  }
+}
