@@ -17,11 +17,11 @@ export class OpenAILLMService {
       { role: 'user', content: userPrompt },
     ];
 
-    const response = await fetch(`${this.config.baseUrl}/chat/completions`, {
+    const response = await fetch(`${this.config.chatBaseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.config.apiKey}`,
+        'Authorization': `Bearer ${this.config.chatApiKey}`,
       },
       body: JSON.stringify({
         model: this.config.chatModel,

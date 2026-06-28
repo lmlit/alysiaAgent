@@ -14,11 +14,11 @@ export class OpenAIEmbedService {
   }
 
   async embed(text: string): Promise<number[]> {
-    const response = await fetch(`${this.config.baseUrl}/embeddings`, {
+    const response = await fetch(`${this.config.embedBaseUrl}/embeddings`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.config.apiKey}`,
+        'Authorization': `Bearer ${this.config.embedApiKey}`,
       },
       body: JSON.stringify({
         model: this.config.embedModel,

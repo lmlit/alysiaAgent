@@ -5,11 +5,13 @@ import type { ServiceConfig } from '../../../src/memory/services/config';
 
 describe('OpenAILLMService', () => {
   const config: ServiceConfig = {
-    baseUrl: 'https://test-api.example.com/v1',
-    apiKey: 'test-key',
+    chatBaseUrl: 'https://test-api.example.com/v1',
+    chatApiKey: 'test-key',
+    chatModel: 'test-chat-model',
+    embedBaseUrl: 'https://test-embed.example.com/v1',
+    embedApiKey: 'test-embed-key',
     embedModel: 'test-embed-model',
     embedDimension: 1536,
-    chatModel: 'test-chat-model',
   };
 
   let service: OpenAILLMService;

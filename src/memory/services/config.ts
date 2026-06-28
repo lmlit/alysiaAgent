@@ -1,21 +1,39 @@
 // src/memory/services/config.ts
 // OpenAI-compatible API configuration.
-// All values can be set via environment variables — switch providers by changing the URL and key.
+// Supports dual-provider: chat + embed can use different base URLs/keys/models.
 
 export interface ServiceConfig {
-  baseUrl: string;       // OpenAI-compatible API base URL (e.g. https://api.deepseek.com/v1)
-  apiKey: string;
-  embedModel: string;    // embedding model name (e.g. text-embedding-3-small, deepseek-embed)
-  embedDimension: number; // embedding vector dimension
-  chatModel: string;     // chat model name (e.g. gpt-4o-mini, deepseek-chat)
+  // Chat / LLM
+  chatBaseUrl: string;
+  chatApiKey: string;
+  chatModel: string;
+  // Embedding
+  embedBaseUrl: string;
+  embedApiKey: string;
+  embedModel: string;
+  embedDimension: number;
+}
+
+/** Load chat config — defaults to OPENAI_BASE_URL/OPENAI_API_KEY, falls back to EMBED_* if not set */
+export function loadChatConfig(overrides?: Partial<ServiceConfig>): ServiceConfig {
+  const full = loadConfig(overrides);
+  return full;
+}
+
+/** Load embed config — uses EMBED_BASE_URL/EMBED_API_KEY if set, otherwise falls back to chat provider */
+export function loadEmbedConfig(overrides?: Partial<ServiceConfig>): ServiceConfig {
+  const full = loadConfig(overrides);
+  return full;
 }
 
 export function loadConfig(overrides?: Partial<ServiceConfig>): ServiceConfig {
   return {
-    baseUrl: overrides?.baseUrl || process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
-    apiKey: overrides?.apiKey || process.env.OPENAI_API_KEY || '',
+    chatBaseUrl: overrides?.chatBaseUrl || process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
+    chatApiKey: overrides?.chatApiKey || process.env.OPENAI_API_KEY || '',
+    chatModel: overrides?.chatModel || process.env.CHAT_MODEL || 'gpt-4o-mini',
+    embedBaseUrl: overrides?.embedBaseUrl || process.env.EMBED_BASE_URL || process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
+    embedApiKey: overrides?.embedApiKey || process.env.EMBED_API_KEY || process.env.OPENAI_API_KEY || '',
     embedModel: overrides?.embedModel || process.env.EMBED_MODEL || 'text-embedding-3-small',
     embedDimension: overrides?.embedDimension || Number(process.env.EMBED_DIMENSION) || 1536,
-    chatModel: overrides?.chatModel || process.env.CHAT_MODEL || 'gpt-4o-mini',
   };
 }

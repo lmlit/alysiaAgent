@@ -1,45 +1,37 @@
-// E2E test with real DeepSeek API (LLM only; embeddings not supported by DeepSeek)
+// E2E test with real APIs: DeepSeek (chat) + Zhipu (embeddings)
 import { describe, it, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { MemoryManager } from '../../../src/memory/MemoryManager';
 import { initializeDatabase } from '../../../src/memory/database';
 import { OpenAILLMService } from '../../../src/memory/services/OpenAILLMService';
+import { OpenAIEmbedService } from '../../../src/memory/services/OpenAIEmbedService';
 import { loadConfig } from '../../../src/memory/services/config';
 import type { MemoryEvent } from '../../../src/memory/types';
-import type { IEmbedService } from '../../../src/memory/interfaces/IEmbedService';
 
 const config = loadConfig();
 
-// Stub embed service — DeepSeek doesn't support /v1/embeddings
-const stubEmbed: IEmbedService = {
-  embed: async () => {
-    throw new Error('Embedding not available');
-  },
-  dimension: () => 0,
-};
-
-describe('Real API — DeepSeek LLM', () => {
+describe('Real API — DeepSeek Chat + Zhipu Embed', () => {
   let db: Database.Database;
   let manager: MemoryManager;
-  let llmService: OpenAILLMService;
 
   beforeEach(() => {
-    if (!config.apiKey) {
-      throw new Error('OPENAI_API_KEY not set');
-    }
+    if (!config.chatApiKey) throw new Error('OPENAI_API_KEY not set');
+    if (!config.embedApiKey) throw new Error('EMBED_API_KEY not set');
 
     db = new Database(':memory:');
     initializeDatabase(db);
 
-    llmService = new OpenAILLMService(config);
-    manager = new MemoryManager(db, null, stubEmbed, llmService);
+    const llmService = new OpenAILLMService(config);
+    const embedService = new OpenAIEmbedService(config);
+
+    manager = new MemoryManager(db, null, embedService, llmService);
   });
 
   afterEach(() => db.close());
 
-  it('should use real LLM for session summary and profile extraction', async () => {
-    console.log(`\n🔑 API:  ${config.baseUrl}`);
-    console.log(`💬 Model: ${config.chatModel}\n`);
+  it('full pipeline: embed + chat', async () => {
+    console.log(`\n💬 Chat:  ${config.chatBaseUrl} (${config.chatModel})`);
+    console.log(`📐 Embed: ${config.embedBaseUrl} (${config.embedModel}, ${config.embedDimension}d)\n`);
 
     const sessionId = 'sess-real-1';
     const events: MemoryEvent[] = [
@@ -66,12 +58,17 @@ describe('Real API — DeepSeek LLM', () => {
     await new Promise(r => setTimeout(r, 1000));
     console.log('✅ Events stored\n');
 
-    // Phase 2: Session end — LLM summary generation + profile extraction
+    // Phase 2: Test embedding
+    console.log('📐 Testing embedding...');
+    const vec = await (manager as any).embedService.embed('TypeScript 后端开发');
+    console.log(`✅ Embedding: ${vec.length} dimensions\n`);
+
+    // Phase 3: Session end — LLM summary generation + profile extraction
     console.log('📝 Session end (LLM summary + profile extraction)...');
     await manager.onSessionEnd(sessionId);
     console.log('✅ Session complete\n');
 
-    // Phase 3: Check generated summary
+    // Phase 4: Check generated summary
     const conversations = db.prepare('SELECT * FROM conversations WHERE session_id = ?').all(sessionId) as Array<Record<string, unknown>>;
     for (const c of conversations) {
       console.log('📋 Summary:');
