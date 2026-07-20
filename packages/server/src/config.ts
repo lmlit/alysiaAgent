@@ -1,6 +1,5 @@
 import { readFileSync } from 'fs';
 import { parse } from 'yaml';
-import { resolve } from 'path';
 
 export interface ServerConfig {
   bot: { name: string; ownerId: string };

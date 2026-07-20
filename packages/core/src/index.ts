@@ -15,7 +15,6 @@ import { createWebSearchTool } from './tools/web-search.js';
 import { createReminderTool, createListRemindersTool, createCancelReminderTool } from './tools/reminder.js';
 import { createSessionCommands } from './commands/session.js';
 import { createStatsCommand } from './commands/stats.js';
-import { AgentRunner } from './agent/runner.js';
 
 export interface AlysiaCoreOptions {
   dbPath: string;

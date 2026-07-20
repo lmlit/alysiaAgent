@@ -13,12 +13,12 @@ async function main() {
     embedConfig: config.embed,
   });
 
-  // Register platforms
+  // Start core first (initializes eventBus, scheduler, pipeline)
+  await core.start();
+
+  // Then register platforms
   const telegram = new TelegramAdapter(config.telegram, 'telegram-1');
   core.registerPlatform('telegram::private', core.scheduler);
-
-  // Start
-  await core.start();
   await telegram.setEventBus(core.eventBus);
   await telegram.run();
 
