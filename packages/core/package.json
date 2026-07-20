@@ -13,7 +13,8 @@
     "./eventbus": "./dist/eventbus/index.js",
     "./agent": "./dist/agent/index.js",
     "./provider": "./dist/provider/index.js",
-    "./tools": "./dist/tools/index.js"
+    "./tools": "./dist/tools/index.js",
+    "./commands": "./dist/commands/index.js"
   },
   "scripts": {
     "build": "tsc",

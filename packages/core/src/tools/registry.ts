@@ -1,11 +1,62 @@
-// 临时桩 — Task 10 将实现完整类型
-export interface ToolRegistry {
-  toToolSet(): ToolSet | undefined;
-  execute(name: string, args: Record<string, unknown>): Promise<unknown>;
+export interface ToolDefinition {
+  name: string;
+  description: string;
+  parameters: {
+    type: 'object';
+    properties: Record<string, { type: string; description: string; enum?: string[] }>;
+    required: string[];
+  };
+  handler: (args: Record<string, unknown>) => Promise<string>;
 }
 
-// 临时桩 — 供 Task 8 provider 使用
-export interface ToolSet {
-  tools: Array<Record<string, unknown>>;
-  toOpenAI(): Array<Record<string, unknown>>;
+export class ToolSet {
+  tools: ToolDefinition[] = [];
+
+  addTool(tool: ToolDefinition): void {
+    this.tools.push(tool);
+  }
+
+  getTool(name: string): ToolDefinition | undefined {
+    return this.tools.find(t => t.name === name);
+  }
+
+  names(): string[] {
+    return this.tools.map(t => t.name);
+  }
+
+  toOpenAI(): Array<{
+    type: 'function';
+    function: { name: string; description: string; parameters: object };
+  }> {
+    return this.tools.map(t => ({
+      type: 'function' as const,
+      function: {
+        name: t.name,
+        description: t.description,
+        parameters: t.parameters,
+      },
+    }));
+  }
+}
+
+export class ToolRegistry {
+  private tools: Map<string, ToolDefinition> = new Map();
+
+  register(tool: ToolDefinition): void {
+    this.tools.set(tool.name, tool);
+  }
+
+  async execute(name: string, args: Record<string, unknown>): Promise<string> {
+    const tool = this.tools.get(name);
+    if (!tool) throw new Error(`Tool not found: ${name}. Available: ${[...this.tools.keys()].join(', ')}`);
+    return tool.handler(args);
+  }
+
+  toToolSet(): ToolSet {
+    const set = new ToolSet();
+    for (const tool of this.tools.values()) {
+      set.addTool(tool);
+    }
+    return set;
+  }
 }
