@@ -27,9 +27,6 @@ importers:
       '@types/uuid':
         specifier: ^11.0.0
         version: 11.0.0
-      pnpm:
-        specifier: ^8.15.9
-        version: 8.15.9
       typescript:
         specifier: ^6.0.3
         version: 6.0.3
@@ -79,6 +76,9 @@ importers:
       telegraf:
         specifier: ^4.16.3
         version: 4.16.3
+      yaml:
+        specifier: ^2.7.0
+        version: 2.7.0
     devDependencies:
       tsx:
         specifier: ^4.0.0
@@ -1665,12 +1665,6 @@ packages:
       thread-stream: 4.2.0
     dev: false
 
-  /pnpm@8.15.9:
-    resolution: {integrity: sha512-SZQ0ydj90aJ5Tr9FUrOyXApjOrzuW7Fee13pDzL0e1E6ypjNXP0AHDHw20VLw4BO3M1XhQHkyik6aBYWa72fgQ==}
-    engines: {node: '>=16.14'}
-    hasBin: true
-    dev: true
-
   /postcss@8.5.20:
     resolution: {integrity: sha512-lW616l85ucIQL+FocMmL7pQFPqBmwejrCMg+iPxyImlrANNJG9NHq/RkyCZopDhd8C3LA03PHRJDjkbGu8vvug==}
     engines: {node: ^10 || ^12 || >=14}
@@ -2051,7 +2045,6 @@ packages:
 
   /vectordb@0.21.2(@apache-arrow/ts@14.0.2)(apache-arrow@14.0.2):
     resolution: {integrity: sha512-5tiwUq0jDtfIpcr7NY+kNCTecHCzSq0AqQtMzJphH7z6H6gfrw9t5/Aoy5/QnS0uAWIgqvCbE5qneQOFGxE+Og==}
-    cpu: [x64, arm64]
     os: [darwin, linux, win32]
     deprecated: Use @lancedb/lancedb instead.
     peerDependencies:
@@ -2217,4 +2210,10 @@ packages:
 
   /wrappy@1.0.2:
     resolution: {integrity: sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ==}
+    dev: false
+
+  /yaml@2.7.0:
+    resolution: {integrity: sha512-+hSoy/QHluxmC9kCIJyL/uyFmLmc+e5CFR5Wa+bpIhIj85LVb9ZH2nVnqrHoSvKogwODv0ClqZkmiSSaIH5LTA==}
+    engines: {node: '>= 14'}
+    hasBin: true
     dev: false
