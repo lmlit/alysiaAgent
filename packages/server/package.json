@@ -1,0 +1,20 @@
+{
+  "name": "@alysia/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/bootstrap.js",
+    "dev": "tsx src/bootstrap.ts"
+  },
+  "dependencies": {
+    "@alysia/core": "workspace:*",
+    "telegraf": "^4.16.3",
+    "fastify": "^5.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3",
+    "tsx": "^4.0.0"
+  }
+}
