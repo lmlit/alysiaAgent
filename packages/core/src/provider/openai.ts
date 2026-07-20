@@ -1,7 +1,7 @@
 import type { ProviderConfig, ProviderRequest, LLMResponse } from './types.js';
 
 export class OpenAIProvider {
-  constructor(private config: ProviderConfig) {}
+  constructor(public readonly config: ProviderConfig) {}
 
   async textChat(req: ProviderRequest): Promise<LLMResponse> {
     const messages = this.buildMessages(req);
