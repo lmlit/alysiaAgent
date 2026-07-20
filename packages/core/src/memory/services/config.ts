@@ -34,6 +34,6 @@ export function loadConfig(overrides?: Partial<ServiceConfig>): ServiceConfig {
     embedBaseUrl: overrides?.embedBaseUrl || process.env.EMBED_BASE_URL || process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
     embedApiKey: overrides?.embedApiKey || process.env.EMBED_API_KEY || process.env.OPENAI_API_KEY || '',
     embedModel: overrides?.embedModel || process.env.EMBED_MODEL || 'text-embedding-3-small',
-    embedDimension: overrides?.embedDimension || Number(process.env.EMBED_DIMENSION) || 1536,
+    embedDimension: overrides?.embedDimension || Number(process.env.EMBED_DIMENSION) || 1024,
   };
 }
