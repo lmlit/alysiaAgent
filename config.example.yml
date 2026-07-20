@@ -1,0 +1,21 @@
+bot:
+  name: "昔涟"
+  ownerId: "YOUR_TELEGRAM_USER_ID"
+
+llm:
+  baseUrl: "https://api.deepseek.com/v1"
+  apiKey: "${DEEPSEEK_API_KEY}"
+  model: "deepseek-v4-flash"
+
+embed:
+  baseUrl: "https://open.bigmodel.cn/api/paas/v4"
+  apiKey: "${ZHIPU_API_KEY}"
+  model: "embedding-2"
+
+platforms:
+  telegram:
+    token: "${TELEGRAM_BOT_TOKEN}"
+
+server:
+  port: 6185
+  dataDir: "./data"

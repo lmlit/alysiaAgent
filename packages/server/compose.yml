@@ -1,0 +1,15 @@
+services:
+  alysia:
+    build:
+      context: ../..
+      dockerfile: packages/server/Dockerfile
+    container_name: alysia-server
+    restart: always
+    ports:
+      - "6185:6185"
+    environment:
+      - TZ=Asia/Shanghai
+      - ALYSIA_CONFIG=/app/config.yml
+    volumes:
+      - ./data:/app/data
+      - ./config.yml:/app/config.yml:ro
