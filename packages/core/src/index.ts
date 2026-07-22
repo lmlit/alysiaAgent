@@ -13,12 +13,15 @@ import { LLMAgentStage, getSessionStats } from './pipeline/stages/llm-agent.js';
 import { RespondStage } from './pipeline/stages/respond.js';
 import { createWebSearchTool } from './tools/web-search.js';
 import { createReminderTool, createListRemindersTool, createCancelReminderTool } from './tools/reminder.js';
+import { createShellExecTool } from './tools/shell.js';
+import { createWriteFileTool, createReadFileTool, createListFilesTool } from './tools/filesystem.js';
 import { createSessionCommands } from './commands/session.js';
 import { createStatsCommand } from './commands/stats.js';
 
 export interface AlysiaCoreOptions {
   dbPath: string;
   ownerId: string;
+  workspaceDir: string;
   llmConfig: {
     baseUrl: string;
     apiKey: string;
@@ -106,6 +109,11 @@ export class AlysiaCore {
     }));
     this.toolRegistry.register(createListRemindersTool());
     this.toolRegistry.register(createCancelReminderTool());
+    // CLI + filesystem tools (agent self-evolution)
+    this.toolRegistry.register(createShellExecTool(this.opts.workspaceDir));
+    this.toolRegistry.register(createWriteFileTool(this.opts.workspaceDir));
+    this.toolRegistry.register(createReadFileTool(this.opts.workspaceDir));
+    this.toolRegistry.register(createListFilesTool(this.opts.workspaceDir));
 
     // Commands
     this.commandRegistry = new CommandRegistry();

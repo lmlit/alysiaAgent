@@ -6,7 +6,7 @@ export interface ServerConfig {
   llm: { baseUrl: string; apiKey: string; model: string };
   embed: { baseUrl: string; apiKey: string; model: string };
   telegram: { token: string };
-  server: { port: number; dataDir: string };
+  server: { port: number; dataDir: string; workspaceDir: string };
 }
 
 export function loadConfig(path: string): ServerConfig {
@@ -30,6 +30,7 @@ export function loadConfig(path: string): ServerConfig {
     server: {
       port: data.server?.port ?? 6185,
       dataDir: data.server?.dataDir ?? './data',
+      workspaceDir: data.server?.workspaceDir ?? './data/workspace',
     },
   };
 }

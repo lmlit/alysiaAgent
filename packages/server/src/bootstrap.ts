@@ -9,6 +9,7 @@ async function main() {
   const core = new AlysiaCore({
     dbPath: `${config.server.dataDir}/alysia.db`,
     ownerId: config.bot.ownerId,
+    workspaceDir: config.server.workspaceDir,
     llmConfig: config.llm,
     embedConfig: config.embed,
   });
