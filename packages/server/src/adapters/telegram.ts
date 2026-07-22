@@ -108,7 +108,8 @@ export class TelegramAdapter implements Platform {
       sessionId: message.sessionId,
     });
 
-    // Override event.send to route through the platform
+    // Platform adapters MUST override event.send() to route through the platform's
+    // own send implementation. The base MessageEvent.send() throws by default.
     const origSend = event.send.bind(event);
     event.send = async (chain: MessageChain) => {
       await this.doSend(event.session, chain);

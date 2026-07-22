@@ -20,4 +20,12 @@ import type { MessageEvent } from '../platform/event.js';
 import type { ProviderManager } from '../provider/manager.js';
 import type { ToolRegistry } from '../tools/registry.js';
 import type { CommandRegistry } from '../commands/registry.js';
-import type { AlysiaConfig } from '../config/types.js';
+// Local config type for pipeline initialization
+interface AlysiaConfig {
+  bot: { name: string; ownerId: string };
+  llm: {
+    primary: { baseUrl: string; apiKey: string; model: string };
+    embedding: { baseUrl: string; apiKey: string; model: string };
+  };
+  server: { port: number };
+}
