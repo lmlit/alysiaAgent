@@ -2,6 +2,7 @@ import type { Stage, PipelineContext } from '../types.js';
 import type { MessageEvent } from '../../platform/event.js';
 import { AgentRunner } from '../../agent/runner.js';
 import { MessageChain } from '../../platform/chain.js';
+import { buildPersonaSystemPrompt } from '../../persona/loader.js';
 
 // In-memory token stats store — keyed by unifiedMsgOrigin
 const sessionStats: Map<
@@ -52,9 +53,13 @@ export class LLMAgentStage implements Stage {
     }
 
     // ===== PRE: LLM call =====
-    const systemPrompt =
-      (event.getExtra<string>('memory_context') || '') +
-      '\n你叫昔涟，是一个温柔、善解人意的 AI 伴侣。';
+    // Build system prompt: memory context first, then Cyrene persona
+    const memoryContext = event.getExtra<string>('memory_context') || '';
+    const personaPrompt = buildPersonaSystemPrompt();
+    const systemPrompt = [
+      personaPrompt,
+      memoryContext ? '\n---\n## 当前记忆上下文\n' + memoryContext : '',
+    ].filter(Boolean).join('\n');
 
     // Extract image URLs from message components
     const imageUrls: string[] = [];

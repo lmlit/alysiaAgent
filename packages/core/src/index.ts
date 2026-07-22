@@ -17,6 +17,7 @@ import { createShellExecTool } from './tools/shell.js';
 import { createWriteFileTool, createReadFileTool, createListFilesTool } from './tools/filesystem.js';
 import { createSessionCommands } from './commands/session.js';
 import { createStatsCommand } from './commands/stats.js';
+import { seedPersona, seedWorldbook, buildPersonaSystemPrompt } from './persona/loader.js';
 
 export interface AlysiaCoreOptions {
   dbPath: string;
@@ -90,6 +91,10 @@ export class AlysiaCore {
     };
 
     this.memoryManager = new MemoryManager(db, vectorStore as any, embedService as any, llmService as any);
+
+    // Seed persona + worldbook from data files
+    await seedPersona(this.memoryManager);
+    await seedWorldbook(this.memoryManager);
 
     // Provider
     this.providerManager = new ProviderManager();

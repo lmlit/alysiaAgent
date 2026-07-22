@@ -14,10 +14,11 @@
     "./agent": "./dist/agent/index.js",
     "./provider": "./dist/provider/index.js",
     "./tools": "./dist/tools/index.js",
-    "./commands": "./dist/commands/index.js"
+    "./commands": "./dist/commands/index.js",
+    "./persona": "./dist/persona/loader.js"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node -e \"const{cpSync}=require('fs');cpSync('src/persona','dist/persona',{recursive:true})\"",
     "test": "vitest run"
   },
   "dependencies": {
