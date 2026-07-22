@@ -19,3 +19,4 @@ platforms:
 server:
   port: 6185
   dataDir: "./data"
+  workspaceDir: "./data/workspace"
