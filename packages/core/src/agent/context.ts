@@ -41,17 +41,23 @@ export class AgentContext {
     }
   }
 
-  toOpenAIFormat(): Array<{
-    role: string;
-    content: string;
-    tool_call_id?: string;
-    tool_calls?: unknown;
-  }> {
-    return this.messages.map(m => ({
-      role: m.role,
-      content: m.content,
-      tool_call_id: m.toolCallId,
-      tool_calls: m.toolCalls,
-    }));
+  toOpenAIFormat(): Array<Record<string, unknown>> {
+    return this.messages.map(m => {
+      const entry: Record<string, unknown> = {
+        role: m.role,
+      };
+      // Assistant with tool_calls: content must be null per OpenAI spec
+      if (m.role === 'assistant' && m.toolCalls && m.toolCalls.length > 0) {
+        entry.content = null;
+        entry.tool_calls = m.toolCalls;
+      } else {
+        entry.content = m.content || null;
+      }
+      // Tool messages: must include tool_call_id
+      if (m.role === 'tool') {
+        entry.tool_call_id = m.toolCallId;
+      }
+      return entry;
+    });
   }
 }

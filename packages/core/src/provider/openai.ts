@@ -27,7 +27,8 @@ export class OpenAIProvider {
 
     if (!response.ok) {
       const errText = await response.text();
-      return { role: 'err', completionText: `API error ${response.status}: ${errText}` };
+      console.error(`[LLM] API error ${response.status}: ${errText.slice(0, 300)}`);
+      return { role: 'err', completionText: `API error ${response.status}: ${errText.slice(0, 200)}` };
     }
 
     const data = await response.json() as any;
@@ -144,7 +145,8 @@ export class OpenAIProvider {
     }
 
     if (req.contexts) {
-      messages.push(...req.contexts.map(c => ({ role: c.role, content: c.content })));
+      // Pass contexts through directly — they may carry tool_call_id, tool_calls, etc.
+      messages.push(...req.contexts);
     }
 
     const userContent: Array<{ type: string; text?: string; image_url?: { url: string } }> = [

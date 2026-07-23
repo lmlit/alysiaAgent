@@ -1,4 +1,5 @@
 import { MemoryManager } from './memory/MemoryManager.js';
+import { initializeDatabase } from './memory/database.js';
 import { PipelineScheduler } from './pipeline/scheduler.js';
 import { createPipelineContext } from './pipeline/context.js';
 import { EventBus } from './eventbus/EventBus.js';
@@ -56,6 +57,7 @@ export class AlysiaCore {
     const { default: Database } = await import('better-sqlite3');
     const db = new Database(this.opts.dbPath);
     db.pragma('journal_mode = WAL');
+    initializeDatabase(db);
 
     // Vector store (lazy init)
     let vectorStore = null;
@@ -75,18 +77,25 @@ export class AlysiaCore {
         const data = await resp.json() as any;
         return data.data[0].embedding as number[];
       },
+      dimension: () => 1024,
     };
 
-    // LLM service (for memory system)
+    // LLM service (for memory system — must match ILLMService interface)
     const llmService = {
-      chat: async (messages: Array<{ role: string; content: string }>) => {
+      complete: async (systemPrompt: string, userPrompt: string): Promise<string> => {
         const resp = await fetch(`${this.opts.llmConfig.baseUrl}/chat/completions`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.opts.llmConfig.apiKey}` },
-          body: JSON.stringify({ model: this.opts.llmConfig.model, messages }),
+          body: JSON.stringify({
+            model: this.opts.llmConfig.model,
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: userPrompt },
+            ],
+          }),
         });
         const data = await resp.json() as any;
-        return { content: data.choices[0].message.content };
+        return data.choices?.[0]?.message?.content || '';
       },
     };
 

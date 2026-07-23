@@ -53,13 +53,23 @@ export class LLMAgentStage implements Stage {
     }
 
     // ===== PRE: LLM call =====
-    // Build system prompt: memory context first, then Cyrene persona
+    // Build system prompt: compact persona + memory context
     const memoryContext = event.getExtra<string>('memory_context') || '';
-    const personaPrompt = buildPersonaSystemPrompt();
-    const systemPrompt = [
-      personaPrompt,
-      memoryContext ? '\n---\n## 当前记忆上下文\n' + memoryContext : '',
+    // Use compact persona to save context space (worldbook is 66 entries = ~15k chars!)
+    const compactPersona = buildPersonaSystemPrompt().split('\n---\n').slice(0, 4).join('\n---\n');
+    let systemPrompt = [
+      compactPersona,
+      memoryContext ? '\n---\n## 当前记忆\n' + memoryContext : '',
     ].filter(Boolean).join('\n');
+
+    // Inject recent conversation history into system prompt
+    const history = event.getExtra<Array<{ role: string; content: string }>>('conversation_history') || [];
+    if (history.length > 0) {
+      const recentHistory = history.slice(-10).map(h =>
+        `${h.role === 'user' ? '伙伴' : '昔涟'}: ${h.content}`
+      ).join('\n');
+      systemPrompt += `\n\n## 最近对话\n${recentHistory}\n\n请基于以上对话历史继续交流。`;
+    }
 
     // Extract image URLs from message components
     const imageUrls: string[] = [];

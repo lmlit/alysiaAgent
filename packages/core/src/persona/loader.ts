@@ -182,7 +182,7 @@ export async function seedWorldbook(memoryManager: MemoryManager): Promise<void>
 
   // Insert into worldbook table
   const insert = db.prepare(`
-    INSERT OR IGNORE INTO worldbook (id, trigger_keys, trigger_mode, content, scope, priority, cooldown_sec, last_triggered, hit_count, created_at, updated_at)
+    INSERT OR IGNORE INTO worldbook_entries (id, trigger_keys, trigger_mode, content, scope, priority, cooldown_sec, last_triggered, hit_count, created_at, updated_at)
     VALUES (?, ?, 'any', ?, 'chat', ?, 300, NULL, 0, ?, ?)
   `);
 
