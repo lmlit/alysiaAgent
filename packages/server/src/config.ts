@@ -1,11 +1,27 @@
 import { readFileSync } from 'fs';
 import { parse } from 'yaml';
 
+export interface QQOfficialConfig {
+  app_id: string;
+  app_secret: string;
+  webhook_port: number;
+  webhook_path: string;
+}
+
+export interface QQConfig {
+  protocol: 'onebot_v11';
+  ws_port: number;
+  http_port: number;
+  access_token?: string;
+}
+
 export interface ServerConfig {
   bot: { name: string; ownerId: string };
   llm: { baseUrl: string; apiKey: string; model: string };
   embed: { baseUrl: string; apiKey: string; model: string };
   telegram: { token: string };
+  qq?: QQConfig;
+  qq_official?: QQOfficialConfig;
   server: { port: number; dataDir: string; workspaceDir: string };
 }
 
@@ -27,6 +43,18 @@ export function loadConfig(path: string): ServerConfig {
       model: data.embed?.model ?? 'embedding-2',
     },
     telegram: { token: data.platforms?.telegram?.token ?? '' },
+    qq: data.platforms?.qq ? {
+      protocol: 'onebot_v11',
+      ws_port: data.platforms.qq.ws_port ?? 6199,
+      http_port: data.platforms.qq.http_port ?? 6186,
+      access_token: data.platforms.qq.access_token,
+    } : undefined,
+    qq_official: data.platforms?.qq_official ? {
+      app_id: data.platforms.qq_official.app_id ?? '',
+      app_secret: data.platforms.qq_official.app_secret ?? '',
+      webhook_port: data.platforms.qq_official.webhook_port ?? 6187,
+      webhook_path: data.platforms.qq_official.webhook_path ?? '/qq/webhook',
+    } : undefined,
     server: {
       port: data.server?.port ?? 6185,
       dataDir: data.server?.dataDir ?? './data',

@@ -1,0 +1,26 @@
+bot:
+  name: "昔涟"
+  ownerId: "local-user"
+
+llm:
+  baseUrl: "${OPENAI_BASE_URL}"
+  apiKey: "${OPENAI_API_KEY}"
+  model: "deepseek-v4-flash"
+
+embed:
+  baseUrl: "${EMBED_BASE_URL}"
+  apiKey: "${EMBED_API_KEY}"
+  model: "${EMBED_MODEL}"
+
+platforms:
+  # telegram:
+  #   token: "${TELEGRAM_BOT_TOKEN}"
+  qq:
+    protocol: "onebot_v11"
+    ws_port: 6199
+    http_port: 3000
+
+server:
+  port: 6185
+  dataDir: "./data"
+  workspaceDir: "./data/workspace"
