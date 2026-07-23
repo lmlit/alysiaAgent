@@ -9,7 +9,8 @@ export type MessageComponent =
   | VoiceComponent
   | FileComponent
   | VideoComponent
-  | StickerComponent;
+  | StickerComponent
+  | FaceComponent;
 
 export interface PlainComponent {
   type: 'plain';
@@ -57,6 +58,11 @@ export interface StickerComponent {
   type: 'sticker';
   emoji?: string;
   fileId?: string;
+}
+
+export interface FaceComponent {
+  type: 'face';
+  id: string;
 }
 
 // 消息发送者
