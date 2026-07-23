@@ -4,8 +4,6 @@ import { parse } from 'yaml';
 export interface QQOfficialConfig {
   app_id: string;
   app_secret: string;
-  webhook_port: number;
-  webhook_path: string;
 }
 
 export interface QQConfig {
@@ -52,8 +50,6 @@ export function loadConfig(path: string): ServerConfig {
     qq_official: data.platforms?.qq_official ? {
       app_id: data.platforms.qq_official.app_id ?? '',
       app_secret: data.platforms.qq_official.app_secret ?? '',
-      webhook_port: data.platforms.qq_official.webhook_port ?? 6187,
-      webhook_path: data.platforms.qq_official.webhook_path ?? '/qq/webhook',
     } : undefined,
     server: {
       port: data.server?.port ?? 6185,

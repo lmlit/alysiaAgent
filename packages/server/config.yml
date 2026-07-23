@@ -19,6 +19,9 @@ platforms:
     protocol: "onebot_v11"
     ws_port: 6199
     http_port: 3000
+  qq_official:
+    app_id: "1905266603"
+    app_secret: "8kLwaDpQyTwMejbH"
 
 server:
   port: 6185

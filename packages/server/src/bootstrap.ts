@@ -38,14 +38,13 @@ async function main() {
     console.log(`[Alysia] QQ OneBot WS on :${config.qq.ws_port}`);
   }
 
-  // QQ 官方 Agent (Webhook)
+  // QQ 官方 Agent (WebSocket 客户端，不需要公网 IP)
   if (config.qq_official) {
     const qqOff = new QQOfficialAgentAdapter(config.qq_official, 'qq-official-1');
     core.registerPlatform('qq_official::private', core.scheduler);
     core.registerPlatform('qq_official::group', core.scheduler);
     qqOff.setEventBus(core.eventBus);
     await qqOff.run();
-    console.log(`[Alysia] QQ Official Webhook on :${config.qq_official.webhook_port}`);
   }
 
   console.log(`[Alysia] Server started on port ${config.server.port}`);
