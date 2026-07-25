@@ -54,6 +54,26 @@ export class EventStore {
     return row.count;
   }
 
+  /** 获取某个会话最近的消息（用于短期上下文） */
+  getRecentBySession(sessionId: string, limit: number = 20): Array<{ role: string; content: string }> {
+    const rows = this.db.prepare(`
+      SELECT payload, source FROM events
+      WHERE session_id = ? AND type = 'message'
+      ORDER BY created_at DESC
+      LIMIT ?
+    `).all(sessionId, limit) as Array<{ payload: string; source: string }>;
+
+    return rows.reverse().map(r => {
+      const p = JSON.parse(r.payload);
+      const senderName = p.sender_name || '用户';
+      const content = p.content || '';
+      return {
+        role: p.sender_id ? 'user' : 'assistant',
+        content: `${senderName}: ${content}`,
+      };
+    });
+  }
+
   private rowToEvent(row: Record<string, unknown>): MemoryEvent {
     return {
       id: row.id as string,

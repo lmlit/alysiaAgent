@@ -12,7 +12,8 @@ import { WorldbookStage } from './pipeline/stages/worldbook.js';
 import { MemoryRetrievalStage } from './pipeline/stages/memory-retrieval.js';
 import { LLMAgentStage, getSessionStats } from './pipeline/stages/llm-agent.js';
 import { RespondStage } from './pipeline/stages/respond.js';
-import { createWebSearchTool } from './tools/web-search.js';
+import { createWebSearchTool, createWeatherTool } from './tools/web-search.js';
+import { createWorldbookTool } from './tools/worldbook.js';
 import { createReminderTool, createListRemindersTool, createCancelReminderTool } from './tools/reminder.js';
 import { createShellExecTool } from './tools/shell.js';
 import { createWriteFileTool, createReadFileTool, createListFilesTool } from './tools/filesystem.js';
@@ -69,13 +70,20 @@ export class AlysiaCore {
     // Embed service
     const embedService = {
       embed: async (text: string) => {
-        const resp = await fetch(`${this.opts.embedConfig.baseUrl}/embeddings`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.opts.embedConfig.apiKey}` },
-          body: JSON.stringify({ model: this.opts.embedConfig.model, input: text }),
-        });
-        const data = await resp.json() as any;
-        return data.data[0].embedding as number[];
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 8000);
+        try {
+          const resp = await fetch(`${this.opts.embedConfig.baseUrl}/embeddings`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.opts.embedConfig.apiKey}` },
+            body: JSON.stringify({ model: this.opts.embedConfig.model, input: text }),
+            signal: controller.signal,
+          });
+          const data = await resp.json() as any;
+          return data.data[0].embedding as number[];
+        } finally {
+          clearTimeout(timeout);
+        }
       },
       dimension: () => 1024,
     };
@@ -118,6 +126,8 @@ export class AlysiaCore {
     // Tools
     this.toolRegistry = new ToolRegistry();
     this.toolRegistry.register(createWebSearchTool());
+    this.toolRegistry.register(createWeatherTool());
+    this.toolRegistry.register(createWorldbookTool(db));
     this.toolRegistry.register(createReminderTool(async (text) => {
       console.log(`[Reminder] ${text}`);
     }));

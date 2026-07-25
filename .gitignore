@@ -3,3 +3,5 @@ dist/
 .env
 *.db
 *.lancedb/
+config.yml
+data/

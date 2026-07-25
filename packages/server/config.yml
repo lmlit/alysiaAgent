@@ -21,7 +21,7 @@ platforms:
     http_port: 3000
   qq_official:
     app_id: "1905266603"
-    app_secret: "8kLwaDpQyTwMejbH"
+    app_secret: "4RpDc1RsJlDgAe9fBiFnMvV6hJwZDrWC"
 
 server:
   port: 6185

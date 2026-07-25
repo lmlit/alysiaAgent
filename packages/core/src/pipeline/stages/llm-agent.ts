@@ -113,6 +113,11 @@ export class LLMAgentStage implements Stage {
       existing.totalOutput += usage.output;
       existing.totalTokens += usage.total;
       sessionStats.set(umo, existing);
+
+      // 上下文超过阈值 → 触发记忆压缩
+      if (usage.input > 8_000) {
+        this.ctx.memoryManager.onSessionEnd(event.unifiedMsgOrigin).catch(() => {});
+      }
     }
   }
 }

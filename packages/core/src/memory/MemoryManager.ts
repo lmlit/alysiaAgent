@@ -16,7 +16,7 @@ import { SessionEndProcessor } from './processors/SessionEndProcessor';
 import { CronProcessor } from './processors/CronProcessor';
 import { PromptAssembler } from './PromptAssembler';
 import { filterPII } from './PIIFilter';
-import type { MemoryEvent, MemoryReadRequest, MemoryReadResult, SearchResult } from './types';
+import type { MemoryEvent, MemoryReadRequest, MemoryReadResult, SearchResult, WorldbookEntry } from './types';
 import type { IVectorStore } from './interfaces/IVectorStore';
 import type { IEmbedService } from './interfaces/IEmbedService';
 import type { ILLMService } from './interfaces/ILLMService';
@@ -74,6 +74,11 @@ export class MemoryManager {
     );
   }
 
+  /** 获取最近消息（短期记忆） */
+  getRecentMessages(sessionId: string, limit: number = 10): Array<{ role: string; content: string }> {
+    return this.eventStore.getRecentBySession(sessionId, limit);
+  }
+
   async ingest(event: MemoryEvent): Promise<void> {
     // PII filter before storing
     if (event.payload.content) {
@@ -122,6 +127,16 @@ export class MemoryManager {
 
   async assemble(mode: 'chat' | 'code'): Promise<string> {
     return this.promptAssembler.assemble(mode);
+  }
+
+  /** 快速关键词匹配 Worldbook — 纯 SQLite 查询，不调 API */
+  matchWorldbook(text: string, mode: 'chat' | 'code' = 'chat'): Promise<WorldbookEntry[]> {
+    return this.worldbookMatcher.match(text, mode);
+  }
+
+  /** 带 Worldbook 匹配的 assemble — 供 MemoryRetrievalStage 使用 */
+  async assembleWithWorldbook(mode: 'chat' | 'code', triggers: WorldbookEntry[], retrieved: SearchResult[]): Promise<string> {
+    return this.promptAssembler.assemble(mode, retrieved, triggers);
   }
 
   async onSessionEnd(sessionId: string): Promise<void> {

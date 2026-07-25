@@ -86,14 +86,8 @@ export class PromptAssembler {
       }
     }
 
-    // Worldbook triggers
-    if (triggers.length > 0) {
-      const wbBlock = `[情境提示]\n${triggers.map(w => w.content).join('\n')}`;
-      if (budget.canFit(wbBlock)) {
-        budget.reserve(wbBlock);
-        blocks.push(wbBlock);
-      }
-    }
+    // Worldbook 已改为 Agent 工具 lookup_worldbook，不再注入 Prompt
+    // Agent 在需要背景知识时会主动调用工具查询
 
     return blocks.join('\n\n');
   }

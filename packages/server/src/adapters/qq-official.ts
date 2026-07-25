@@ -59,9 +59,11 @@ export class QQOfficialAgentAdapter implements Platform {
   private seq: number | null = null;
   private ws: any = null;
   private heartbeatTimer: any = null;
+  private _watchdog: any = null;
   private reconnectTimer: any = null;
   private sessionId = '';
   private running = false;
+  private lastHeartbeatAck = 0;
 
   constructor(config: QQConfig, private adapterId = 'qq-official') {
     this.config = config;
@@ -174,8 +176,7 @@ export class QQOfficialAgentAdapter implements Platform {
           if (statusLine.includes('101')) {
             handshakeDone = true;
             console.log('[QQ Official] WebSocket connected');
-            this.startHeartbeat();
-            this.sendIdentify();
+            // Wait for HELLO (op:10) before sending IDENTIFY
           } else {
             const bodyStart = handshakeBuffer.indexOf('\r\n\r\n') + 4;
             const body = bodyStart < handshakeBuffer.length ? handshakeBuffer.slice(bodyStart) : '';
@@ -209,38 +210,43 @@ export class QQOfficialAgentAdapter implements Platform {
     });
   }
 
-  private startHeartbeat(): void {
+  private startHeartbeat(intervalMs?: number): void {
+    const interval = intervalMs || HEARTBEAT_INTERVAL;
     this.heartbeatTimer = setInterval(() => {
       if (this.ws && !this.ws.destroyed) {
         this.sendFrame(1, JSON.stringify({ op: 1, d: this.seq }));
       }
-    }, HEARTBEAT_INTERVAL);
+    }, interval);
   }
 
   private stopHeartbeat(): void {
-    if (this.heartbeatTimer) {
-      clearInterval(this.heartbeatTimer);
-      this.heartbeatTimer = null;
-    }
+    if (this.heartbeatTimer) { clearInterval(this.heartbeatTimer); this.heartbeatTimer = null; }
+    if (this._watchdog) { clearInterval(this._watchdog); this._watchdog = null; }
   }
 
   private sendIdentify(): void {
-    this.sendFrame(1, JSON.stringify({
+    const payload = JSON.stringify({
       op: 2,
       d: {
         token: `QQBot ${this.accessToken}`,
-        intents: (1 << 25) | (1 << 0) | (1 << 1), // C2C + GUILDS + GUILD_MEMBERS + GROUP
+        intents: (1 << 25) | (1 << 12) | (1 << 0),
         shard: [0, 1],
+        properties: {},
       },
-    }));
+    });
+    console.log('[QQ Official] → IDENTIFY, payload length:', payload.length);
+    this.sendFrame(1, payload);
   }
 
   private sendFrame(opcode: number, payload: string): void {
     if (!this.ws || this.ws.destroyed) return;
     const data = Buffer.from(payload, 'utf-8');
-    const frame = Buffer.alloc(2 + data.length);
+    const headerLen = data.length < 126 ? 2 : (data.length < 65536 ? 4 : 10);
+    const maskLen = 4; // Client frames MUST be masked (RFC 6455 §5.3)
+    const frame = Buffer.alloc(headerLen + maskLen + data.length);
     frame[0] = 0x81; // FIN + text opcode
-    frame[1] = data.length < 126 ? data.length : (data.length < 65536 ? 126 : 127);
+    frame[1] = 0x80 | // MASK bit set
+      (data.length < 126 ? data.length : (data.length < 65536 ? 126 : 127));
 
     let offset = 2;
     if (data.length >= 65536) {
@@ -250,7 +256,14 @@ export class QQOfficialAgentAdapter implements Platform {
       frame.writeUInt16BE(data.length, 2);
       offset = 4;
     }
-    Buffer.from(payload, 'utf-8').copy(frame, offset);
+    // 4-byte random mask
+    const mask = Buffer.alloc(4);
+    for (let i = 0; i < 4; i++) mask[i] = Math.floor(Math.random() * 256);
+    mask.copy(frame, offset);
+    // Masked payload
+    for (let i = 0; i < data.length; i++) {
+      frame[offset + maskLen + i] = data[i] ^ mask[i % 4];
+    }
     this.ws.write(frame);
   }
 
@@ -298,12 +311,45 @@ export class QQOfficialAgentAdapter implements Platform {
   }
 
   private handleGatewayMessage(msg: QQGatewayPayload): void {
+    console.log('[QQ Official] ← op:', msg.op, msg.t || '');
     switch (msg.op) {
-      case 10: // Hello — 心跳间隔
-        console.log('[QQ Official] Ready (heartbeat interval:', msg.d?.heartbeat_interval, 'ms)');
+      case 10: // Hello → send IDENTIFY
+        console.log('[QQ Official] Hello (heartbeat:', msg.d?.heartbeat_interval, 'ms)');
+        this.sendIdentify();
+        this.stopHeartbeat();
+        const interval = msg.d?.heartbeat_interval || 41250;
+        this.lastHeartbeatAck = Date.now();
+        // Send heartbeat
+        this.heartbeatTimer = setInterval(() => {
+          if (this.ws && !this.ws.destroyed) {
+            this.sendFrame(1, JSON.stringify({ op: 1, d: this.seq }));
+          }
+        }, interval);
+        // Watchdog: if no ACK for 2x interval, force reconnect
+        this._watchdog = setInterval(() => {
+          if (Date.now() - this.lastHeartbeatAck > interval * 2) {
+            console.log('[QQ Official] Heartbeat timeout — reconnecting');
+            if (this.ws && !this.ws.destroyed) this.ws.destroy();
+          }
+        }, interval);
         break;
 
       case 11: // Heartbeat ACK
+        this.lastHeartbeatAck = Date.now();
+        break;
+
+      case 12: // Ready / Resumed
+        console.log('[QQ Official] ✅ Bot is now ONLINE — session:', msg.d?.session_id);
+        this.sessionId = msg.d?.session_id || '';
+        break;
+
+      case 7: // Reconnect
+        console.log('[QQ Official] Server requested reconnect');
+        break;
+
+      case 9: // Invalid session
+        console.log('[QQ Official] ❌ Invalid session — re-identifying...');
+        this.sendIdentify();
         break;
 
       case 0: // Dispatch — 消息事件
@@ -312,13 +358,31 @@ export class QQOfficialAgentAdapter implements Platform {
         break;
 
       default:
-        console.log('[QQ Official] Unknown op:', msg.op);
+        console.log('[QQ Official] Op:', msg.op, 't:', msg.t, 'd:', JSON.stringify(msg.d || {}).slice(0, 200));
     }
   }
 
   private handleEvent(eventType: string, data: any): void {
+    // Log ALL events for debugging
+    console.log('[QQ Official] Event:', eventType, 'keys:', Object.keys(data || {}).join(','));
+
+    // Only process message events, not gateway events (READY, RESUMED, etc.)
+    if (eventType === 'READY' || eventType === 'RESUMED') {
+      console.log('[QQ Official] ✅ Bot ONLINE —', eventType, 'session:', data?.session_id);
+      return;
+    }
+    if (!eventType.includes('MESSAGE') && !eventType.includes('C2C') && !eventType.includes('GROUP')) return;
+
+    // 延迟 5 秒后发 "思考中" — 只有长时间处理时才触发
+    const chatType = eventType.startsWith('GROUP') ? 'group' : 'private';
+    let thinkingSent = false;
+    const thinkingTimer = setTimeout(() => {
+      thinkingSent = true;
+      this.sendQuickReply(data, pickThinking(data.content || ''), chatType);
+    }, 5000);
+
     const isGroup = eventType === 'GROUP_AT_MESSAGE_CREATE' || eventType === 'C2C_MESSAGE_CREATE';
-    const chatType = eventType === 'C2C_MESSAGE_CREATE' ? 'private' :
+    const cType = eventType === 'C2C_MESSAGE_CREATE' ? 'private' :
                      eventType.startsWith('GROUP') ? 'group' : 'channel';
 
     const userId = data.author?.user_openid || data.author?.id || '';
@@ -348,8 +412,13 @@ export class QQOfficialAgentAdapter implements Platform {
       sessionId,
     });
 
-    // 回复通过 QQ HTTP API 发送
+    // 短期记忆由 MemoryRetrievalStage 从 EventLog 读取，不再在适配器层维护
+    let replyText = '';
     event.send = async (chain: MessageChain) => {
+      clearTimeout(thinkingTimer);
+      for (const comp of chain) {
+        if (comp.type === 'plain') replyText += (comp as any).text;
+      }
       await this.sendReply(data, chain, chatType);
     };
 
@@ -359,9 +428,10 @@ export class QQOfficialAgentAdapter implements Platform {
   private async sendReply(data: any, chain: MessageChain, chatType: string): Promise<void> {
     await this.ensureToken();
 
-    // 组装回复内容
     const text = [...chain].filter(c => c.type === 'plain').map(c => (c as any).text).join('\n');
-    if (!text) return;
+    if (!text) { console.log('[QQ Official] Reply empty, skipping send'); return; }
+
+    console.log('[QQ Official] Sending reply:', text.slice(0, 80), '→ chatType:', chatType);
 
     const payload: any = {
       content: text,
@@ -432,6 +502,26 @@ export class QQOfficialAgentAdapter implements Platform {
     }
   }
 
+  private async sendQuickReply(data: any, text: string, chatType: string): Promise<void> {
+    try {
+      // 不用 msg_id — 思考中是主动消息，不消耗被动回复配额
+      const payload: any = { content: text, msg_type: 0 };
+      if (chatType === 'group' && data.group_openid) {
+        await fetch(`${QQ_API_HOST}/v2/groups/${data.group_openid}/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `QQBot ${this.accessToken}` },
+          body: JSON.stringify(payload),
+        });
+      } else if (data.author?.user_openid || data.author?.id) {
+        await fetch(`${QQ_API_HOST}/v2/users/${data.author.user_openid || data.author.id}/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `QQBot ${this.accessToken}` },
+          body: JSON.stringify(payload),
+        });
+      }
+    } catch { /* best-effort */ }
+  }
+
   async terminate(): Promise<void> {
     this.running = false;
     this.stopHeartbeat();
@@ -439,4 +529,81 @@ export class QQOfficialAgentAdapter implements Platform {
     if (this.ws && !this.ws.destroyed) this.ws.destroy();
     console.log('[QQ Official] Terminated');
   }
+}
+
+// ── 个性化思考中回复 ──────────────────────────────
+// 按场景分类，根据消息内容智能选择
+const THINKING_BY_CATEGORY: Record<string, string[]> = {
+  story: [
+    '啊，说到翁法罗斯的故事了呢…让人家翻翻记忆之书✨',
+    '这个故事呀…昔涟得好好想想怎么讲给你听♪',
+    '往事的涟漪在心头荡开了呢，稍等一下下哦…',
+    '人家在回忆那些金色的日子…马上就好~',
+    '唔，让昔涟从三千多万世的记忆里找出你问的这一段…',
+    '翻开《如我所书》…嗯，这一页正是你想知道的呢♫',
+    '有些故事沉在心底太久了，让人家轻轻捞起来…',
+  ],
+  question: [
+    '嗯…这个问题有点意思，让人家琢磨琢磨♪',
+    '昔涟要认真想想才能回答你呢~',
+    '唔，让昔涟组织一下语言，好好说给你听…',
+    '在查了在查了~别急呀，人家得找个最温柔的答案给你✨',
+    '等等哦，人家正在脑海里翻翻有没有你想要的答案…',
+    '好问题！让昔涟好好想想怎么回答才不辜负你的期待♪',
+  ],
+  greeting: [
+    '你来了呀~让人家想想今天该用什么心情跟你聊天呢♫',
+    '啊，先让昔涟把刚才的思绪收一收…好啦，可以了♪',
+  ],
+  help: [
+    '在帮你处理了呢，等一下下哦~',
+    '嗯嗯，人家收到啦，正在帮你弄…',
+    '这个嘛，让昔涟试试看能不能做到✨',
+  ],
+  emotion: [
+    '你的心情，人家感受到了…让昔涟想想怎么回应你的心意♫',
+    '唔，你的话让人家心里暖暖的，得好好回答才行呢~',
+    '听到你这么说，昔涟也想给你一个认真的回应…稍等一下哦♪',
+  ],
+  default: [
+    '嗯…让人家想想呀♪',
+    '稍等哦，人家在回忆呢~',
+    '等一下下，人家翻翻记忆…',
+    '唔…这个有点意思，让人家琢磨一下♪',
+    '在查了呢，别急呀~',
+    '等等哦，人家组织一下语言~',
+    '昔涟在努力回忆呢…♫',
+    '唔，这个嘛…（托腮）',
+    '让人家想想怎么跟你说才好…',
+    '嗯嗯，让昔涟理一下思路~',
+    '啊…在找了在找了♪',
+    '让人家想一想，该怎么用最温柔的方式告诉你…',
+    '昔涟的记忆像星星一样多，得花一点时间找到对的那一颗呢✨',
+  ],
+};
+
+function detectCategory(text: string): string {
+  const t = text.toLowerCase();
+  if (/白厄|翁法洛斯|德谬歌|迷迷|浮黎|泰坦|黄金裔|哀丽秘榭|铁幕|故事|过去|身世|来历|轮回|记忆/.test(t)) return 'story';
+  if (/怎么|为什么|什么|谁|哪|如何|吗|呢|？|\?/.test(t)) return 'question';
+  if (/你好|嗨|hi|hello|早|晚上好|在吗/.test(t)) return 'greeting';
+  if (/帮|搜|查|写|做|弄|设置|提醒/.test(t)) return 'help';
+  if (/喜欢|爱|想|难过|开心|感动|心疼|讨厌|烦/.test(t)) return 'emotion';
+  return 'default';
+}
+
+function pickThinking(userMessage?: string): string {
+  const hour = new Date().getHours();
+  const category = userMessage ? detectCategory(userMessage) : 'default';
+  const pool = THINKING_BY_CATEGORY[category] || THINKING_BY_CATEGORY.default;
+
+  // 凌晨定制
+  if (hour < 6) return pickRandom(THINKING_BY_CATEGORY.default.slice(0, 3)).replace('♪', '…（揉眼睛）♪');
+  if (hour < 9) return '早安呀♪ 让人家想想…' + pickRandom(pool).replace(/^[^，]+，?/, '');
+
+  return pickRandom(pool);
+}
+
+function pickRandom(arr: string[]): string {
+  return arr[Math.floor(Math.random() * arr.length)];
 }
