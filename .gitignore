@@ -12,3 +12,4 @@ data/
 *.tgz
 *.tsbuildinfo
 tmp-trigger-profile.ts
+*.tsbuildinfo

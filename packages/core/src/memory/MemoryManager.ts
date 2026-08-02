@@ -139,9 +139,9 @@ export class MemoryManager {
     return this.profileStore.supersede(signal.target, newFact);
   }
 
-  /** 获取最近消息（短期记忆） */
-  getRecentMessages(sessionId: string, limit: number = 10): Array<{ role: string; content: string }> {
-    return this.eventStore.getRecentBySession(sessionId, limit);
+  /** 获取最近消息（短期记忆）。limit 上限；since 可选时间窗口（如最近 2 小时） */
+  getRecentMessages(sessionId: string, limit: number = 10, since?: Date): Array<{ role: string; content: string }> {
+    return this.eventStore.getRecentBySession(sessionId, limit, since);
   }
 
   async ingest(event: MemoryEvent): Promise<void> {

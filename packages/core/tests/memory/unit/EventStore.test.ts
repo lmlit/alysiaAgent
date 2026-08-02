@@ -90,4 +90,38 @@ describe('EventStore', () => {
     expect(store.countBySession('sess-A')).toBe(2);
     expect(store.countBySession('sess-B')).toBe(1);
   });
+
+  const makeMsg = (id: string, content: string, createdAt: string): MemoryEvent =>
+    makeEvent({ id, created_at: createdAt, payload: { role: 'user', content } });
+
+  it('getRecentBySession: 按时间窗口过滤（since 之后的消息）', () => {
+    store.insert(makeMsg('e-old', '旧消息', '2026-08-02T04:00:00.000Z'));
+    store.insert(makeMsg('e-new1', '新消息1', '2026-08-02T07:30:00.000Z'));
+    store.insert(makeMsg('e-new2', '新消息2', '2026-08-02T07:40:00.000Z'));
+
+    const since = new Date('2026-08-02T07:00:00.000Z');
+    const recent = store.getRecentBySession('sess-001', 20, since);
+    expect(recent.map(r => r.content)).toEqual(['用户: 新消息1', '用户: 新消息2']);
+  });
+
+  it('getRecentBySession: 时间窗口 + limit 上限', () => {
+    store.insert(makeMsg('e1', 'm1', '2026-08-02T07:00:00.000Z'));
+    store.insert(makeMsg('e2', 'm2', '2026-08-02T07:10:00.000Z'));
+    store.insert(makeMsg('e3', 'm3', '2026-08-02T07:20:00.000Z'));
+
+    const since = new Date('2026-08-02T07:00:00.000Z');
+    const recent = store.getRecentBySession('sess-001', 2, since);
+    expect(recent).toHaveLength(2);
+    expect(recent[recent.length - 1].content).toBe('用户: m3'); // 时间升序
+  });
+
+  it('getRecentBySession: 无 since 时保持纯数量限制（向后兼容）', () => {
+    store.insert(makeMsg('e1', 'm1', '2026-08-02T07:00:00.000Z'));
+    store.insert(makeMsg('e2', 'm2', '2026-08-02T07:10:00.000Z'));
+    store.insert(makeMsg('e3', 'm3', '2026-08-02T07:20:00.000Z'));
+
+    const recent = store.getRecentBySession('sess-001', 2);
+    expect(recent).toHaveLength(2);
+    expect(recent.map(r => r.content)).toEqual(['用户: m2', '用户: m3']); // 最新 2 条（时间升序）
+  });
 });

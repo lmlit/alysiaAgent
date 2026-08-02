@@ -69,13 +69,21 @@ export class EventStore {
   }
 
   /** 获取某个会话最近的消息（用于短期上下文） */
-  getRecentBySession(sessionId: string, limit: number = 20): Array<{ role: string; content: string }> {
-    const rows = this.db.prepare(`
-      SELECT payload, source FROM events
-      WHERE session_id = ? AND type = 'message'
-      ORDER BY created_at DESC
-      LIMIT ?
-    `).all(sessionId, limit) as Array<{ payload: string; source: string }>;
+  /** 最近消息（短期记忆）。limit 上限；since 可选时间窗口（ISO 字符串比较，created_at 存 ISO）。 */
+  getRecentBySession(sessionId: string, limit: number = 20, since?: Date): Array<{ role: string; content: string }> {
+    const rows = since
+      ? this.db.prepare(`
+        SELECT payload, source FROM events
+        WHERE session_id = ? AND type = 'message' AND created_at >= ?
+        ORDER BY created_at DESC
+        LIMIT ?
+      `).all(sessionId, since.toISOString(), limit) as Array<{ payload: string; source: string }>
+      : this.db.prepare(`
+        SELECT payload, source FROM events
+        WHERE session_id = ? AND type = 'message'
+        ORDER BY created_at DESC
+        LIMIT ?
+      `).all(sessionId, limit) as Array<{ payload: string; source: string }>;
 
     return rows.reverse().map(r => {
       const p = JSON.parse(r.payload);

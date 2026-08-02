@@ -5,6 +5,8 @@ import type { ProviderManager } from '../provider/manager.js';
 import type { LLMResponse } from '../provider/types.js';
 import type { ToolRegistry } from '../tools/registry.js';
 import { MessageChain } from '../platform/chain.js';
+import { stripToolCallText } from '../utils/tool-call-strip.js';
+import { logger } from '../utils/logger.js';
 
 const DEFAULT_MAX_STEPS = 10;
 
@@ -130,7 +132,14 @@ export class AgentRunner {
         }
       } else {
         // Plain text response — done
-        finalText = response.completionText || '';
+        // ★ 兜底：模型可能把工具调用以纯文本（伪 XML）写进 content（未走结构化 tool_calls）。
+        //   剥离残留标记，避免工具调用文本直接发给用户。
+        const raw = response.completionText || '';
+        const cleaned = stripToolCallText(raw);
+        if (cleaned !== raw) {
+          logger.warn(`[AgentRunner] stripped tool-call text from final reply (${raw.length} → ${cleaned.length} chars): ${raw.slice(0, 80).replace(/\n/g, ' ')}`);
+        }
+        finalText = cleaned;
         break;
       }
     }

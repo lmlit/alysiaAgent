@@ -1,0 +1,27 @@
+# 敏感文件——绝不能进构建上下文/镜像
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# 依赖与构建产物（镜像内重新安装/构建）
+node_modules
+packages/*/node_modules
+packages/*/dist
+*.tsbuildinfo
+
+# 运行时数据（数据库/日志/工作区——挂载卷提供）
+data
+packages/*/data
+
+# 版本控制与杂项
+.git
+.gitignore
+alysia-image.tar
+*.tar
+docs
+tests
+tmp-*.ts
+Dockerfile
+compose.yml

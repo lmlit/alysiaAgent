@@ -34,17 +34,22 @@ export class ProfileExtractor {
 
     try {
       const response = await this.llm.complete(
-        '你是一个用户画像提取器。提取关于用户的事实，每条附置信度(0-1)和原文证据。不确定则不提取。返回JSON: {"facts": [{"fact": "...", "confidence": 0.8, "evidence": "..."}]}',
+        '你是一个用户画像提取器。提取关于用户的事实，每条附置信度(0-1)和原文证据。' +
+        'directly_stated: 用户是否直接陈述了这个事实（true=用户亲口说的，如"我周末不上班"；' +
+        'false=你从对话中推断的，如"用户可能从事技术工作"）。不确定则不提取。' +
+        '返回JSON: {"facts": [{"fact": "...", "confidence": 0.8, "evidence": "...", "directly_stated": true}]}',
         userMessages
       );
       const parsed = JSON.parse(response);
-      return (parsed.facts || []).map((f: { fact: string; confidence: number; evidence: string }, i: number) => ({
+      return (parsed.facts || []).map((f: { fact: string; confidence: number; evidence: string; directly_stated?: boolean }, i: number) => ({
         fact: f.fact,
         confidence: f.confidence,
         evidence: f.evidence,
         source_event: events[0]?.id || 'unknown',
         updated_at: new Date().toISOString(),
-        source: 'inferred' as const,
+        // ★ 用户直接陈述的事实标 source='user'（PromptAssembler 显示"[你说过]"且不可被推断覆盖）。
+        //   之前硬编码 'inferred'，导致所有事实显示"（待确认）"，被 LLM 打折对待。
+        source: f.directly_stated ? 'user' as const : 'inferred' as const,
         valid_from: new Date().toISOString(),
         valid_until: null as string | null,
         status: 'active' as const,

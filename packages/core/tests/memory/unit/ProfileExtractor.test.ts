@@ -6,7 +6,7 @@ import type { ILLMService } from '../../../src/memory/interfaces/ILLMService';
 const mockLLM: ILLMService = {
   complete: async () => JSON.stringify({
     facts: [
-      { fact: '用户是后端工程师', confidence: 0.9, evidence: '我做后端做了5年了' },
+      { fact: '用户是后端工程师', confidence: 0.9, evidence: '我做后端做了5年了', directly_stated: true },
     ],
   }),
 };
@@ -31,6 +31,41 @@ describe('ProfileExtractor', () => {
     expect(facts).toHaveLength(1);
     expect(facts[0].fact).toBe('用户是后端工程师');
     expect(facts[0].confidence).toBe(0.9);
+  });
+
+  it('directly_stated=true → source=user（用户亲口说的事实，显示"[你说过]"）', async () => {
+    const events = [makeEvent('我做后端做了5年了')];
+    const facts = await extractor.extract(events);
+    expect(facts[0].source).toBe('user');
+  });
+
+  it('directly_stated 缺失/false → source=inferred（推断事实，标注"待确认"）', async () => {
+    const mockInferredLLM: ILLMService = {
+      complete: async () => JSON.stringify({
+        facts: [
+          { fact: '用户可能喜欢甜食', confidence: 0.6, evidence: '用户点了奶茶', directly_stated: false },
+          { fact: '用户最近在忙', confidence: 0.5, evidence: '用户说很忙', directly_stated: true },
+        ],
+      }),
+    };
+    const extractor2 = new ProfileExtractor(mockInferredLLM);
+    const facts = await extractor2.extract([makeEvent('用户点了奶茶')]);
+    expect(facts[0].source).toBe('inferred');
+    expect(facts[1].source).toBe('user');
+  });
+
+  it('user 来源的事实不可被 inferred 覆盖（mergeFacts 保护）', () => {
+    const existing: ProfileFact[] = [
+      { fact: '用户周末不上班', confidence: 0.9, evidence: '今天周末不上班', source_event: 'e1', updated_at: '', source: 'user', valid_from: '', valid_until: null, status: 'active' },
+    ];
+    const newFacts: ProfileFact[] = [
+      { fact: '用户周末不上班', confidence: 0.5, evidence: 'x', source_event: 'e2', updated_at: '', source: 'inferred', valid_from: '', valid_until: null, status: 'active' },
+    ];
+    const merged = extractor.mergeFacts(newFacts, existing);
+    const active = merged.filter(f => f.status === 'active');
+    expect(active).toHaveLength(1);
+    expect(active[0].source).toBe('user');
+    expect(active[0].confidence).toBe(0.9);
   });
 
   it('should merge facts, keeping higher confidence on conflict (v2: supersede + audit trail)', () => {

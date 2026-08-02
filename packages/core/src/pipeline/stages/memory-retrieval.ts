@@ -29,10 +29,12 @@ export class MemoryRetrievalStage implements Stage {
       readResult.retrieved,
     );
 
-    // 短期记忆：EventLog 最近消息
+    // 短期记忆：EventLog 最近消息（最近 2 小时窗口 + 最多 20 条，防高频聊天把早间信息挤出）
     let recentContext = '';
     try {
-      const recent = this.memoryManager.getRecentMessages(event.unifiedMsgOrigin, 10);
+      const recent = this.memoryManager.getRecentMessages(
+        event.unifiedMsgOrigin, 20, new Date(Date.now() - 2 * 3600 * 1000),
+      );
       if (recent.length > 0) {
         recentContext = recent.map(r => r.content).join('\n');
       }

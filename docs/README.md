@@ -18,6 +18,9 @@
 | 2026-08-02 | [domestic-search-weather](superpowers/specs/2026-08-02-domestic-search-weather.md) | 搜索/天气国内适配（cn.bing/weather.com.cn） | ✅ 已实现 |
 | 2026-08-02 | [logging-system](superpowers/specs/2026-08-02-logging-system.md) | 日志系统（统一 logger/节点清单/格式） | ✅ 已实现 |
 | 2026-08-02 | [role-memory-isolation](superpowers/specs/2026-08-02-role-memory-isolation.md) | 角色记忆隔离（per-role 画像/会话） | ⏸ 搁置（思路留存） |
+| 2026-08-02 | [tool-call-text-strip](superpowers/specs/2026-08-02-tool-call-text-strip.md) | 工具调用残留文本剥离（防伪 XML 泄漏给用户） | ✅ 已实现 |
+| 2026-08-02 | [profile-fact-sourcing](superpowers/specs/2026-08-02-profile-fact-sourcing.md) | 画像事实来源标记（directly_stated → "[你说过]"）+ 上下文注入现状 | ✅ 已实现 |
+| 2026-08-02 | [qq-reconnect-backoff](superpowers/specs/2026-08-02-qq-reconnect-backoff.md) | QQ 断线自动重连（指数退避，网络恢复自动上线） | ✅ 已实现 |
 
 ## 📋 Plans（实施计划）
 

@@ -78,6 +78,7 @@ export class QQOfficialAgentAdapter implements Platform {
   private heartbeatTimer: any = null;
   private _watchdog: any = null;
   private reconnectTimer: any = null;
+  private reconnectDelayMs = 5_000;
   private sessionId = '';
   private running = false;
   private lastHeartbeatAck = 0;
@@ -106,6 +107,8 @@ export class QQOfficialAgentAdapter implements Platform {
     await this.refreshToken();
     if (!this.accessToken) {
       logger.error('[QQ Official] Failed to get access token');
+      // ★ 失败必须继续重试：断网时 token 获取失败，若不调度重连，断网恢复后服务永久停摆
+      this.scheduleReconnect('');
       return;
     }
 
@@ -113,6 +116,7 @@ export class QQOfficialAgentAdapter implements Platform {
     const wssUrl = await this.getGatewayUrl();
     if (!wssUrl) {
       logger.error('[QQ Official] Failed to get gateway URL');
+      this.scheduleReconnect('');
       return;
     }
 
@@ -392,6 +396,8 @@ export class QQOfficialAgentAdapter implements Platform {
     // Only process message events, not gateway events (READY, RESUMED, etc.)
     if (eventType === 'READY' || eventType === 'RESUMED') {
       logger.info('[QQ Official] ✅ Bot ONLINE —', eventType, 'session:', data?.session_id);
+      // 连接成功：重置重连退避（下次断线从 5s 开始）
+      this.reconnectDelayMs = 5_000;
       return;
     }
     if (!eventType.includes('MESSAGE') && !eventType.includes('C2C') && !eventType.includes('GROUP')) return;
@@ -601,13 +607,16 @@ export class QQOfficialAgentAdapter implements Platform {
     }
   }
 
+  /** 断线重连调度：指数退避 5s → 15s → 45s → 上限 5min；连接成功后重置 */
   private scheduleReconnect(_wssUrl: string): void {
     if (this.reconnectTimer) return;
-    logger.info('[QQ Official] Reconnecting in 5s...');
+    const delay = this.reconnectDelayMs;
+    logger.info(`[QQ Official] Reconnecting in ${delay / 1000}s...`);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
+      this.reconnectDelayMs = Math.min(this.reconnectDelayMs * 3, 300_000);
       if (this.running) this.run().catch(console.error);
-    }, 5000);
+    }, delay);
   }
 
   async send(session: MessageSession, chain: MessageChain): Promise<void> {
