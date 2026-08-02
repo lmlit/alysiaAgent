@@ -1,4 +1,4 @@
-import { writeFileSync, readFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'fs';
+import { writeFileSync, readFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync, realpathSync } from 'fs';
 import { resolve, join, dirname } from 'path';
 import type { ToolDefinition } from './registry.js';
 
@@ -11,6 +11,19 @@ function safePath(base: string, userPath: string): string {
   // 防止路径穿越 (../.. → 逃出 workspace)
   if (!resolved.startsWith(resolve(base))) {
     throw new Error(`Path traversal blocked: "${userPath}" resolves outside workspace`);
+  }
+  // Resolve symlinks to prevent symlink-based path traversal
+  try {
+    if (existsSync(resolved)) {
+      const real = realpathSync(resolved);
+      if (!real.startsWith(realpathSync(base))) {
+        throw new Error(`Symlink traversal blocked: "${userPath}" points outside workspace`);
+      }
+      return real;
+    }
+  } catch (err: any) {
+    if (err.message.includes('traversal') || err.message.includes('blocked')) throw err;
+    // File doesn't exist yet — path is safe for creation (still checked via prefix above)
   }
   return resolved;
 }

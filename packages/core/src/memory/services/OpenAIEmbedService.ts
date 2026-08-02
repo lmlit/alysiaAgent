@@ -2,7 +2,7 @@
 // OpenAI-compatible embedding service. Works with any provider that exposes
 // the /v1/embeddings endpoint (OpenAI, DeepSeek, Moonshot, etc.).
 
-import type { ServiceConfig } from './config';
+import type { ServiceConfig } from './config.js';
 
 export class OpenAIEmbedService {
   private config: ServiceConfig;

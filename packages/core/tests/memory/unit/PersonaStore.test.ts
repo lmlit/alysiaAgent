@@ -19,6 +19,50 @@ describe('PersonaStore', () => {
 
   afterEach(() => db.close());
 
+  // ── v3 角色系统 ─────────────────────────────────────
+
+  it('should upsert and switch roles', () => {
+    store.upsertRole({
+      role: 'test-role',
+      name: '测试角色',
+      tone: '{"formality":0.5}',
+      speech_style: '{"sentence_length":0.5}',
+      emotional_range: '{"expressiveness":0.5}',
+      memory_config: '{"retention_bias":0,"decay_rate":0.5,"importance_threshold":0.5,"recency_weight":0.5,"confirmation_bias":0.5}',
+      system_prompt: '测试角色人格提示词',
+      is_active: true,
+    });
+
+    // 切换到新角色
+    expect(store.setActive('test-role')).toBe(true);
+    const active = store.get();
+    expect(active.name).toBe('测试角色');
+    expect(active.system_prompt).toBe('测试角色人格提示词');
+    expect(active.role).toBe('test-role');
+
+    // 列表包含两个角色
+    const roles = store.listAll();
+    expect(roles).toHaveLength(2);
+    expect(roles.find(r => r.role === 'test-role')?.isActive).toBe(true);
+    expect(roles.find(r => r.role === 'alysia')?.isActive).toBe(false);
+  });
+
+  it('should reject switching to non-existent role', () => {
+    expect(store.setActive('ghost')).toBe(false);
+  });
+
+  it('should get role by id', () => {
+    store.upsertRole({
+      role: 'r2',
+      name: '角色二',
+      tone: '{}', speech_style: '{}', emotional_range: '{}',
+      memory_config: '{"retention_bias":0,"decay_rate":0.5,"importance_threshold":0.5,"recency_weight":0.5,"confirmation_bias":0.5}',
+      system_prompt: '',
+    });
+    expect(store.getByRole('r2')?.name).toBe('角色二');
+    expect(store.getByRole('missing')).toBeNull();
+  });
+
   it('should return default persona on first read', () => {
     const persona = store.get();
     expect(persona.name).toBe('昔涟');

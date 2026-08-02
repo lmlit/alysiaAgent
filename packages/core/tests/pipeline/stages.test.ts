@@ -68,24 +68,33 @@ describe('MemoryIngestStage', () => {
 });
 
 describe('WorldbookStage', () => {
-  it('should set worldbook_triggered to false', async () => {
+  it('is a no-op (worldbook now handled as Agent tool)', async () => {
     const stage = new WorldbookStage();
     await stage.initialize({} as any);
     const event = makeEvent('hello');
     await stage.process(event);
-    expect(event.getExtra('worldbook_triggered')).toBe(false);
+    // WorldbookStage is now a no-op — no extras are set
+    expect(event.getArbitraryExtra('worldbook_triggered')).toBeUndefined();
   });
 });
 
 describe('MemoryRetrievalStage', () => {
-  it('should call memoryManager.assemble', async () => {
-    const mockMemory = { assemble: vi.fn().mockResolvedValue('SYSTEM PROMPT:昔涟') };
+  it('should call memoryManager.read and assembleWithWorldbook', async () => {
+    const mockReadResult = { context: '', persona_hint: '', retrieved: [], worldbook_triggers: [] };
+    const mockMemory = {
+      read: vi.fn().mockResolvedValue(mockReadResult),
+      assembleWithWorldbook: vi.fn().mockResolvedValue('SYSTEM PROMPT:昔涟'),
+      getRecentMessages: vi.fn().mockReturnValue([]),
+    };
     const stage = new MemoryRetrievalStage(mockMemory as any);
     await stage.initialize({} as any);
     const event = makeEvent('hello');
     await stage.process(event);
-    expect(mockMemory.assemble).toHaveBeenCalledWith('chat');
-    expect(event.getExtra('memory_context')).toBe('SYSTEM PROMPT:昔涟');
+    expect(mockMemory.read).toHaveBeenCalledWith({ query: 'hello', mode: 'chat', limit: 5 });
+    expect(mockMemory.assembleWithWorldbook).toHaveBeenCalledWith('chat', [], []);
+    expect(event.getExtra('search_results')).toEqual([]);
+    expect(event.getExtra('worldbook_triggers')).toEqual([]);
+    expect(event.getExtra('memory_context')).toContain('SYSTEM PROMPT:昔涟');
   });
 });
 

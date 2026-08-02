@@ -3,6 +3,7 @@ import { MessageSession } from './types.js';
 import type { Message, MessageComponent } from './message.js';
 import { MessageChain } from './chain.js';
 import type { PlainComponent, AtComponent } from './message.js';
+import type { PipelineExtras } from '../pipeline/types.js';
 
 // Supplementary component types not defined in message.ts
 interface FaceComponent {
@@ -38,6 +39,9 @@ export class MessageEvent {
   private _forceStopped: boolean = false;
   private _hasSendOper: boolean = false;
   callLlm: boolean = false;
+
+  /** Pipeline 模式：chat = 聊天模式（默认），code = 编程模式（桌面端切换） */
+  pipelineMode: 'chat' | 'code' = 'chat';
 
   constructor(opts: MessageEventOptions) {
     this.messageStr = opts.messageStr;
@@ -125,13 +129,27 @@ export class MessageEvent {
     return this.messageObj.sender?.nickname ?? '';
   }
 
-  setExtra(key: string, value: unknown): void {
+  /** ★ 类型安全的 Pipeline extras 写入。key 必须是 PipelineExtras 的合法属性名。 */
+  setExtra<K extends keyof PipelineExtras>(key: K, value: PipelineExtras[K]): void {
     this._extras.set(key, value);
   }
 
-  getExtra<T = unknown>(key: string): T | undefined;
-  getExtra<T = unknown>(key: string, defaultValue: T): T;
-  getExtra<T = unknown>(key: string, defaultValue?: T): T | undefined {
+  /** ★ 类型安全的 Pipeline extras 读取。返回类型自动推断。 */
+  getExtra<K extends keyof PipelineExtras>(key: K): PipelineExtras[K] | undefined;
+  getExtra<K extends keyof PipelineExtras>(key: K, defaultValue: PipelineExtras[K]): PipelineExtras[K];
+  getExtra<K extends keyof PipelineExtras>(key: K, defaultValue?: PipelineExtras[K]): PipelineExtras[K] | undefined {
+    return (this._extras.get(key) as PipelineExtras[K]) ?? defaultValue;
+  }
+
+  /** Escape hatch: 存储非 Pipeline 契约的临时数据（adapter 内部使用） */
+  setArbitraryExtra(key: string, value: unknown): void {
+    this._extras.set(key, value);
+  }
+
+  /** Escape hatch: 读取非 Pipeline 契约的临时数据 */
+  getArbitraryExtra<T = unknown>(key: string): T | undefined;
+  getArbitraryExtra<T = unknown>(key: string, defaultValue: T): T;
+  getArbitraryExtra<T = unknown>(key: string, defaultValue?: T): T | undefined {
     return (this._extras.get(key) as T) ?? defaultValue;
   }
 

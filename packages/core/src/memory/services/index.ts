@@ -1,5 +1,5 @@
 // src/memory/services/index.ts
-export { loadConfig } from './config';
-export type { ServiceConfig } from './config';
-export { OpenAIEmbedService } from './OpenAIEmbedService';
-export { OpenAILLMService } from './OpenAILLMService';
+export { loadConfig } from './config.js';
+export type { ServiceConfig } from './config.js';
+export { OpenAIEmbedService } from './OpenAIEmbedService.js';
+export { OpenAILLMService } from './OpenAILLMService.js';

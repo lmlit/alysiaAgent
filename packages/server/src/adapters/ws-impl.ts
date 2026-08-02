@@ -14,10 +14,13 @@
  */
 import { createServer, IncomingMessage, Server } from 'http';
 import { Socket } from 'net';
-import { createHash, randomBytes } from 'crypto';
+import { createHash } from 'crypto';
 import { EventEmitter } from 'events';
 
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
+const MAX_FRAME_SIZE = 4 * 1024 * 1024;       // 4 MB max per frame
+const MAX_BUFFER_SIZE = 8 * 1024 * 1024;       // 8 MB max accumulated buffer
+const MAX_FRAGMENT_COUNT = 64;                  // Max number of fragment segments
 
 // ── Types ────────────────────────────────────────────
 interface WSOptions { port: number; host?: string; }
@@ -43,7 +46,7 @@ export class WebSocket {
     this._readyState = 1;
     _socket.on('data', (chunk: Buffer) => this._onData(chunk));
     _socket.on('close', () => { this._readyState = 3; this._event.emit('close'); });
-    _socket.on('error', () => {});
+    _socket.on('error', (err) => { this._event.emit('error', err); });
   }
 
   // Event API
@@ -96,6 +99,12 @@ export class WebSocket {
   }
 
   private _onData(chunk: Buffer): void {
+    // Guard against unbounded buffer growth
+    if (this._buffer.length + chunk.length > MAX_BUFFER_SIZE) {
+      this._event.emit('error', new Error('WebSocket max buffer exceeded'));
+      this.close(1009, 'Message too large');
+      return;
+    }
     this._buffer = Buffer.concat([this._buffer, chunk]);
     this._parseFrames();
   }
@@ -115,6 +124,10 @@ export class WebSocket {
       } else if (payloadLen === 127) {
         if (this._buffer.length < 10) return;
         payloadLen = Number(this._buffer.readBigUInt64BE(2));
+        if (payloadLen > MAX_FRAME_SIZE) {
+          this.close(1009, 'Frame too large');
+          return;
+        }
         offset = 10;
       }
 
@@ -135,7 +148,7 @@ export class WebSocket {
       // Handle frame types
       switch (opcode) {
         case 0x0: // Continuation
-          if (this._fragmentedOpcode) {
+          if (this._fragmentedOpcode && this._fragmentedData.length < MAX_FRAGMENT_COUNT) {
             this._fragmentedData.push(payload);
             if (fin) {
               this._emitFragment();

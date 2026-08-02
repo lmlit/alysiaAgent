@@ -2,6 +2,13 @@ node_modules/
 dist/
 .env
 *.db
+*.db-shm
+*.db-wal
 *.lancedb/
 config.yml
 data/
+*.tar
+*.tar.gz
+*.tgz
+*.tsbuildinfo
+tmp-trigger-profile.ts

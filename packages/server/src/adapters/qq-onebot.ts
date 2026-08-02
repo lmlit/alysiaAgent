@@ -20,6 +20,7 @@ import type { Platform, PlatformMetadata, MessageSession } from '@alysia/core/pl
 import { MessageEvent, MessageType, MessageChain } from '@alysia/core/platform';
 import type { Message, MessageSender, MessageComponent } from '@alysia/core/platform';
 import type { EventBus } from '@alysia/core/eventbus';
+import { logger } from '@alysia/core';
 
 interface QQConfig {
   protocol: 'onebot_v11';
@@ -80,28 +81,34 @@ export class QQOneBotAdapter implements Platform {
 
       const clientId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       this.clients.set(clientId, ws);
-      console.log(`[QQ] Connected: ${clientId}`);
+      logger.info(`[QQ] Connected: ${clientId}`);
 
       ws.on('message', (data) => {
         const text = typeof data === 'string' ? data : data.toString('utf-8');
         this.handleMessage(text).catch(err =>
-          console.error('[QQ] Error:', err.message)
+          logger.error('[QQ] Error:', err.message)
         );
       });
 
       ws.on('close', () => {
         this.clients.delete(clientId);
-        console.log(`[QQ] Disconnected: ${clientId}`);
+        logger.info(`[QQ] Disconnected: ${clientId}`);
       });
     });
 
-    console.log(`[QQ] OneBot WS server on :${port}`);
+    logger.info(`[QQ] OneBot WS server on :${port}`);
   }
 
   private async handleMessage(raw: string): Promise<void> {
     try {
       const data = JSON.parse(raw) as OneBotMessage;
       if (data.post_type !== 'message') return;
+
+      // ★ 消息接收日志（含正文）：群聊/私聊谁发了什么
+      const text = typeof data.message === 'string'
+        ? data.message
+        : data.message.map(s => s.data?.text || `[${s.type}]`).join('');
+      logger.info(`[QQ] ← ${data.message_type ?? '?'} from=${data.sender?.nickname || data.user_id} session=${data.message_type === 'group' ? `group_${data.group_id}` : `private_${data.user_id}`} content="${text.slice(0, 100)}"`);
 
       const event = this.toMessageEvent(data);
       if (event) this.eventBus.put(event);
@@ -184,9 +191,10 @@ export class QQOneBotAdapter implements Platform {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: segments, auto_escape: false }),
       });
-      if (!resp.ok) console.error(`[QQ] Send failed: ${resp.status}`);
+      if (!resp.ok) logger.error(`[QQ] Send failed: ${resp.status}`);
+      else logger.info(`[QQ] → reply sent (${isGroup ? 'group' : 'private'}): ${segments.map(s => s.data.text || `[${s.type}]`).join('').slice(0, 80)}`);
     } catch (err: any) {
-      console.error(`[QQ] Send error: ${err.message}`);
+      logger.error(`[QQ] Send error: ${err.message}`);
     }
   }
 
@@ -211,7 +219,7 @@ export class QQOneBotAdapter implements Platform {
         body: JSON.stringify({ message: segments, auto_escape: false }),
       });
     } catch (err: any) {
-      console.error(`[QQ] Send error: ${err.message}`);
+      logger.error(`[QQ] Send error: ${err.message}`);
     }
   }
 

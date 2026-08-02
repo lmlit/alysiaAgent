@@ -1,22 +1,36 @@
 bot:
   name: "昔涟"
-  ownerId: "YOUR_TELEGRAM_USER_ID"
+  ownerId: "YOUR_USER_ID"
 
 llm:
   baseUrl: "https://api.deepseek.com/v1"
-  apiKey: "${DEEPSEEK_API_KEY}"
+  apiKey: "${OPENAI_API_KEY}"
   model: "deepseek-v4-flash"
 
 embed:
   baseUrl: "https://open.bigmodel.cn/api/paas/v4"
-  apiKey: "${ZHIPU_API_KEY}"
-  model: "embedding-2"
+  apiKey: "${EMBED_API_KEY}"
+  model: "${EMBED_MODEL}"
 
 platforms:
-  telegram:
-    token: "${TELEGRAM_BOT_TOKEN}"
+  # telegram:
+  #   token: "${TELEGRAM_BOT_TOKEN}"
+  qq:
+    protocol: "onebot_v11"
+    ws_port: 6199
+    http_port: 3000
+  qq_official:
+    app_id: "${QQ_APP_ID}"
+    app_secret: "${QQ_APP_SECRET}"
 
 server:
   port: 6185
   dataDir: "./data"
   workspaceDir: "./data/workspace"
+
+# 能力开关（服务端默认聊天模式；桌面端改为 codeMode: true 即可）
+features:
+  codeMode: false
+  # shell: true       # 桌面端：开启 shell 执行
+  # filesystem: true  # 桌面端：开启文件读写
+  # streaming: true   # 桌面端：开启流式输出

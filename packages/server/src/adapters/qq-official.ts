@@ -22,6 +22,23 @@ import type { Platform, PlatformMetadata, MessageSession } from '@alysia/core/pl
 import { MessageEvent, MessageType, MessageChain } from '@alysia/core/platform';
 import type { Message, MessageSender, MessageComponent } from '@alysia/core/platform';
 import type { EventBus } from '@alysia/core/eventbus';
+import { logger } from '@alysia/core';
+
+// ── 表情包标记协议：文案内 [表情包:名字] → 图片发送 ──────
+// 提取为纯函数便于单测（不依赖 adapter 实例）。
+export function parseStickerMarks(text: string): { text: string; marks: string[] } {
+  const marks: string[] = [];
+  for (const m of text.matchAll(/\[表情包:([^\]]+)\]/g)) {
+    marks.push(m[1].trim());
+  }
+  // 移除标记后可能残留相邻空格/换行，压缩为单个
+  const clean = text
+    .replace(/\[表情包:[^\]]+\]/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/ {2,}/g, ' ')
+    .trim();
+  return { text: clean, marks };
+}
 
 // ── QQ WebSocket 协议常量 ─────────────────────────
 const QQ_API_HOST = 'https://api.sgroup.qq.com';
@@ -64,6 +81,12 @@ export class QQOfficialAgentAdapter implements Platform {
   private sessionId = '';
   private running = false;
   private lastHeartbeatAck = 0;
+  /** 表情包解析回调：名字 → 图片路径（由 bootstrap 注入 core.memoryManager.findSticker） */
+  private stickerResolver: ((name: string) => string | null) | null = null;
+
+  setStickerResolver(fn: (name: string) => string | null): void {
+    this.stickerResolver = fn;
+  }
 
   constructor(config: QQConfig, private adapterId = 'qq-official') {
     this.config = config;
@@ -82,14 +105,14 @@ export class QQOfficialAgentAdapter implements Platform {
     // 1. 获取 access_token
     await this.refreshToken();
     if (!this.accessToken) {
-      console.error('[QQ Official] Failed to get access token');
+      logger.error('[QQ Official] Failed to get access token');
       return;
     }
 
     // 2. 获取 WebSocket 地址
     const wssUrl = await this.getGatewayUrl();
     if (!wssUrl) {
-      console.error('[QQ Official] Failed to get gateway URL');
+      logger.error('[QQ Official] Failed to get gateway URL');
       return;
     }
 
@@ -111,10 +134,10 @@ export class QQOfficialAgentAdapter implements Platform {
       if (data.access_token) {
         this.accessToken = data.access_token;
         this.tokenExpiry = Date.now() + (data.expires_in - 60) * 1000;
-        console.log('[QQ Official] Token obtained');
+        logger.info('[QQ Official] Token obtained');
       }
     } catch (err: any) {
-      console.error('[QQ Official] Token error:', err.message);
+      logger.error('[QQ Official] Token error:', err.message);
     }
   }
 
@@ -124,11 +147,11 @@ export class QQOfficialAgentAdapter implements Platform {
         headers: { Authorization: `QQBot ${this.accessToken}` },
       });
       const raw = await resp.text();
-      console.log('[QQ Official] Gateway response:', resp.status, raw.slice(0, 500));
+      logger.info('[QQ Official] Gateway response:', resp.status, raw.slice(0, 500));
       const data = JSON.parse(raw) as QQWssData;
       return data.url || null;
     } catch (err: any) {
-      console.error('[QQ Official] Gateway error:', err.message);
+      logger.error('[QQ Official] Gateway error:', err.message);
       return null;
     }
   }
@@ -138,7 +161,7 @@ export class QQOfficialAgentAdapter implements Platform {
     // 目标: 连接到 wss://api.sgroup.qq.com/websocket
     const url = new URL(wssUrl);
 
-    console.log(`[QQ Official] Connecting to ${url.hostname}...`);
+    logger.info(`[QQ Official] Connecting to ${url.hostname}...`);
 
     // 使用我们自己的 ws-impl 作为客户端连接
     const tls = await import('tls');
@@ -175,13 +198,13 @@ export class QQOfficialAgentAdapter implements Platform {
           const statusLine = handshakeBuffer.split('\r\n')[0];
           if (statusLine.includes('101')) {
             handshakeDone = true;
-            console.log('[QQ Official] WebSocket connected');
+            logger.info('[QQ Official] WebSocket connected');
             // Wait for HELLO (op:10) before sending IDENTIFY
           } else {
             const bodyStart = handshakeBuffer.indexOf('\r\n\r\n') + 4;
             const body = bodyStart < handshakeBuffer.length ? handshakeBuffer.slice(bodyStart) : '';
-            console.error('[QQ Official] WS handshake failed:', statusLine);
-            console.error('[QQ Official] Response body:', body.slice(0, 500));
+            logger.error('[QQ Official] WS handshake failed:', statusLine);
+            logger.error('[QQ Official] Response body:', body.slice(0, 500));
             socket.destroy();
           }
         }
@@ -198,7 +221,7 @@ export class QQOfficialAgentAdapter implements Platform {
     });
 
     socket.on('close', () => {
-      console.log('[QQ Official] WebSocket disconnected');
+      logger.info('[QQ Official] WebSocket disconnected');
       this.stopHeartbeat();
       if (this.running) {
         this.scheduleReconnect(wssUrl);
@@ -206,7 +229,7 @@ export class QQOfficialAgentAdapter implements Platform {
     });
 
     socket.on('error', (err: Error) => {
-      console.error('[QQ Official] WS error:', err.message);
+      logger.error('[QQ Official] WS error:', err.message);
     });
   }
 
@@ -234,7 +257,7 @@ export class QQOfficialAgentAdapter implements Platform {
         properties: {},
       },
     });
-    console.log('[QQ Official] → IDENTIFY, payload length:', payload.length);
+    logger.info('[QQ Official] → IDENTIFY, payload length:', payload.length);
     this.sendFrame(1, payload);
   }
 
@@ -311,10 +334,10 @@ export class QQOfficialAgentAdapter implements Platform {
   }
 
   private handleGatewayMessage(msg: QQGatewayPayload): void {
-    console.log('[QQ Official] ← op:', msg.op, msg.t || '');
+    logger.info('[QQ Official] ← op:', msg.op, msg.t || '');
     switch (msg.op) {
       case 10: // Hello → send IDENTIFY
-        console.log('[QQ Official] Hello (heartbeat:', msg.d?.heartbeat_interval, 'ms)');
+        logger.info('[QQ Official] Hello (heartbeat:', msg.d?.heartbeat_interval, 'ms)');
         this.sendIdentify();
         this.stopHeartbeat();
         const interval = msg.d?.heartbeat_interval || 41250;
@@ -328,7 +351,7 @@ export class QQOfficialAgentAdapter implements Platform {
         // Watchdog: if no ACK for 2x interval, force reconnect
         this._watchdog = setInterval(() => {
           if (Date.now() - this.lastHeartbeatAck > interval * 2) {
-            console.log('[QQ Official] Heartbeat timeout — reconnecting');
+            logger.info('[QQ Official] Heartbeat timeout — reconnecting');
             if (this.ws && !this.ws.destroyed) this.ws.destroy();
           }
         }, interval);
@@ -339,16 +362,16 @@ export class QQOfficialAgentAdapter implements Platform {
         break;
 
       case 12: // Ready / Resumed
-        console.log('[QQ Official] ✅ Bot is now ONLINE — session:', msg.d?.session_id);
+        logger.info('[QQ Official] ✅ Bot is now ONLINE — session:', msg.d?.session_id);
         this.sessionId = msg.d?.session_id || '';
         break;
 
       case 7: // Reconnect
-        console.log('[QQ Official] Server requested reconnect');
+        logger.info('[QQ Official] Server requested reconnect');
         break;
 
       case 9: // Invalid session
-        console.log('[QQ Official] ❌ Invalid session — re-identifying...');
+        logger.info('[QQ Official] ❌ Invalid session — re-identifying...');
         this.sendIdentify();
         break;
 
@@ -358,17 +381,17 @@ export class QQOfficialAgentAdapter implements Platform {
         break;
 
       default:
-        console.log('[QQ Official] Op:', msg.op, 't:', msg.t, 'd:', JSON.stringify(msg.d || {}).slice(0, 200));
+        logger.info('[QQ Official] Op:', msg.op, 't:', msg.t, 'd:', JSON.stringify(msg.d || {}).slice(0, 200));
     }
   }
 
   private handleEvent(eventType: string, data: any): void {
     // Log ALL events for debugging
-    console.log('[QQ Official] Event:', eventType, 'keys:', Object.keys(data || {}).join(','));
+    logger.info('[QQ Official] Event:', eventType, 'keys:', Object.keys(data || {}).join(','));
 
     // Only process message events, not gateway events (READY, RESUMED, etc.)
     if (eventType === 'READY' || eventType === 'RESUMED') {
-      console.log('[QQ Official] ✅ Bot ONLINE —', eventType, 'session:', data?.session_id);
+      logger.info('[QQ Official] ✅ Bot ONLINE —', eventType, 'session:', data?.session_id);
       return;
     }
     if (!eventType.includes('MESSAGE') && !eventType.includes('C2C') && !eventType.includes('GROUP')) return;
@@ -388,6 +411,9 @@ export class QQOfficialAgentAdapter implements Platform {
     const userId = data.author?.user_openid || data.author?.id || '';
     const groupId = data.group_openid || data.channel_id || '';
     const sessionId = chatType === 'private' ? `private_${userId}` : `group_${groupId}`;
+
+    // ★ 消息正文日志：排查"谁发了什么"的关键
+    logger.info(`[QQ Official] ← ${eventType} session=${sessionId.slice(-16)} author=${(data.author?.username || userId).slice(0, 12)} content="${(data.content || '').slice(0, 100)}"`);
 
     const sender: MessageSender = {
       userId,
@@ -428,40 +454,124 @@ export class QQOfficialAgentAdapter implements Platform {
   private async sendReply(data: any, chain: MessageChain, chatType: string): Promise<void> {
     await this.ensureToken();
 
-    const text = [...chain].filter(c => c.type === 'plain').map(c => (c as any).text).join('\n');
-    if (!text) { console.log('[QQ Official] Reply empty, skipping send'); return; }
+    // 解析 [表情包:名字] 标记 → 表情包图片；标记从正文中移除
+    const rawText = [...chain].filter(c => c.type === 'plain').map(c => (c as any).text).join('\n');
+    const parsed = parseStickerMarks(rawText);
+    const stickerImages: string[] = [];
+    if (this.stickerResolver) {
+      for (const name of parsed.marks) {
+        const imgPath = this.stickerResolver(name);
+        if (imgPath) stickerImages.push(imgPath);
+      }
+    }
+    const text = parsed.text;
+    const images = stickerImages;
 
-    console.log('[QQ Official] Sending reply:', text.slice(0, 80), '→ chatType:', chatType);
+    if (!text && images.length === 0) { logger.info('[QQ Official] Reply empty, skipping send'); return; }
+    logger.info('[QQ Official] Sending reply:', (text || '').slice(0, 80), '+', images.length, 'img →', chatType);
 
-    const payload: any = {
-      content: text,
-      msg_type: 0,
-    };
+    const endpoint = chatType === 'group'
+      ? `${QQ_API_HOST}/v2/groups/${data.group_openid}/messages`
+      : `${QQ_API_HOST}/v2/users/${data.author?.user_openid || data.author?.id}/messages`;
 
     try {
-      if (chatType === 'group') {
-        payload.msg_id = data.id;
-        await fetch(`${QQ_API_HOST}/v2/groups/${data.group_openid}/messages`, {
+      // 1. 文本回复（msg_seq 为被动回复必需的自增序号）
+      if (text) {
+        await fetch(endpoint, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `QQBot ${this.accessToken}`,
-          },
-          body: JSON.stringify(payload),
-        });
-      } else if (chatType === 'private') {
-        payload.msg_id = data.id;
-        await fetch(`${QQ_API_HOST}/v2/users/${data.author?.user_openid || data.author?.id}/messages`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `QQBot ${this.accessToken}`,
-          },
-          body: JSON.stringify(payload),
+          headers: { 'Content-Type': 'application/json', Authorization: `QQBot ${this.accessToken}` },
+          body: JSON.stringify({ content: text, msg_type: 0, msg_id: data.id, msg_seq: ++this.msgSeq }),
         });
       }
+
+      // 2. 图片回复（表情包）：
+      //    私聊 → 上传 srv_send_msg=true 直接发图（uploadImage 内部完成）
+      //    群聊 → 上传拿 file_info → 发 msg_type=7 被动媒体消息
+      //    文档要求：msg_type=7 时 content 字段必须填值（空格），否则 40011000
+      for (const imgPath of images) {
+        const fileInfo = await this.uploadImage(chatType, data, imgPath);
+        if (!fileInfo || chatType !== 'group') continue;
+        const mediaResp = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `QQBot ${this.accessToken}` },
+          body: JSON.stringify({ msg_type: 7, msg_id: data.id, msg_seq: ++this.msgSeq, media: fileInfo, content: ' ', event_id: 'GROUP_MSG_RECEIVE' }),
+        });
+        const mediaResult = await mediaResp.json().catch(() => ({}));
+        logger.info('[QQ Official] Group media send:', mediaResp.status, JSON.stringify(mediaResult).slice(0, 200));
+      }
     } catch (err: any) {
-      console.error('[QQ Official] Send error:', err.message);
+      logger.error('[QQ Official] Send error:', err.message);
+    }
+  }
+
+  /** file_info 缓存：同一张图 TTL 内复用，避免重复上传（省流量） */
+  private fileInfoCache = new Map<string, { fileInfo: string; expiresAt: number }>();
+  private static FILE_INFO_TTL_MS = 90 * 60 * 1000; // 90 分钟（QQ TTL 约 2 小时，留余量）
+  /** 被动回复自增序号（msg_seq，QQ API 必需，用于避免重复响应被去重） */
+  private msgSeq = 0;
+
+  /** 上传图片到 QQ 官方 API，返回 file_info（用于 msg_type=7 发图）。
+   *  file_info 有 TTL，缓存复用避免重复上传 base64。 */
+  private async uploadImage(chatType: string, data: any, imagePath: string): Promise<string | null> {
+    try {
+      const fs = await import('fs');
+      const path = await import('path');
+      // 支持绝对路径和相对路径（相对 server 启动目录）。
+      // 注意：'/data/...' 在 Windows 会被当作盘符根路径，需去掉前导斜杠。
+      const normalized = imagePath.replace(/^[\\/]+/, '');
+      const absPath = path.isAbsolute(normalized) ? normalized : path.resolve(process.cwd(), normalized);
+      if (!fs.existsSync(absPath)) {
+        logger.warn(`[QQ Official] Image not found: ${absPath} (from ${imagePath})`);
+        return null;
+      }
+
+      // ★ 缓存命中：TTL 内直接复用 file_info（图片没变就不用重新上传）
+      const cached = this.fileInfoCache.get(absPath);
+      if (cached && cached.expiresAt > Date.now()) {
+        return cached.fileInfo;
+      }
+
+      const uploadUrl = chatType === 'group'
+        ? `${QQ_API_HOST}/v2/groups/${data.group_openid}/files`
+        : `${QQ_API_HOST}/v2/users/${data.author?.user_openid || data.author?.id}/files`;
+
+      // QQ API v2: 上传接口用 JSON body，图片以 base64 的 file_data 传输。
+      // ★ 私聊：srv_send_msg=true 直接发图（被动窗口内有效，已验证成功）
+      // ★ 群聊：srv_send_msg=true 触发主动消息会报 40034105 无权限，
+      //   改为 srv_send_msg=false 拿 file_info → 调用方再发 msg_type=7 被动消息
+      const isDirectSend = chatType === 'private';
+      const base64 = fs.readFileSync(absPath).toString('base64');
+      logger.info(`[QQ Official] Uploading image → ${uploadUrl.replace(QQ_API_HOST, '')} (${(base64.length / 1024).toFixed(0)}KB, ${isDirectSend ? 'direct-send' : 'get-file-info'})`);
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 20000); // 20s 超时，防止挂起
+      const resp = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `QQBot ${this.accessToken}` },
+        body: JSON.stringify({ file_type: 1, file_data: base64, srv_send_msg: isDirectSend }),
+        signal: controller.signal,
+      }).catch((err: any) => {
+        logger.warn('[QQ Official] Upload image request failed:', err.name, err.message);
+        return null;
+      });
+      clearTimeout(timeout);
+      if (!resp) return null;
+      const result = await resp.json() as any;
+      // 兼容两种响应结构：{ data: { file_info } } 或顶层 { file_info }
+      const fileInfo = result?.data?.file_info || result?.file_info;
+      if (!fileInfo) {
+        logger.warn('[QQ Official] Upload image failed:', resp.status, JSON.stringify(result).slice(0, 300));
+        return null;
+      }
+      if (isDirectSend) {
+        logger.info(`[QQ Official] Image sent via upload: ${path.basename(absPath)} (direct)`);
+        return null; // 私聊已直接发送，无需再发消息
+      }
+      // ★ 写入缓存：TTL 内复用，避免每次发图都上传 base64
+      this.fileInfoCache.set(absPath, { fileInfo, expiresAt: Date.now() + QQOfficialAgentAdapter.FILE_INFO_TTL_MS });
+      return fileInfo;
+    } catch (err: any) {
+      logger.error('[QQ Official] Upload image error:', err.message);
+      return null;
     }
   }
 
@@ -471,9 +581,29 @@ export class QQOfficialAgentAdapter implements Platform {
     }
   }
 
+  /** ★ 主动消息发送（不带 msg_id，bot 主动发起）。
+   *  私聊互动窗口（48h）内可用；群聊主动消息受限（需群主开权限，4条/月）。 */
+  async sendProactive(openid: string, text: string): Promise<boolean> {
+    await this.ensureToken();
+    try {
+      const resp = await fetch(`${QQ_API_HOST}/v2/users/${openid}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `QQBot ${this.accessToken}` },
+        body: JSON.stringify({ content: text, msg_type: 0 }),
+      });
+      const result = await resp.json().catch(() => ({}));
+      const ok = resp.status === 200 && (result?.code === 0 || result?.code === undefined);
+      logger.info(`[QQ Official] Proactive send → ${openid.slice(0, 8)}...: ${ok ? 'OK' : resp.status + ' ' + JSON.stringify(result).slice(0, 150)}`);
+      return ok;
+    } catch (err: any) {
+      logger.error('[QQ Official] Proactive send error:', err.message);
+      return false;
+    }
+  }
+
   private scheduleReconnect(_wssUrl: string): void {
     if (this.reconnectTimer) return;
-    console.log('[QQ Official] Reconnecting in 5s...');
+    logger.info('[QQ Official] Reconnecting in 5s...');
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       if (this.running) this.run().catch(console.error);
@@ -498,7 +628,7 @@ export class QQOfficialAgentAdapter implements Platform {
         body: JSON.stringify({ content: text, msg_type: 0 }),
       });
     } catch (err: any) {
-      console.error('[QQ Official] Send error:', err.message);
+      logger.error('[QQ Official] Send error:', err.message);
     }
   }
 
@@ -527,7 +657,7 @@ export class QQOfficialAgentAdapter implements Platform {
     this.stopHeartbeat();
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     if (this.ws && !this.ws.destroyed) this.ws.destroy();
-    console.log('[QQ Official] Terminated');
+    logger.info('[QQ Official] Terminated');
   }
 }
 

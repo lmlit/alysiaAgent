@@ -162,7 +162,7 @@ describe('AgentRunner', () => {
 
     expect(toolRegistry.execute).toHaveBeenCalledWith('get_weather', {
       location: 'Beijing',
-    });
+    }, 'default');
     expect(result.chain.getComponents()[0]).toEqual({
       type: 'plain',
       text: 'Weather: 25°C',
@@ -189,7 +189,7 @@ describe('AgentRunner', () => {
 
     const result = await runner.run('do something', 'system');
 
-    expect(toolRegistry.execute).toHaveBeenCalledWith('broken_tool', {});
+    expect(toolRegistry.execute).toHaveBeenCalledWith('broken_tool', {}, 'default');
     expect(result.chain.getComponents()[0].text).toBe('Error was reported');
     expect(providerManager.textChatWithFallback).toHaveBeenCalledTimes(2);
   });

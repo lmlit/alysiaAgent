@@ -95,6 +95,83 @@ describe('MemoryManager', () => {
     expect(prompt.length).toBeGreaterThan(50);
   });
 
+  it('should import knowledge and retrieve via text search', async () => {
+    const longContent = '昔涟的设定文档。'.repeat(200); // 超过 500 字符触发分块
+    const result = await manager.importKnowledge({ title: '昔涟设定', content: longContent });
+    expect(result.chunks).toBeGreaterThan(1);
+    expect(result.deduplicated).toBe(false);
+
+    // 重复导入 → 去重
+    const dup = await manager.importKnowledge({ title: '昔涟设定', content: longContent });
+    expect(dup.deduplicated).toBe(true);
+
+    // 检索命中 chunk 内容
+    const read = await manager.read({ query: '设定文档', mode: 'chat', limit: 5 });
+    const hit = read.retrieved.find(r => r.text.includes('昔涟的设定文档'));
+    expect(hit).toBeDefined();
+  });
+
+  it('should list and delete knowledge docs', async () => {
+    await manager.importKnowledge({ title: '文档A', content: '内容A' });
+    await manager.importKnowledge({ title: '文档B', content: '内容B' });
+
+    const docs = manager.listKnowledgeDocs();
+    expect(docs).toHaveLength(2);
+
+    manager.deleteKnowledgeDoc(docs[0].id);
+    expect(manager.listKnowledgeDocs()).toHaveLength(1);
+  });
+
+  // ── v3 角色系统 ─────────────────────────────────────
+
+  it('should import role with worldbook and switch', async () => {
+    const result = manager.importRole({
+      role: 'tester',
+      name: '测试员',
+      system_prompt: '你是测试员人格',
+      persona: { tone: { formality: 0.8 }, speech_style: {}, emotional_range: {} },
+      worldbook: [
+        { trigger_keys: ['测试'], content: '这是测试角色的世界书条目', priority: 10 },
+        { trigger_keys: ['图片'], content: 'http://img/1.png', content_type: 'image' },
+      ],
+      activate: true,
+    });
+    expect(result.worldbookCount).toBe(2);
+
+    // 激活后 system_prompt 生效
+    expect(manager.getActiveSystemPrompt()).toContain('测试员人格');
+    expect(manager.getActiveRoleId()).toBe('tester');
+
+    // 角色列表
+    const roles = manager.listRoles();
+    expect(roles.find(r => r.role === 'tester')?.isActive).toBe(true);
+
+    // 导出回读
+    const exported = manager.exportRole('tester');
+    expect(exported?.name).toBe('测试员');
+    expect(exported?.worldbook).toHaveLength(2);
+    expect(exported?.worldbook?.[1].content_type).toBe('image');
+  });
+
+  it('should filter worldbook by active role', async () => {
+    manager.importRole({
+      role: 'a',
+      name: '角色A',
+      worldbook: [{ trigger_keys: ['关键词A'], content: 'A的世界书' }],
+    });
+    manager.importRole({
+      role: 'b',
+      name: '角色B',
+      worldbook: [{ trigger_keys: ['关键词A'], content: 'B的世界书' }],
+      activate: true,
+    });
+
+    // 当前激活 B → 只匹配 B 的条目
+    const read = await manager.read({ query: '关键词A', mode: 'chat', limit: 3 });
+    expect(read.worldbook_triggers).toHaveLength(1);
+    expect(read.worldbook_triggers[0].content).toContain('B的世界书');
+  });
+
   it('should assemble code mode system prompt', async () => {
     // First set up some profile data
     db.prepare(`UPDATE user_profile SET basics = ?, preferences = ?, updated_at = ? WHERE id = 1`)

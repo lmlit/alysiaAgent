@@ -35,9 +35,38 @@ export interface Persona {
   tone: string;             // JSON {formality, warmth, humor, directness}
   speech_style: string;     // JSON {sentence_length, emoji_usage, code_heavy}
   emotional_range: string;  // JSON {expressiveness, empathy, playfulness}
+  memory_config: string;    // JSON {retention_bias, decay_rate, importance_threshold, recency_weight, confirmation_bias}
   adaptation_hints: string; // JSON array
   updated_at: string;
+  /** v3 角色系统：角色唯一 ID */
+  role?: string;
+  /** v3 角色系统：主人格提示词（角色包导入） */
+  system_prompt?: string;
+  /** v3 角色系统：是否激活角色 */
+  is_active?: number;
 }
+
+/** 记忆人格旋钮 — 不同角色有不同"记性" */
+export interface MemoryConfig {
+  /** 正负偏向: -1=只记坏, +1=只记好, 0=中性 */
+  retention_bias: number;
+  /** 遗忘速度: 0=不忘, 1=秒忘 */
+  decay_rate: number;
+  /** 敏感度阈值: 0=什么都记, 1=只记大事 */
+  importance_threshold: number;
+  /** 近期vs远期权重: 0=念旧, 1=只认最近 */
+  recency_weight: number;
+  /** 固执度: 0=随风倒, 1=从不改变看法 */
+  confirmation_bias: number;
+}
+
+export const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
+  retention_bias: 0.2,   // 昔涟：微微偏向正面
+  decay_rate: 0.3,        // 慢慢忘
+  importance_threshold: 0.4,
+  recency_weight: 0.3,    // 有点念旧
+  confirmation_bias: 0.3,  // 比较容易被改变
+};
 
 export interface Conversation {
   id: string;
@@ -76,6 +105,10 @@ export interface WorldbookEntry {
   hit_count: number;
   created_at: string;
   updated_at: string;
+  /** v3 角色系统：所属角色，匹配时按当前角色过滤 */
+  role?: string;
+  /** v3 角色系统：内容类型 'text' | 'image' | 'sticker'（表情包素材） */
+  content_type?: string;
 }
 
 export interface CodeContext {
@@ -124,6 +157,14 @@ export interface ProfileFact {
   evidence: string;    // 原文引用
   source_event: string;
   updated_at: string;
+  /** 来源类型: user=用户主动声明(最高可信), behavior=行为推断, inferred=LLM推断(最低可信) */
+  source: 'user' | 'behavior' | 'inferred';
+  /** 生效时间 (ISO) */
+  valid_from: string;
+  /** 失效时间 (ISO)，null=永不过期 */
+  valid_until: string | null;
+  /** 状态: active=有效, superseded=被新事实替代, expired=自然过期 */
+  status: 'active' | 'superseded' | 'expired';
 }
 
 // Bitmask constants for MemoryEvent.processed

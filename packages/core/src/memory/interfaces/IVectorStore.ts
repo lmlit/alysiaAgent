@@ -1,5 +1,5 @@
 // src/memory/interfaces/IVectorStore.ts
-import type { SearchResult } from '../types';
+import type { SearchResult } from '../types.js';
 
 export interface IVectorStore {
   insert(id: string, vector: number[], text: string, metadata: Record<string, unknown>): Promise<void>;

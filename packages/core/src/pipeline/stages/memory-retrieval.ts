@@ -1,7 +1,7 @@
 import type { Stage, PipelineContext } from '../types.js';
 import type { MessageEvent } from '../../platform/event.js';
 import type { MemoryManager } from '../../memory/MemoryManager.js';
-import type { WorldbookEntry, SearchResult } from '../../memory/types.js';
+import { logger } from '../../utils/logger.js';
 
 export class MemoryRetrievalStage implements Stage {
   constructor(private memoryManager: MemoryManager) {}
@@ -9,12 +9,25 @@ export class MemoryRetrievalStage implements Stage {
   async initialize(_ctx: PipelineContext): Promise<void> {}
 
   async process(event: MessageEvent): Promise<void> {
-    // 收集 WorldbookStage 异步匹配结果（如果有）
-    const triggers = (event.getExtra('worldbook_triggers') || []) as WorldbookEntry[];
-    const retrieved = (event.getExtra('search_results') || []) as SearchResult[];
+    const mode = event.pipelineMode;
 
-    // 长期记忆 + Worldbook 注入
-    const longTermMemory = await this.memoryManager.assembleWithWorldbook('chat', triggers, retrieved);
+    // ★ 主动调用 MemoryManager.read() 执行向量搜索 + Worldbook 匹配
+    const readResult = await this.memoryManager.read({
+      query: event.messageStr,
+      mode,
+      limit: 5,
+    });
+
+    // 写入类型安全的 extras 供下游 Stage 消费
+    event.setExtra('search_results', readResult.retrieved);
+    event.setExtra('worldbook_triggers', readResult.worldbook_triggers);
+
+    // 组装长期记忆（Persona + Profile + vector results + Worldbook）
+    const longTermMemory = await this.memoryManager.assembleWithWorldbook(
+      mode,
+      readResult.worldbook_triggers,
+      readResult.retrieved,
+    );
 
     // 短期记忆：EventLog 最近消息
     let recentContext = '';
@@ -23,7 +36,9 @@ export class MemoryRetrievalStage implements Stage {
       if (recent.length > 0) {
         recentContext = recent.map(r => r.content).join('\n');
       }
-    } catch { /* EventLog may not be ready */ }
+    } catch (err) {
+      logger.warn('Failed to read recent messages from EventLog:', err);
+    }
 
     const memoryContext = [longTermMemory, recentContext ? `\n## 最近对话\n${recentContext}` : '']
       .filter(Boolean)

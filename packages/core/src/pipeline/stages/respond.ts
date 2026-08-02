@@ -5,7 +5,7 @@ export class RespondStage implements Stage {
   async initialize(_ctx: PipelineContext): Promise<void> {}
 
   async process(event: MessageEvent): Promise<void> {
-    const responseChain = event.getExtra<any>('response_chain');
+    const responseChain = event.getExtra('response_chain');
     if (responseChain && !responseChain.isEmpty()) {
       try {
         await event.send(responseChain);

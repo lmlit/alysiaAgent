@@ -2,7 +2,7 @@
 // OpenAI-compatible LLM service. Works with any provider that exposes
 // the /v1/chat/completions endpoint (OpenAI, DeepSeek, Moonshot, etc.).
 
-import type { ServiceConfig } from './config';
+import type { ServiceConfig } from './config.js';
 
 export class OpenAILLMService {
   private config: ServiceConfig;

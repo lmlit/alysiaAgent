@@ -1,6 +1,7 @@
 import { readFileSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { logger } from '../utils/logger.js';
 import type { MemoryManager } from '../memory/MemoryManager.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -71,88 +72,35 @@ export function buildPersonaSystemPrompt(): string {
 /** Seed the PersonaStore with initial Cyrene persona data */
 export async function seedPersona(memoryManager: MemoryManager): Promise<void> {
   const soul = readPersonaFile('soul.md');
-  const identity = readPersonaFile('identity.md');
-  const defaultStyle = readPersonaFile('01_default.md');
-
   if (!soul) {
-    console.warn('[Persona] soul.md not found — skipping persona seed');
+    logger.warn('[Persona] soul.md not found — skipping persona seed');
     return;
   }
 
-  // The PersonaStore uses default row (id=1). We set the persona through the
-  // existing PersonaAdapter which writes to persona table.
-  // For now, store the full soul + identity text as the persona's base content
-  // via the PersonaStore's update mechanism.
-  // The PersonaStore stores: name, tone (JSON), speech_style (JSON),
-  // emotional_range (JSON), adaptation_hints (JSON)
-
-  const db = (memoryManager as any).db;
-  if (!db) return;
-
-  const personaData = {
-    name: '昔涟',
-    tone: JSON.stringify({
-      formality: 0.2,        // 句尾"呀""呢""啦"，非正式
-      warmth: 0.9,           // 温柔但不软弱
-      humor: 0.4,            // 轻盈俏皮但不喧闹
-      directness: 0.5,       // 含蓄但有主见
-    }),
-    speech_style: JSON.stringify({
-      sentence_length: 0.4,  // 短句，有留白
-      emoji_usage: 0.3,      // ♪ 点缀用
-      code_heavy: 0.0,       // 不涉及代码
-      poetic_imagery: 0.7,   // 花、种子、涟漪、星星、光、风
-    }),
-    emotional_range: JSON.stringify({
-      expressiveness: 0.7,   // 情感真实，不掩藏
-      empathy: 0.9,          // 高度共情
-      playfulness: 0.5,      // 适度俏皮
-    }),
-    adaptation_hints: JSON.stringify([]),
-    updated_at: new Date().toISOString(),
-    // Store the raw soul text for prompt assembly
-    _soul_raw: soul,
-    _identity_raw: identity || '',
-    _default_style_raw: defaultStyle || '',
-  };
-
+  // 构建内置角色包 'alysia'（昔涟）并导入，兼容 v3 角色系统
+  const systemPrompt = buildPersonaSystemPrompt();
   try {
-    // Upsert persona (id=1 is the default)
-    const existing = db.prepare('SELECT id FROM persona WHERE id = 1').get();
-    if (existing) {
-      db.prepare(`
-        UPDATE persona SET
-          name = ?, tone = ?, speech_style = ?, emotional_range = ?,
-          adaptation_hints = ?, updated_at = ?
-        WHERE id = 1
-      `).run(
-        personaData.name, personaData.tone, personaData.speech_style,
-        personaData.emotional_range, personaData.adaptation_hints,
-        personaData.updated_at,
-      );
-    } else {
-      db.prepare(`
-        INSERT INTO persona (id, name, tone, speech_style, emotional_range, adaptation_hints, updated_at)
-        VALUES (1, ?, ?, ?, ?, ?, ?)
-      `).run(
-        personaData.name, personaData.tone, personaData.speech_style,
-        personaData.emotional_range, personaData.adaptation_hints,
-        personaData.updated_at,
-      );
-    }
-    console.log('[Persona] Seeded 昔涟 persona data');
+    const result = memoryManager.importRole({
+      role: 'alysia',
+      name: '昔涟',
+      version: 1,
+      system_prompt: systemPrompt,
+      persona: {
+        tone: { formality: 0.2, warmth: 0.9, humor: 0.4, directness: 0.5 },
+        speech_style: { sentence_length: 0.4, emoji_usage: 0.3, code_heavy: 0.0, poetic_imagery: 0.7 },
+        emotional_range: { expressiveness: 0.7, empathy: 0.9, playfulness: 0.5 },
+      },
+      activate: false, // 已有激活角色时不抢占
+    });
+    logger.info(`[Persona] Seeded 昔涟 persona data (role: alysia, worldbook: ${result.worldbookCount})`);
   } catch (err) {
-    console.warn('[Persona] Failed to seed persona:', err);
+    logger.warn('[Persona] Failed to seed persona:', err);
   }
 }
 
 /** Seed the WorldbookStore with Cyrene background knowledge */
 export async function seedWorldbook(memoryManager: MemoryManager): Promise<void> {
-  const db = (memoryManager as any).db;
-  if (!db) return;
-
-  // Parse worldbook files into entries
-  // Each worldbook file contains multiple entries separated by headings (## Title)
+  // 解析 md 文件为世界书条目，并入内置角色包 alysia
   const entries: Array<{
     trigger_keys: string;
     content: string;
@@ -180,23 +128,24 @@ export async function seedWorldbook(memoryManager: MemoryManager): Promise<void>
     }
   }
 
-  // Insert into worldbook table
-  const insert = db.prepare(`
-    INSERT OR IGNORE INTO worldbook_entries (id, trigger_keys, trigger_mode, content, scope, priority, cooldown_sec, last_triggered, hit_count, created_at, updated_at)
-    VALUES (?, ?, 'any', ?, 'chat', ?, 300, NULL, 0, ?, ?)
-  `);
+  if (entries.length === 0) return;
 
-  const now = new Date().toISOString();
-  let count = 0;
-  for (const entry of entries) {
-    const id = hashId(entry.content);
-    try {
-      insert.run(id, entry.trigger_keys, entry.content, entry.priority, now, now);
-      count++;
-    } catch { /* duplicate, skip */ }
+  try {
+    const result = memoryManager.importRole({
+      role: 'alysia',
+      name: '昔涟',
+      system_prompt: buildPersonaSystemPrompt(),
+      worldbook: entries.map(e => ({
+        trigger_keys: JSON.parse(e.trigger_keys) as string[],
+        content: e.content,
+        priority: e.priority,
+      })),
+      activate: false,
+    });
+    logger.info(`[Persona] Seeded ${result.worldbookCount} worldbook entries`);
+  } catch (err) {
+    logger.warn('[Persona] Failed to seed worldbook:', err);
   }
-
-  console.log(`[Persona] Seeded ${count} worldbook entries`);
 }
 
 /** Extract trigger keywords from title + content */
@@ -223,13 +172,4 @@ function extractTriggerWords(title: string, content: string): string[] {
   }
 
   return [...words].slice(0, 15);
-}
-
-function hashId(content: string): string {
-  let hash = 0;
-  for (let i = 0; i < Math.min(content.length, 500); i++) {
-    hash = ((hash << 5) - hash) + content.charCodeAt(i);
-    hash |= 0;
-  }
-  return `wb_${Math.abs(hash).toString(36)}`;
 }

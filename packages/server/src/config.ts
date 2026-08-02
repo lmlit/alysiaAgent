@@ -1,5 +1,6 @@
 import { readFileSync } from 'fs';
 import { parse } from 'yaml';
+import { logger } from '@alysia/core';
 
 export interface QQOfficialConfig {
   app_id: string;
@@ -21,13 +22,30 @@ export interface ServerConfig {
   qq?: QQConfig;
   qq_official?: QQOfficialConfig;
   server: { port: number; dataDir: string; workspaceDir: string };
+  features?: { codeMode?: boolean; shell?: boolean; filesystem?: boolean; streaming?: boolean };
 }
 
 export function loadConfig(path: string): ServerConfig {
-  const raw = readFileSync(path, 'utf-8');
+  let raw: string;
+  try {
+    raw = readFileSync(path, 'utf-8');
+  } catch (err: any) {
+    throw new Error(`Failed to read config file "${path}": ${err.message}`);
+  }
   // 环境变量替换: ${VAR} → process.env.VAR
-  const interpolated = raw.replace(/\$\{(\w+)\}/g, (_, key) => process.env[key] || '');
-  const data = parse(interpolated) as any;
+  const interpolated = raw.replace(/\$\{(\w+)\}/g, (_, key) => {
+    const val = process.env[key];
+    if (val === undefined) {
+      logger.warn(`[Config] Environment variable "${key}" is not set, using empty string`);
+    }
+    return val || '';
+  });
+  let data: any;
+  try {
+    data = parse(interpolated);
+  } catch (err: any) {
+    throw new Error(`Failed to parse config YAML: ${err.message}`);
+  }
   return {
     bot: { name: data.bot?.name ?? 'Alysia', ownerId: data.bot?.ownerId ?? '' },
     llm: {
@@ -56,5 +74,6 @@ export function loadConfig(path: string): ServerConfig {
       dataDir: data.server?.dataDir ?? './data',
       workspaceDir: data.server?.workspaceDir ?? './data/workspace',
     },
+    features: data.features ?? { codeMode: false },
   };
 }

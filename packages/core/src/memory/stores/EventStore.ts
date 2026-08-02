@@ -1,13 +1,13 @@
 // src/memory/stores/EventStore.ts
 import type Database from 'better-sqlite3';
-import type { MemoryEvent } from '../types';
+import type { MemoryEvent } from '../types.js';
 
 export class EventStore {
   constructor(private db: Database.Database) {}
 
   insert(event: MemoryEvent): void {
     this.db.prepare(`
-      INSERT INTO events (id, session_id, source, type, payload, importance, created_at, processed)
+      INSERT OR REPLACE INTO events (id, session_id, source, type, payload, importance, created_at, processed)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       event.id,
@@ -40,10 +40,12 @@ export class EventStore {
     ).run(flag, id);
   }
 
-  getBySession(sessionId: string): MemoryEvent[] {
-    const rows = this.db.prepare(
-      'SELECT * FROM events WHERE session_id = ? ORDER BY created_at ASC'
-    ).all(sessionId) as Record<string, unknown>[];
+  getBySession(sessionId: string, limit?: number): MemoryEvent[] {
+    const query = limit
+      ? 'SELECT * FROM events WHERE session_id = ? ORDER BY created_at ASC LIMIT ?'
+      : 'SELECT * FROM events WHERE session_id = ? ORDER BY created_at ASC LIMIT 1000';
+    const params: unknown[] = limit ? [sessionId, limit] : [sessionId];
+    const rows = this.db.prepare(query).all(...params) as Record<string, unknown>[];
     return rows.map(r => this.rowToEvent(r));
   }
 
@@ -52,6 +54,18 @@ export class EventStore {
       'SELECT COUNT(*) as count FROM events WHERE session_id = ?'
     ).get(sessionId) as { count: number };
     return row.count;
+  }
+
+  /** 会话列表：按最近活跃排序，返回会话 ID + 消息数 + 最后活跃时间 */
+  listSessions(limit: number = 20): Array<{ session_id: string; count: number; last_active: string }> {
+    const rows = this.db.prepare(`
+      SELECT session_id, COUNT(*) as count, MAX(created_at) as last_active
+      FROM events
+      GROUP BY session_id
+      ORDER BY last_active DESC
+      LIMIT ?
+    `).all(limit) as Array<{ session_id: string; count: number; last_active: string }>;
+    return rows;
   }
 
   /** 获取某个会话最近的消息（用于短期上下文） */

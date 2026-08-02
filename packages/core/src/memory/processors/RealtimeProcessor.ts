@@ -1,19 +1,21 @@
 // src/memory/processors/RealtimeProcessor.ts
-import type { MemoryEvent } from '../types';
-import { PROCESSED_PROFILE, PROCESSED_PERSONA, PROCESSED_KNOWLEDGE } from '../types';
-import type { EventStore } from '../stores/EventStore';
-import type { ProfileStore } from '../stores/ProfileStore';
-import type { WorldbookMatcher } from '../engines/WorldbookMatcher';
-import type { PersonaAdapter } from '../engines/PersonaAdapter';
-import type { IEmbedService } from '../interfaces/IEmbedService';
-import type { IVectorStore } from '../interfaces/IVectorStore';
+import type { MemoryEvent } from '../types.js';
+import { PROCESSED_PROFILE, PROCESSED_PERSONA, PROCESSED_KNOWLEDGE } from '../types.js';
+import type { EventStore } from '../stores/EventStore.js';
+import type { ProfileStore } from '../stores/ProfileStore.js';
+import type { WorldbookMatcher } from '../engines/WorldbookMatcher.js';
+import type { PersonaAdapter } from '../engines/PersonaAdapter.js';
+import type { ProfileExtractor } from '../engines/ProfileExtractor.js';
+import type { IEmbedService } from '../interfaces/IEmbedService.js';
+import type { IVectorStore } from '../interfaces/IVectorStore.js';
 
 /**
  * RealtimeProcessor handles per-event processing in the hot path:
  *   1. Worldbook matching (trigger worldbook entries from event content)
  *   2. Persona scan (detect preference signals and adjust persona)
- *   3. Embed generation (async, stored in vector store if available)
- *   4. Mark event as processed (PROFILE | PERSONA | KNOWLEDGE)
+ *   3. Correction detection (快路径：用户纠正立即生效)
+ *   4. Embed generation (async, stored in vector store if available)
+ *   5. Mark event as processed (PROFILE | PERSONA | KNOWLEDGE)
  */
 export class RealtimeProcessor {
   constructor(
@@ -21,6 +23,7 @@ export class RealtimeProcessor {
     private worldbookMatcher: WorldbookMatcher,
     private personaAdapter: PersonaAdapter,
     private profileStore: ProfileStore,
+    private profileExtractor: ProfileExtractor,
     private embedService: IEmbedService,
     private vectorStore: IVectorStore | null,
   ) {}
@@ -28,18 +31,21 @@ export class RealtimeProcessor {
   async process(event: MemoryEvent): Promise<void> {
     const text = typeof event.payload.content === 'string' ? event.payload.content : '';
 
-    // 1. Worldbook match from event content
+    // 群聊 NPC 模式：非 owner 的消息跳过画像提取（Persona + Profile），
+    // 仅保留流水账 (EventLog) 和 Worldbook 匹配。
+    const skipProfile = event.payload.skip_profile === true;
+
+    // 1. Worldbook match from event content (所有人消息都匹配)
     if (text) {
       const mode = event.source === 'code' ? 'code' : 'chat';
-      const matches = await this.worldbookMatcher.match(text, mode);
-      if (matches.length > 0) {
-        // Store a lightweight profile hint when worldbook triggers
-        // (cached in memory, not persisted — hint only)
-        for (const entry of matches) {
-          // Worldbook triggers are recorded by matcher; we just note the signal
-          void entry;
-        }
-      }
+      await this.worldbookMatcher.match(text, mode);
+      // Trigger recording is handled internally by WorldbookMatcher.match()
+    }
+
+    if (skipProfile) {
+      // NPC 消息：只匹配 Worldbook，不提取画像、不做嵌入
+      this.eventStore.markProcessed(event.id, PROCESSED_KNOWLEDGE);
+      return;
     }
 
     // 2. Persona scan from event content
@@ -50,7 +56,30 @@ export class RealtimeProcessor {
       }
     }
 
-    // 3. Embed generation (async)
+    // 3. 纠正快路径 (v2): 检测用户纠正信号 → 立即更新 Profile
+    if (text) {
+      try {
+        const allFacts = this.profileStore.getAllFacts();
+        const signal = await this.profileExtractor.detectCorrectionSignal(text, allFacts);
+        if (signal.isCorrection && signal.target) {
+          this.profileStore.supersede(signal.target, {
+            fact: signal.newFact || signal.target,
+            confidence: 1.0,
+            evidence: signal.rawText,
+            source_event: event.id,
+            updated_at: new Date().toISOString(),
+            source: 'user',
+            valid_from: new Date().toISOString(),
+            valid_until: null,
+            status: 'active',
+          });
+        }
+      } catch {
+        // 纠正检测失败不阻塞主流程
+      }
+    }
+
+    // 4. Embed generation (async)
     if (text && this.vectorStore) {
       try {
         const vector = await this.embedService.embed(text);
@@ -65,8 +94,7 @@ export class RealtimeProcessor {
       }
     }
 
-    // 4. Mark event as processed (profile | persona | knowledge)
-    //    Worldbook + persona are profile-level signals; embedding is knowledge-level
+    // 5. Mark event as processed (profile | persona | knowledge)
     const flags = PROCESSED_PROFILE | PROCESSED_PERSONA | PROCESSED_KNOWLEDGE;
     this.eventStore.markProcessed(event.id, flags);
   }

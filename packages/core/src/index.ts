@@ -1,3 +1,5 @@
+export { logger } from './utils/logger.js';
+
 import { MemoryManager } from './memory/MemoryManager.js';
 import { initializeDatabase } from './memory/database.js';
 import { PipelineScheduler } from './pipeline/scheduler.js';
@@ -20,6 +22,22 @@ import { createWriteFileTool, createReadFileTool, createListFilesTool } from './
 import { createSessionCommands } from './commands/session.js';
 import { createStatsCommand } from './commands/stats.js';
 import { seedPersona, seedWorldbook, buildPersonaSystemPrompt } from './persona/loader.js';
+import { logger } from './utils/logger.js';
+
+// ── Feature flags ──────────────────────────────────────
+
+/** 控制 AlysiaCore 启动时激活的能力模块 */
+export interface AlysiaFeatures {
+  /** 编程模式：启用 shell + filesystem 工具 + CodeContextStore。
+   *  服务端默认 false，桌面端设置为 true。 */
+  codeMode?: boolean;
+  /** Shell 执行工具（需 codeMode）。默认 true（当 codeMode 开启时）。 */
+  shell?: boolean;
+  /** 文件系统工具 — write/read/list（需 codeMode）。默认 true（当 codeMode 开启时）。 */
+  filesystem?: boolean;
+  /** 流式输出（LLM 逐 token 推送，桌面端 Live2D 口型同步需要）。默认 false。 */
+  streaming?: boolean;
+}
 
 export interface AlysiaCoreOptions {
   dbPath: string;
@@ -35,6 +53,8 @@ export interface AlysiaCoreOptions {
     apiKey: string;
     model: string;
   };
+  /** 能力开关。未提供时全部使用默认值（codeMode=false）。 */
+  features?: AlysiaFeatures;
 }
 
 export class AlysiaCore {
@@ -60,12 +80,8 @@ export class AlysiaCore {
     db.pragma('journal_mode = WAL');
     initializeDatabase(db);
 
-    // Vector store (lazy init)
-    let vectorStore = null;
-    try {
-      const lancedb = await import('vectordb');
-      vectorStore = null; // LanceDB path — init on demand
-    } catch { /* LanceDB not available */ }
+    // Vector store — not yet used (LanceDB integration pending)
+    const vectorStore = null;
 
     // Embed service
     const embedService = {
@@ -79,8 +95,15 @@ export class AlysiaCore {
             body: JSON.stringify({ model: this.opts.embedConfig.model, input: text }),
             signal: controller.signal,
           });
+          if (!resp.ok) {
+            throw new Error(`Embed API error ${resp.status}: ${await resp.text().catch(() => '')}`);
+          }
           const data = await resp.json() as any;
-          return data.data[0].embedding as number[];
+          const embedding = data?.data?.[0]?.embedding;
+          if (!embedding || !Array.isArray(embedding)) {
+            throw new Error(`Embed API returned unexpected response: ${JSON.stringify(data).slice(0, 200)}`);
+          }
+          return embedding as number[];
         } finally {
           clearTimeout(timeout);
         }
@@ -102,8 +125,11 @@ export class AlysiaCore {
             ],
           }),
         });
+        if (!resp.ok) {
+          throw new Error(`LLM API error ${resp.status}: ${await resp.text().catch(() => '')}`);
+        }
         const data = await resp.json() as any;
-        return data.choices?.[0]?.message?.content || '';
+        return data?.choices?.[0]?.message?.content || '';
       },
     };
 
@@ -112,6 +138,10 @@ export class AlysiaCore {
     // Seed persona + worldbook from data files
     await seedPersona(this.memoryManager);
     await seedWorldbook(this.memoryManager);
+
+    // ★ 角色包目录自动加载：{dataDir}/roles/*.json 启动时自动导入
+    //   新增角色 = 往 roles/ 放一个 JSON 文件即可
+    await this.loadRolePackages();
 
     // Provider
     this.providerManager = new ProviderManager();
@@ -123,21 +153,12 @@ export class AlysiaCore {
       model: this.opts.llmConfig.model,
     });
 
-    // Tools
+    // Tools — chat tools always registered, code tools only for desktop
     this.toolRegistry = new ToolRegistry();
-    this.toolRegistry.register(createWebSearchTool());
-    this.toolRegistry.register(createWeatherTool());
-    this.toolRegistry.register(createWorldbookTool(db));
-    this.toolRegistry.register(createReminderTool(async (text) => {
-      console.log(`[Reminder] ${text}`);
-    }));
-    this.toolRegistry.register(createListRemindersTool());
-    this.toolRegistry.register(createCancelReminderTool());
-    // CLI + filesystem tools (agent self-evolution)
-    this.toolRegistry.register(createShellExecTool(this.opts.workspaceDir));
-    this.toolRegistry.register(createWriteFileTool(this.opts.workspaceDir));
-    this.toolRegistry.register(createReadFileTool(this.opts.workspaceDir));
-    this.toolRegistry.register(createListFilesTool(this.opts.workspaceDir));
+    this.registerChatTools(db);
+    if (this.opts.features?.codeMode) {
+      this.registerCodeTools();
+    }
 
     // Commands
     this.commandRegistry = new CommandRegistry();
@@ -172,10 +193,67 @@ export class AlysiaCore {
 
     // Initialize
     await this.scheduler.initialize();
-    this.eventBus.dispatch(); // fire and forget
+    this.eventBus.dispatch().catch(err => logger.error('EventBus dispatch error:', err));
   }
 
   async stop(): Promise<void> {
     this.eventBus.stop();
+  }
+
+  /** ★ 角色包目录自动加载：{dataDir}/roles/*.json → importRole()
+   *  角色包格式见 docs/superpowers/specs/2026-07-31-role-system.md */
+  private async loadRolePackages(): Promise<void> {
+    try {
+      const { readdirSync, readFileSync, existsSync } = await import('fs');
+      const { resolve } = await import('path');
+      const rolesDir = resolve(this.opts.workspaceDir, '..', 'roles');
+      // 兼容两种位置：dataDir/roles 与 workspaceDir/../roles
+      const candidates = [
+        resolve(this.opts.workspaceDir, '..', 'roles'),
+        resolve(this.opts.workspaceDir, 'roles'),
+      ];
+      const dir = candidates.find(d => existsSync(d));
+      if (!dir) return;
+
+      const files = readdirSync(dir).filter(f => f.endsWith('.json'));
+      for (const file of files) {
+        try {
+          const pkg = JSON.parse(readFileSync(resolve(dir, file), 'utf-8'));
+          const result = this.memoryManager.importRole(pkg);
+          logger.info(`Role package loaded: ${file} → ${result.role} (${result.worldbookCount} worldbook)`);
+        } catch (err: any) {
+          logger.error(`Failed to load role package ${file}:`, err.message);
+        }
+      }
+    } catch { /* roles dir not available — skip */ }
+  }
+
+  // ── Tool registration (public so desktop can call registerCodeTools later) ──
+
+  /** 注册聊天工具：服务端 + 桌面端都启用 */
+  registerChatTools(db: any): void {
+    this.toolRegistry.register(createWebSearchTool());
+    this.toolRegistry.register(createWeatherTool());
+    this.toolRegistry.register(createWorldbookTool(db));
+    this.toolRegistry.register(createReminderTool(async (text: string) => {
+      logger.info(`Reminder triggered: ${text}`);
+    }));
+    this.toolRegistry.register(createListRemindersTool());
+    this.toolRegistry.register(createCancelReminderTool());
+    // 表情包不再注册为工具 — 改用文案内标记 [表情包:名字]，发送时解析（LLMAgentStage + adapter）
+  }
+
+  /** ★ 注册编程工具：仅桌面端调用。
+   *  也可在构造后手动调用 `core.registerCodeTools()` 动态追加。 */
+  registerCodeTools(): void {
+    const features = this.opts.features ?? {};
+    if (features.shell !== false) {
+      this.toolRegistry.register(createShellExecTool(this.opts.workspaceDir));
+    }
+    if (features.filesystem !== false) {
+      this.toolRegistry.register(createWriteFileTool(this.opts.workspaceDir));
+      this.toolRegistry.register(createReadFileTool(this.opts.workspaceDir));
+      this.toolRegistry.register(createListFilesTool(this.opts.workspaceDir));
+    }
   }
 }

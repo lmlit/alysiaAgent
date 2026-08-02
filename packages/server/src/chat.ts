@@ -67,13 +67,12 @@ async function main() {
 
   console.log(`  人设: soul + identity + system + style 已加载`);
   console.log(`  记忆: EventLog + Profile + Persona + Worldbook + Conversation + Knowledge`);
-  console.log(`  工具: shell_exec + write_file + read_file + list_files + web_search + reminder`);
+  console.log(`  工具: web_search + weather + lookup_worldbook + reminder`);
+  console.log(`  编程工具: ${core['opts'].features?.codeMode ? '已启用' : '未启用（桌面端专属）'}`);
   console.log(`  命令: /new /reset /stats /exit /clear\n`);
   console.log('  输入 /exit 退出  /clear 清空上下文  /wipe 清除全部记忆  /stats 用量\n');
 
   let sessionId = 'local-chat';
-  // 对话历史 — 跨轮次保持
-  const history: Array<{ role: string; content: string }> = [];
 
   const rl = readline.createInterface({
     input: process.stdin,
@@ -94,7 +93,6 @@ async function main() {
       break;
     }
     if (input === '/clear') {
-      history.length = 0;
       await core.memoryManager.onSessionEnd(sessionId);
       sessionId = `local-chat-${Date.now()}`;
       core.registerPlatform(`cli::private:${sessionId}`, core.scheduler);
@@ -134,9 +132,8 @@ async function main() {
       sessionId,
     });
 
-    // Inject conversation history so the Agent remembers previous turns
-    event.setExtra('conversation_history', [...history]);
-    history.push({ role: 'user', content: input });
+    // Conversation history is injected by MemoryRetrievalStage from EventLog.
+    // No need to set conversation_history here — avoids double injection.
 
     // Print 昔涟's response
     let replyText = '';
@@ -154,12 +151,6 @@ async function main() {
     } catch (err: any) {
       console.log(`  ❌ 出错了: ${err.message}`);
     }
-
-    if (replyText) {
-      history.push({ role: 'assistant', content: replyText });
-    }
-    // Keep last 30 turns
-    if (history.length > 60) history.splice(0, history.length - 60);
 
     rl.prompt();
   }

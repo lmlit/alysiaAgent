@@ -1,14 +1,14 @@
-import type { WorldbookEntry } from '../types';
-import { WorldbookStore } from '../stores/WorldbookStore';
+import type { WorldbookEntry } from '../types.js';
+import { WorldbookStore } from '../stores/WorldbookStore.js';
 
 export class WorldbookMatcher {
   constructor(private store: WorldbookStore) {}
 
-  async match(text: string, mode: 'chat' | 'code'): Promise<WorldbookEntry[]> {
+  async match(text: string, mode: 'chat' | 'code', role: string = 'alysia'): Promise<WorldbookEntry[]> {
     const keywords = this.extractKeywords(text);
     if (keywords.length === 0) return [];
 
-    const entries = this.store.matchByKeywords(keywords, mode);
+    const entries = this.store.matchByKeywords(keywords, mode, role);
 
     // Record trigger for each matched entry
     for (const entry of entries) {

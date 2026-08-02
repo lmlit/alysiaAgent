@@ -1,12 +1,13 @@
 // src/memory/PromptAssembler.ts
-import type { ProfileStore } from './stores/ProfileStore';
-import type { PersonaStore } from './stores/PersonaStore';
-import type { ConversationStore } from './stores/ConversationStore';
-import type { KnowledgeStore } from './stores/KnowledgeStore';
-import type { WorldbookStore } from './stores/WorldbookStore';
-import type { CodeContextStore } from './stores/CodeContextStore';
-import type { SearchResult, WorldbookEntry } from './types';
-import { TokenBudget } from './TokenBudget';
+import type { ProfileStore } from './stores/ProfileStore.js';
+import type { PersonaStore } from './stores/PersonaStore.js';
+import type { ConversationStore } from './stores/ConversationStore.js';
+import type { KnowledgeStore } from './stores/KnowledgeStore.js';
+import type { WorldbookStore } from './stores/WorldbookStore.js';
+import type { CodeContextStore } from './stores/CodeContextStore.js';
+import type { SearchResult, WorldbookEntry } from './types.js';
+import { TokenBudget } from './TokenBudget.js';
+import { logger } from '../utils/logger.js';
 
 export class PromptAssembler {
   constructor(
@@ -35,9 +36,9 @@ export class PromptAssembler {
     const blocks: string[] = [];
 
     // Persona block (always included — most essential)
-    const tone = JSON.parse(persona.tone);
-    const speechStyle = JSON.parse(persona.speech_style);
-    const emotionalRange = JSON.parse(persona.emotional_range);
+    const tone = safeParseJSON<Record<string, number>>(persona.tone, {});
+    const speechStyle = safeParseJSON<Record<string, number>>(persona.speech_style, {});
+    const emotionalRange = safeParseJSON<Record<string, number>>(persona.emotional_range, {});
     const personaBlock = `[角色设定]
 你是${persona.name}。
 语气: 形式度=${tone.formality}, 温暖度=${tone.warmth}, 幽默感=${tone.humor}, 直接程度=${tone.directness}
@@ -64,6 +65,32 @@ export class PromptAssembler {
         if (budget.canFit(prefsBlock)) {
           budget.reserve(prefsBlock);
           blocks.push(prefsBlock);
+        }
+      }
+    }
+
+    // Active profile facts (v2: 只显示活跃事实，标注来源)
+    const activeFacts = this.profileStore.getActiveFacts();
+    if (activeFacts.length > 0) {
+      // 按置信度降序，同 key 去重
+      const seen = new Set<string>();
+      const factsText = activeFacts
+        .sort((a, b) => b.confidence - a.confidence)
+        .map(f => {
+          const key = f.fact.replace(/[的得了吗呢是个了]/g, '').slice(0, 15);
+          if (seen.has(key)) return null;
+          seen.add(key);
+          const marker = f.source === 'inferred' ? '(待确认)' : '';
+          const sourceNote = f.source === 'user' ? ' [你说过]' : '';
+          return `- ${f.fact}${marker}${sourceNote}`;
+        })
+        .filter(Boolean)
+        .join('\n');
+      if (factsText) {
+        const factsBlock = `[关于你的事实]\n${factsText}`;
+        if (budget.canFit(factsBlock)) {
+          budget.reserve(factsBlock);
+          blocks.push(factsBlock);
         }
       }
     }
@@ -101,7 +128,7 @@ export class PromptAssembler {
     const blocks: string[] = [];
 
     // Compressed persona — only key tone dimensions for code mode (always included)
-    const tone = JSON.parse(persona.tone);
+    const tone = safeParseJSON<Record<string, number>>(persona.tone, {});
     const personaBlock = `[角色设定]
 ${persona.name} 编程助手模式。语气: ${tone.formality < 0 ? '随意' : '正式'}，直接程度: ${tone.directness > 0 ? '直接' : '委婉'}`;
     budget.reserve(personaBlock);
@@ -139,7 +166,7 @@ ${persona.name} 编程助手模式。语气: ${tone.formality < 0 ? '随意' : '
 
     // Project context
     if (codeCtx) {
-      const tech = JSON.parse(codeCtx.tech_stack);
+      const tech = safeParseJSON<Record<string, unknown>>(codeCtx.tech_stack, {});
       const ctxBlock = `[当前项目]
 - 项目: ${codeCtx.project_name}
 - 技术栈: ${JSON.stringify(tech)}
@@ -151,8 +178,8 @@ ${persona.name} 编程助手模式。语气: ${tone.formality < 0 ? '随意' : '
       }
     }
 
-    // Worldbook triggers (code scope only)
-    const codeTriggers = triggers.filter(w => w.scope === 'code' || w.scope === 'both');
+    // Worldbook triggers (code scope only) — 排除表情包条目（image 类型走 send_sticker 工具）
+    const codeTriggers = triggers.filter(w => (w.scope === 'code' || w.scope === 'both') && w.content_type !== 'image');
     if (codeTriggers.length > 0) {
       const wbBlock = `[情境提示]\n${codeTriggers.map(w => w.content).join('\n')}`;
       if (budget.canFit(wbBlock)) {
@@ -173,6 +200,26 @@ ${persona.name} 编程助手模式。语气: ${tone.formality < 0 ? '随意' : '
     return blocks.join('\n\n');
   }
 
+  /** 隐私模式：仅注入角色设定，不含用户画像/Worldbook/记忆 */
+  async assembleMinimal(mode: 'chat' | 'code'): Promise<string> {
+    const persona = this.personaStore.get();
+    if (mode === 'chat') {
+      const tone = safeParseJSON<Record<string, number>>(persona.tone, {});
+      const speechStyle = safeParseJSON<Record<string, number>>(persona.speech_style, {});
+      const emotionalRange = safeParseJSON<Record<string, number>>(persona.emotional_range, {});
+      return `[角色设定]
+你是${persona.name}。
+语气: 形式度=${tone.formality}, 温暖度=${tone.warmth}, 幽默感=${tone.humor}, 直接程度=${tone.directness}
+说话风格: 句子长度=${speechStyle.sentence_length}, 表情使用=${speechStyle.emoji_usage}, 代码倾向=${speechStyle.code_heavy}
+情感表达: 表现力=${emotionalRange.expressiveness}, 共情=${emotionalRange.empathy}, playful=${emotionalRange.playfulness}
+
+(隐私模式 — 未加载用户画像和记忆)`;
+    } else {
+      const tone = safeParseJSON<Record<string, number>>(persona.tone, {});
+      return `${persona.name} 编程助手模式(隐私)。`;
+    }
+  }
+
   /** Parse JSON if possible, else return the text as-is (LLM summary from Cron) */
   private parseOrPlain(raw: string): string {
     try {
@@ -185,5 +232,15 @@ ${persona.name} 编程助手模式。语气: ${tone.formality < 0 ? '随意' : '
       // Not JSON — use as plain text (LLM-generated natural language summary)
       return raw;
     }
+  }
+}
+
+/** Safely parse JSON with a fallback value, logging on failure */
+function safeParseJSON<T>(raw: string, fallback: T): T {
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    logger.warn(`[PromptAssembler] Failed to parse JSON: ${raw.slice(0, 100)}`);
+    return fallback;
   }
 }

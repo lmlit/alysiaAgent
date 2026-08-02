@@ -1,10 +1,11 @@
 import type { ToolDefinition } from './registry.js';
 
 // In-memory reminder store (重启丢失，MVP 够用)
-const reminders: Array<{ id: string; text: string; triggerAt: Date; notify: () => void }> = [];
+const reminders: Array<{ id: string; text: string; triggerAt: Date; timer: ReturnType<typeof setTimeout> | null; sessionId: string }> = [];
 let nextId = 1;
 
-export function createReminderTool(notifyFn: (text: string) => Promise<void>): ToolDefinition {
+/** notifyFn 第二参数：设置提醒时的会话 ID（用于主动推送给设置者） */
+export function createReminderTool(notifyFn: (text: string, sessionId?: string) => Promise<void>): ToolDefinition {
   return {
     name: 'set_reminder',
     description: '设置定时提醒。time 格式如 "30min"、"1h"、"2026-07-21 14:00"',
@@ -16,7 +17,7 @@ export function createReminderTool(notifyFn: (text: string) => Promise<void>): T
       },
       required: ['time', 'text'],
     },
-    handler: async (args) => {
+    handler: async (args, sessionId) => {
       const timeStr = args.time as string;
       const text = args.text as string;
       let triggerAt: Date;
@@ -43,12 +44,12 @@ export function createReminderTool(notifyFn: (text: string) => Promise<void>): T
       }
 
       const timer = setTimeout(async () => {
-        await notifyFn(`Reminder: ${text}`);
+        await notifyFn(`Reminder: ${text}`, sessionId);
         const idx = reminders.findIndex(r => r.id === id);
         if (idx >= 0) reminders.splice(idx, 1);
       }, delay);
 
-      reminders.push({ id, text, triggerAt, notify: () => { clearTimeout(timer); } });
+      reminders.push({ id, text, triggerAt, timer, sessionId: sessionId || '' });
       return `Reminder set: "${text}" at ${triggerAt.toLocaleString()}.`;
     },
   };
@@ -88,6 +89,7 @@ export function createCancelReminderTool(): ToolDefinition {
       const idx = reminders.findIndex(r => r.id === id);
       if (idx < 0) return `Error: Reminder with ID ${id} not found.`;
       const removed = reminders.splice(idx, 1)[0];
+      if (removed.timer) clearTimeout(removed.timer);
       return `Cancelled reminder: "${removed.text}"`;
     },
   };

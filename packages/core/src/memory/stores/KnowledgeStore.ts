@@ -1,7 +1,7 @@
 // src/memory/stores/KnowledgeStore.ts
 import type Database from 'better-sqlite3';
-import type { KnowledgeDoc, SearchResult } from '../types';
-import type { IVectorStore } from '../interfaces/IVectorStore';
+import type { KnowledgeDoc, SearchResult } from '../types.js';
+import type { IVectorStore } from '../interfaces/IVectorStore.js';
 
 export class KnowledgeStore {
   constructor(private db: Database.Database, private vectorStore: IVectorStore | null) {}
@@ -42,14 +42,55 @@ export class KnowledgeStore {
 
   searchByText(query: string, limit: number): SearchResult[] {
     const rows = this.db.prepare(
-      'SELECT id, title, source, status FROM knowledge_docs WHERE title LIKE ? AND status = \'active\' ORDER BY created_at DESC LIMIT ?'
-    ).all(`%${query}%`, limit) as Record<string, unknown>[];
+      'SELECT id, title, source, status FROM knowledge_docs WHERE (title LIKE ? OR content_hash LIKE ?) AND status = \'active\' ORDER BY created_at DESC LIMIT ?'
+    ).all(`%${query}%`, `%${query}%`, limit) as Record<string, unknown>[];
     return rows.map(r => ({
       id: r.id as string,
       score: 0.5,
       text: r.title as string,
       metadata: { source: r.source, status: r.status },
     }));
+  }
+
+  /** ★ 全文检索：搜索 chunk 内容（替代只搜标题） */
+  searchChunksByText(query: string, limit: number): SearchResult[] {
+    const rows = this.db.prepare(`
+      SELECT c.doc_id, c.content, c.chunk_index, d.title, d.source
+      FROM knowledge_chunks c
+      JOIN knowledge_docs d ON d.id = c.doc_id
+      WHERE c.content LIKE ? AND d.status = 'active'
+      ORDER BY c.chunk_index ASC
+      LIMIT ?
+    `).all(`%${query}%`, limit) as Array<{
+      doc_id: string; content: string; chunk_index: number; title: string; source: string;
+    }>;
+    return rows.map(r => ({
+      id: r.doc_id,
+      score: 0.6, // LIKE 匹配给固定分（低于向量命中）
+      text: `[${r.title}] ${r.content.trim()}`,
+      metadata: { source: r.source, docId: r.doc_id, chunk_index: r.chunk_index },
+    }));
+  }
+
+  // ── ★ 知识库导入支持 ──────────────────────────────
+
+  insertChunk(chunk: { id: string; doc_id: string; chunk_index: number; content: string }): void {
+    this.db.prepare(`
+      INSERT OR REPLACE INTO knowledge_chunks (id, doc_id, chunk_index, content, created_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(chunk.id, chunk.doc_id, chunk.chunk_index, chunk.content, new Date().toISOString());
+  }
+
+  getChunksByDoc(docId: string): Array<{ chunk_index: number; content: string }> {
+    const rows = this.db.prepare(
+      'SELECT chunk_index, content FROM knowledge_chunks WHERE doc_id = ? ORDER BY chunk_index ASC'
+    ).all(docId) as Array<{ chunk_index: number; content: string }>;
+    return rows;
+  }
+
+  deleteDoc(id: string): void {
+    this.db.prepare('DELETE FROM knowledge_chunks WHERE doc_id = ?').run(id);
+    this.db.prepare('DELETE FROM knowledge_docs WHERE id = ?').run(id);
   }
 
   private rowToDoc(row: Record<string, unknown>): KnowledgeDoc {

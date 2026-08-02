@@ -15,7 +15,8 @@
     "./provider": "./dist/provider/index.js",
     "./tools": "./dist/tools/index.js",
     "./commands": "./dist/commands/index.js",
-    "./persona": "./dist/persona/loader.js"
+    "./persona": "./dist/persona/loader.js",
+    "./utils/logger": "./dist/utils/logger.js"
   },
   "scripts": {
     "build": "tsc && node -e \"const{cpSync}=require('fs');cpSync('src/persona','dist/persona',{recursive:true})\"",
@@ -23,8 +24,9 @@
   },
   "dependencies": {
     "better-sqlite3": "^12.11.1",
-    "uuid": "^14.0.1",
-    "vectordb": "^0.21.2"
+    "uuid": "^14.0.1"
+  },
+  "optionalDependencies": {
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",

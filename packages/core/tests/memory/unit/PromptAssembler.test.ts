@@ -55,7 +55,7 @@ describe('PromptAssembler', () => {
     expect(prompt).not.toContain('爱好');
   });
 
-  it('should include worldbook triggers in chat mode', async () => {
+  it('should not include worldbook in prompt (worldbook is now an Agent tool)', async () => {
     const wbEntry: WorldbookEntry = {
       id: 'wb-1', trigger_keys: JSON.stringify(['hello']),
       trigger_mode: 'any', content: '用户常用英文打招呼',
@@ -65,7 +65,8 @@ describe('PromptAssembler', () => {
     };
 
     const prompt = await assembler.assemble('chat', [], [wbEntry]);
-    expect(prompt).toContain('用户常用英文打招呼');
+    // Worldbook is now a tool, not injected into prompt
+    expect(prompt).not.toContain('用户常用英文打招呼');
   });
 
   it('should include project context in code mode', async () => {

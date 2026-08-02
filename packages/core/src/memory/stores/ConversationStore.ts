@@ -1,7 +1,7 @@
 // src/memory/stores/ConversationStore.ts
 import type Database from 'better-sqlite3';
-import type { Conversation, SearchResult } from '../types';
-import type { IVectorStore } from '../interfaces/IVectorStore';
+import type { Conversation, SearchResult } from '../types.js';
+import type { IVectorStore } from '../interfaces/IVectorStore.js';
 
 export class ConversationStore {
   constructor(private db: Database.Database, private vectorStore: IVectorStore | null) {}

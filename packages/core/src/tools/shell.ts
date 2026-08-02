@@ -9,18 +9,18 @@ const execAsync = promisify(exec);
 const SHELL_TIMEOUT_MS = 30_000;
 const MAX_OUTPUT_BYTES = 8_000;
 
-// 禁止的危险命令模式（黑名单）
+// 禁止的危险命令模式（黑名单，大小写不敏感）
 const BLOCKED_PATTERNS = [
-  /rm\s+-rf\s+\//,              // rm -rf /
-  />\s*\/dev\/sd[a-z]/,         // 覆写磁盘
-  /mkfs\./,                     // 格式化
-  /dd\s+if=/,                   // dd 磁盘操作
-  /:\(\)\s*\{/,                 // fork bomb
-  /chmod\s+777\s+\//,           // chmod 777 /
-  /sudo\s/,                     // 禁止 sudo
-  /shutdown/,                   // 禁止关机
-  /reboot/,                     // 禁止重启
-  /systemctl/,                  // 禁止 systemd 操作
+  /rm\s+(?:-rf?\s+|--.*\s+)*\//i,  // rm -rf / 及变体
+  />\s*\/dev\/sd[a-z]/i,             // 覆写磁盘
+  /mkfs\./i,                          // 格式化
+  /dd\s+if=/i,                        // dd 磁盘操作
+  /:\(\)\s*\{/i,                      // fork bomb
+  /chmod\s+777/i,                     // chmod 777 任意路径
+  /sudo\s/i,                          // 禁止 sudo (大小写不敏感)
+  /shutdown/i,                        // 禁止关机
+  /reboot/i,                          // 禁止重启
+  /systemctl\s/i,                     // 禁止 systemd 操作
 ];
 
 function isSafe(command: string): string | null {

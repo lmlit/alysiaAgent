@@ -12,9 +12,26 @@ import type {
   MessageComponent,
 } from '@alysia/core/platform';
 import type { EventBus } from '@alysia/core/eventbus';
+import { logger } from '@alysia/core';
 
 interface TelegramConfig {
   token: string;
+}
+
+/** Split text by grapheme clusters to avoid breaking emoji/CJK mid-character */
+function splitByGraphemes(text: string, maxLen: number): string[] {
+  const segmenter = new Intl.Segmenter('zh-Hans', { granularity: 'grapheme' });
+  const chunks: string[] = [];
+  let current = '';
+  for (const { segment } of segmenter.segment(text)) {
+    if (current.length + segment.length > maxLen) {
+      chunks.push(current);
+      current = '';
+    }
+    current += segment;
+  }
+  if (current) chunks.push(current);
+  return chunks;
 }
 
 /**
@@ -26,6 +43,10 @@ export class TelegramAdapter implements Platform {
   meta: PlatformMetadata;
   private bot: Telegraf;
   private eventBus!: EventBus;
+
+  /** Dedup — track recently seen message IDs to avoid double-processing */
+  private seenMessages = new Set<string>();
+  private static MAX_SEEN = 1000;
 
   constructor(
     private config: TelegramConfig,
@@ -53,17 +74,35 @@ export class TelegramAdapter implements Platform {
       this.bot.stop('SIGTERM');
     });
     await this.bot.launch();
-    console.log('[Telegram] Bot started');
+    logger.info('[Telegram] Bot started');
   }
 
   async terminate(): Promise<void> {
     this.bot.stop('terminate');
-    console.log('[Telegram] Bot stopped');
+    logger.info('[Telegram] Bot stopped');
   }
 
   // ── Incoming message handling ──────────────────────────────
 
   private async onMessage(ctx: Context): Promise<void> {
+    const msg = ctx.message;
+    if (!msg || !('message_id' in msg)) return;
+
+    // Dedup: skip already-processed message IDs
+    const msgId = String(msg.message_id);
+    if (this.seenMessages.has(msgId)) return;
+    this.seenMessages.add(msgId);
+    if (this.seenMessages.size > TelegramAdapter.MAX_SEEN) {
+      // Flush oldest half to bound memory
+      const entries = [...this.seenMessages];
+      this.seenMessages = new Set(entries.slice(Math.floor(entries.length / 2)));
+    }
+
+    const chat = msg.chat as any;
+    const from = msg.from as any;
+    const text = 'text' in msg ? (msg.text || '') : '';
+    logger.info(`[Telegram] ← ${chat?.type === 'private' ? 'private' : 'group'} from=${from?.first_name || from?.username || from?.id} chat=${chat?.id} content="${String(text).slice(0, 100)}"`);
+
     const event = this.toMessageEvent(ctx);
     if (!event) return;
     this.eventBus.put(event);
@@ -306,12 +345,10 @@ export class TelegramAdapter implements Platform {
           }
         }
       } catch (err: any) {
-        console.error(
-          `[Telegram] Send error (${comp.type}):`,
-          err.message,
-        );
+        logger.error(`[Telegram] send error (${comp.type}): ${err.message}`);
       }
     }
+    logger.info(`[Telegram] → sent ${[...chain].length} comps to ${session.sessionId.slice(-16)}: ${[...chain].filter(c => c.type === 'plain').map(c => (c as any).text).join(' ').slice(0, 80)}`);
   }
 
   /**
@@ -322,10 +359,8 @@ export class TelegramAdapter implements Platform {
 
     const MAX_LENGTH = 4096;
     if (text.length > MAX_LENGTH) {
-      const chunks: string[] = [];
-      for (let i = 0; i < text.length; i += MAX_LENGTH) {
-        chunks.push(text.slice(i, i + MAX_LENGTH));
-      }
+      // Use Intl.Segmenter to avoid splitting emoji/CJK mid-character
+      const chunks = splitByGraphemes(text, MAX_LENGTH);
       for (const chunk of chunks) {
         await this.bot.telegram.sendMessage(chatId, chunk);
       }

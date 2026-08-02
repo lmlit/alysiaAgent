@@ -1,26 +1,57 @@
+import { existsSync, readFileSync, writeFileSync } from 'fs';
 import type { Stage, PipelineContext } from '../types.js';
 import type { MessageEvent } from '../../platform/event.js';
+import { MessageType } from '../../platform/types.js';
 import { AgentRunner } from '../../agent/runner.js';
 import { MessageChain } from '../../platform/chain.js';
-import { buildPersonaSystemPrompt } from '../../persona/loader.js';
+import { logger } from '../../utils/logger.js';
 
-// In-memory token stats store — keyed by unifiedMsgOrigin
-const sessionStats: Map<
-  string,
-  { recordCount: number; totalInput: number; totalOutput: number; totalTokens: number }
-> = new Map();
+// ── Token 统计持久化 ──────────────────────────────────
+const STATS_FILE = './data/token_stats.json';
 
-export function getSessionStats(
-  sessionId: string,
-): { recordCount: number; totalInput: number; totalOutput: number; totalTokens: number } {
-  return (
-    sessionStats.get(sessionId) ?? {
-      recordCount: 0,
-      totalInput: 0,
-      totalOutput: 0,
-      totalTokens: 0,
+interface TokenStats {
+  recordCount: number;
+  totalInput: number;
+  totalOutput: number;
+  totalTokens: number;
+}
+
+const sessionStats: Map<string, TokenStats> = new Map();
+
+function loadStats(): void {
+  try {
+    if (existsSync(STATS_FILE)) {
+      const data = JSON.parse(readFileSync(STATS_FILE, 'utf-8'));
+      for (const [k, v] of Object.entries(data)) {
+        sessionStats.set(k, v as TokenStats);
+      }
     }
-  );
+  } catch { /* ignore load errors */ }
+}
+
+let saveTimer: ReturnType<typeof setTimeout> | null = null;
+
+function saveStats(): void {
+  // Debounce writes: batch within 5s window
+  if (saveTimer) return;
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    try {
+      writeFileSync(STATS_FILE, JSON.stringify(Object.fromEntries(sessionStats)));
+    } catch { /* ignore save errors (disk full etc.) */ }
+  }, 5000);
+}
+
+// Load persisted stats on module import
+loadStats();
+
+export function getSessionStats(sessionId: string): TokenStats {
+  return sessionStats.get(sessionId) ?? {
+    recordCount: 0,
+    totalInput: 0,
+    totalOutput: 0,
+    totalTokens: 0,
+  };
 }
 
 /**
@@ -52,23 +83,54 @@ export class LLMAgentStage implements Stage {
       return;
     }
 
+    // ===== PRE: 空 @ 检测（统一模板，所有 adapter 无需各自处理）=====
+    // 群聊中 @bot 但没有任何文字内容 → 简短友好回应
+    // 注意：不要手动加 @前缀 — QQ/Telegram 被动回复 API 会自动 @ 发起人，
+    // 手动加会导致群里显示两次 @。
+    if (
+      event.getMessageType() === MessageType.GROUP &&
+      !event.messageStr.trim()
+    ) {
+      event.setExtra('response_chain', new MessageChain().message(
+        '嗯？怎么啦～（叫我有什么事吗？）'
+      ));
+      yield;
+      return;
+    }
+
     // ===== PRE: LLM call =====
-    // Build system prompt: compact persona + memory context
-    const memoryContext = event.getExtra<string>('memory_context') || '';
+    // Build system prompt: 激活角色的 system_prompt（v3 角色系统，替代读 md 文件）
+    const memoryContext = event.getExtra('memory_context') || '';
+    const activeRolePrompt = this.ctx.memoryManager.getActiveSystemPrompt();
     // Use compact persona to save context space (worldbook is 66 entries = ~15k chars!)
-    const compactPersona = buildPersonaSystemPrompt().split('\n---\n').slice(0, 4).join('\n---\n');
+    const compactPersona = activeRolePrompt.split('\n---\n').slice(0, 4).join('\n---\n');
     let systemPrompt = [
       compactPersona,
       memoryContext ? '\n---\n## 当前记忆\n' + memoryContext : '',
     ].filter(Boolean).join('\n');
 
     // Inject recent conversation history into system prompt
-    const history = event.getExtra<Array<{ role: string; content: string }>>('conversation_history') || [];
+    const history = event.getExtra('conversation_history') || [];
     if (history.length > 0) {
       const recentHistory = history.slice(-10).map(h =>
         `${h.role === 'user' ? '伙伴' : '昔涟'}: ${h.content}`
       ).join('\n');
       systemPrompt += `\n\n## 最近对话\n${recentHistory}\n\n请基于以上对话历史继续交流。`;
+    }
+
+    // 群聊 system_reminder: 明确当前说话人，避免混淆多人对话
+    if (event.getMessageType() === MessageType.GROUP) {
+      const currentSpeaker = event.getSenderName() || '未知用户';
+      systemPrompt += `\n\n[群聊提醒]\n当前说话人: "${currentSpeaker}"。请只回复这个人，不要回复之前其他人的问题。如果对方只是 @你 没有说具体的事，简短友好地回应即可，不要翻旧账。`;
+    }
+
+    // ★ 表情包协议：模型在文案中插入 [表情包:名字] 标记，发送时解析发图。
+    //   仅私聊注入 — QQ 官方 API 群聊被动媒体消息不可用（40011000），群聊不发图。
+    if (event.getMessageType() === MessageType.PRIVATE) {
+      const stickers = this.ctx.memoryManager.listStickers();
+      if (stickers.length > 0) {
+        systemPrompt += `\n\n[表情包使用]\n你可以用表情包回应情绪（开心/难过/撒娇/困了等），在回复文案中插入标记: [表情包:名字]\n可用表情包: ${stickers.map(s => s.name).join('、')}\n示例: "晚安好梦哦 [表情包:睡觉]"\n约束: 每次回复最多插入一个表情包标记，情绪平淡时不要插入。`;
+      }
     }
 
     // Extract image URLs from message components
@@ -79,12 +141,21 @@ export class LLMAgentStage implements Stage {
       }
     }
 
+    const start = Date.now();
     const result = await this.runner.run(
       event.messageStr,
       systemPrompt,
       imageUrls.filter(Boolean),
       event.unifiedMsgOrigin,
     );
+
+    // ★ 回复完成日志：能看到 bot 实际回了什么（含表情包标记）
+    const replyText = result.chain.getComponents()
+      .filter(c => c.type === 'plain')
+      .map(c => (c as { text?: string }).text ?? '')
+      .join(' ');
+    logger.info(`[LLMAgent] ← ${event.messageStr.slice(0, 60).replace(/\n/g, ' ')}`);
+    logger.info(`[LLMAgent] → ${replyText.slice(0, 120).replace(/\n/g, ' ')} (${Date.now() - start}ms)`);
 
     event.setExtra('response_chain', result.chain);
 
@@ -95,11 +166,7 @@ export class LLMAgentStage implements Stage {
     yield;
 
     // ===== POST: Token stats recording =====
-    const usage = event.getExtra<{
-      input: number;
-      output: number;
-      total: number;
-    }>('_token_usage');
+    const usage = event.getExtra('_token_usage');
     if (usage) {
       const umo = event.unifiedMsgOrigin;
       const existing = sessionStats.get(umo) ?? {
@@ -113,10 +180,13 @@ export class LLMAgentStage implements Stage {
       existing.totalOutput += usage.output;
       existing.totalTokens += usage.total;
       sessionStats.set(umo, existing);
+      saveStats(); // 持久化到磁盘
 
       // 上下文超过阈值 → 触发记忆压缩
       if (usage.input > 8_000) {
-        this.ctx.memoryManager.onSessionEnd(event.unifiedMsgOrigin).catch(() => {});
+        this.ctx.memoryManager.onSessionEnd(event.unifiedMsgOrigin).catch(err =>
+          logger.error('LLMAgent onSessionEnd failed:', err)
+        );
       }
     }
   }

@@ -34,6 +34,7 @@ export function initializeDatabase(db: Database.Database): void {
       tone            TEXT NOT NULL DEFAULT '{"formality":0,"warmth":0.2,"humor":0.1,"directness":0}',
       speech_style    TEXT NOT NULL DEFAULT '{"sentence_length":0,"emoji_usage":0,"code_heavy":0}',
       emotional_range TEXT NOT NULL DEFAULT '{"expressiveness":0.1,"empathy":0.3,"playfulness":0.1}',
+      memory_config   TEXT NOT NULL DEFAULT '{"retention_bias":0.2,"decay_rate":0.3,"importance_threshold":0.4,"recency_weight":0.3,"confirmation_bias":0.3}',
       adaptation_hints TEXT NOT NULL DEFAULT '[]',
       updated_at      TEXT NOT NULL
     );
@@ -66,6 +67,16 @@ export function initializeDatabase(db: Database.Database): void {
       updated_at      TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS knowledge_chunks (
+      id          TEXT PRIMARY KEY,
+      doc_id      TEXT NOT NULL,
+      chunk_index INTEGER NOT NULL,
+      content     TEXT NOT NULL,
+      created_at  TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_chunks_doc ON knowledge_chunks(doc_id);
+
     CREATE TABLE IF NOT EXISTS worldbook_entries (
       id              TEXT PRIMARY KEY,
       trigger_keys    TEXT NOT NULL,
@@ -96,6 +107,35 @@ export function initializeDatabase(db: Database.Database): void {
     );
   `);
 
+  // Migration: add memory_config to existing persona table (v2)
+  try {
+    db.exec(`ALTER TABLE persona ADD COLUMN memory_config TEXT NOT NULL DEFAULT '{"retention_bias":0.2,"decay_rate":0.3,"importance_threshold":0.4,"recency_weight":0.3,"confirmation_bias":0.3}'`);
+  } catch { /* column already exists */ }
+
+  // Migration: 角色系统 (v3) — persona 多行化 + worldbook role 维度
+  const personaCols = db.prepare(`PRAGMA table_info(persona)`).all() as Array<{ name: string }>;
+  const personaColNames = new Set(personaCols.map(c => c.name));
+  if (!personaColNames.has('role')) {
+    db.exec(`ALTER TABLE persona ADD COLUMN role TEXT DEFAULT 'alysia'`);
+  }
+  if (!personaColNames.has('system_prompt')) {
+    db.exec(`ALTER TABLE persona ADD COLUMN system_prompt TEXT DEFAULT ''`);
+  }
+  if (!personaColNames.has('is_active')) {
+    db.exec(`ALTER TABLE persona ADD COLUMN is_active INTEGER DEFAULT 0`);
+  }
+  // 现有 id=1 行升级为激活的内置角色
+  db.prepare(`UPDATE persona SET role = 'alysia', is_active = 1 WHERE id = 1 AND (role IS NULL OR role = 'alysia')`).run();
+
+  const wbCols = db.prepare(`PRAGMA table_info(worldbook_entries)`).all() as Array<{ name: string }>;
+  const wbColNames = new Set(wbCols.map(c => c.name));
+  if (!wbColNames.has('role')) {
+    db.exec(`ALTER TABLE worldbook_entries ADD COLUMN role TEXT DEFAULT 'alysia'`);
+  }
+  if (!wbColNames.has('content_type')) {
+    db.exec(`ALTER TABLE worldbook_entries ADD COLUMN content_type TEXT DEFAULT 'text'`);
+  }
+
   // Seed default singleton rows
   const now = new Date().toISOString();
   db.prepare(`
@@ -104,7 +144,7 @@ export function initializeDatabase(db: Database.Database): void {
   `).run(now);
 
   db.prepare(`
-    INSERT OR IGNORE INTO persona (id, name, tone, speech_style, emotional_range, adaptation_hints, updated_at)
-    VALUES (1, '昔涟', '{"formality":0,"warmth":0.2,"humor":0.1,"directness":0}', '{"sentence_length":0,"emoji_usage":0,"code_heavy":0}', '{"expressiveness":0.1,"empathy":0.3,"playfulness":0.1}', '[]', ?)
+    INSERT OR IGNORE INTO persona (id, name, tone, speech_style, emotional_range, memory_config, adaptation_hints, updated_at, role, is_active)
+    VALUES (1, '昔涟', '{"formality":0,"warmth":0.2,"humor":0.1,"directness":0}', '{"sentence_length":0,"emoji_usage":0,"code_heavy":0}', '{"expressiveness":0.1,"empathy":0.3,"playfulness":0.1}', '{"retention_bias":0.2,"decay_rate":0.3,"importance_threshold":0.4,"recency_weight":0.3,"confirmation_bias":0.3}', '[]', ?, 'alysia', 1)
   `).run(now);
 }

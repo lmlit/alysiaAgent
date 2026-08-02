@@ -63,7 +63,12 @@ function makeMockContext(): PipelineContext {
     providerManager: {} as any,
     toolRegistry: {} as any,
     commandRegistry: cmdRegistry,
-    memoryManager: {} as any,
+    memoryManager: {
+      getActiveSystemPrompt: vi.fn().mockReturnValue('测试人格提示词'),
+      onSessionEnd: vi.fn().mockResolvedValue(undefined),
+      listStickers: vi.fn().mockReturnValue([{ name: '睡觉', path: '/data/stickers/睡觉.png' }]),
+      findSticker: vi.fn().mockReturnValue({ content: '/data/stickers/睡觉.png' }),
+    } as any,
     config: {
       bot: { name: 'Alysia', ownerId: '' },
       llm: {
@@ -122,7 +127,7 @@ describe('LLMAgentStage', () => {
         event,
         '/stats',
       );
-      const chain = event.getExtra<MessageChain>('response_chain');
+      const chain = event.getExtra('response_chain');
       expect(chain).toBeInstanceOf(MessageChain);
       // AgentRunner should NOT be called for commands
       expect(mockRun).not.toHaveBeenCalled();
@@ -177,7 +182,7 @@ describe('LLMAgentStage', () => {
 
       expect(mockRun).toHaveBeenCalledWith(
         'hello world',
-        expect.stringContaining('昔涟'),
+        expect.stringContaining('测试人格提示词'),
         [],
         't-1:private:s1',
       );
@@ -197,7 +202,7 @@ describe('LLMAgentStage', () => {
 
       expect(mockRun).toHaveBeenCalledWith(
         'hi',
-        expect.stringMatching(/^你是知识渊博的助手。\n/),
+        expect.stringContaining('你是知识渊博的助手。'),
         expect.any(Array),
         expect.any(String),
       );
@@ -215,7 +220,7 @@ describe('LLMAgentStage', () => {
 
       expect(mockRun).toHaveBeenCalledWith(
         'hi',
-        expect.stringContaining('你叫昔涟'),
+        expect.stringContaining('测试人格提示词'),
         expect.any(Array),
         expect.any(String),
       );
@@ -277,7 +282,7 @@ describe('LLMAgentStage', () => {
       const event = makeEvent('hello');
       await consumeGenerator(stage.process(event));
 
-      const chain = event.getExtra<MessageChain>('response_chain');
+      const chain = event.getExtra('response_chain');
       expect(chain).toBeInstanceOf(MessageChain);
       expect(chain?.getComponents()).toHaveLength(1);
     });
@@ -296,11 +301,7 @@ describe('LLMAgentStage', () => {
       const r1 = await gen.next();
       expect(r1.done).toBe(false);
 
-      const usage = event.getExtra<{
-        input: number;
-        output: number;
-        total: number;
-      }>('_token_usage');
+      const usage = event.getExtra('_token_usage');
       expect(usage).toEqual({ input: 100, output: 50, total: 150 });
 
       // Finish the generator

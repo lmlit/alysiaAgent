@@ -76,12 +76,33 @@ CREATE TABLE user_profile (
     id          INTEGER PRIMARY KEY DEFAULT 1,
     basics      TEXT NOT NULL DEFAULT '{}',      -- JSON
     preferences TEXT NOT NULL DEFAULT '{}',      -- JSON
-    facts       TEXT NOT NULL DEFAULT '[]',      -- [{fact, confidence, source_event, updated_at}]
+    facts       TEXT NOT NULL DEFAULT '[]',      -- [{fact, confidence, evidence, source_event,
+                                                 --   updated_at, source, valid_from, valid_until, status}]
     updated_at  TEXT NOT NULL
 );
 ```
 
-单行记录，facts 带来源追溯。
+单行记录，facts 带来源追溯、有效期限和状态标记。
+
+**ProfileFact 字段**:
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `fact` | string | 事实内容 |
+| `confidence` | 0.0-1.0 | 置信度 |
+| `evidence` | string | 原文引用 |
+| `source_event` | string | 来源事件 ID |
+| `updated_at` | string | 更新时间 (ISO) |
+| `source` | `'user'`\|`'behavior'`\|`'inferred'` | 来源: user=用户主动声明, behavior=行为推断, inferred=LLM 推断 |
+| `valid_from` | string | 生效时间 (ISO) |
+| `valid_until` | string\|null | 失效时间，null=永不过期 |
+| `status` | `'active'`\|`'superseded'`\|`'expired'` | 状态: active=有效, superseded=被替代, expired=自然过期 |
+
+**冲突解决规则**:
+- 同 normalizeKey → 旧条 `status='superseded'`, `valid_until=now`（不删除，留审计链）
+- 新条 `status='active'`, `valid_from=now` 插入
+- `source='user'` 优先级最高，不会被 `inferred` 覆盖
+- 新写入默认 `source='inferred'`, `confidence=0.4`, `status='active'`
 
 ### 2.3 Persona Store（AI 人格参数）— SQLite
 
@@ -92,6 +113,8 @@ CREATE TABLE persona (
     tone            TEXT NOT NULL DEFAULT '{}',      -- {formality, warmth, humor, directness}
     speech_style    TEXT NOT NULL DEFAULT '{}',      -- {sentence_length, emoji_usage, code_heavy}
     emotional_range TEXT NOT NULL DEFAULT '{}',      -- {expressiveness, empathy, playfulness}
+    memory_config   TEXT NOT NULL DEFAULT '{}',      -- {retention_bias, decay_rate, importance_threshold,
+                                                     --   recency_weight, confirmation_bias}
     adaptation_hints TEXT NOT NULL DEFAULT '[]',    -- [{trigger, adjustment, evidence, applied_at}]
     updated_at      TEXT NOT NULL
 );
@@ -224,11 +247,18 @@ interface IVectorStore {
 
 ```
 候选筛选 (importance > 0.4, 未处理画像标记)
-  → 去重与冲突检测 (新事实 vs 已有 facts)
+  → 去重与冲突检测 (新事实 vs 已有 facts, normalizeKey 索引)
   → LLM 提取事实 (带置信度和证据原文)
-  → 合并入画像 (冲突时高置信度替换低)
-  → 定时画像摘要重写 (所有 facts → ≤500 字自然语言摘要)
+  → 合并入画像 (冲突时旧条 superseded + valid_until=now, 新条 active)
+  → 定时画像摘要重写 (所有 active facts → ≤500 字自然语言摘要)
 ```
+
+**冲突解决 (v2)**:
+1. normalizeKey 匹配 → 视为同一事实的更新
+2. 旧条 `status='superseded'`, `valid_until=now`（不删除，保留审计链）
+3. 新条 `status='active'`, `valid_from=now` 插入
+4. `source='user'` 的事实（用户主动声明）不会被 `inferred` 覆盖
+5. 证据优先级: 用户纠正 > 行为模式 > 稳定模式 > 单次推断
 
 ### 4.2 人格自适应引擎
 
@@ -248,9 +278,18 @@ interface IVectorStore {
 tone: {formality, warmth, humor, directness}
 speech_style: {avg_sentence_length, emoji_usage, code_heavy}
 emotional_range: {expressiveness, empathy, playfulness}
+memory_config: {
+  retention_bias,        // 正负偏向: -1=只记坏的, +1=只记好的
+  decay_rate,            // 遗忘速度: 0=不忘, 1=秒忘
+  importance_threshold,  // 敏感度: 0=什么都记, 1=几乎不记
+  recency_weight,        // 近期vs远期: 0=念旧, 1=只认最近
+  confirmation_bias,     // 固执度: 0=随风倒, 1=从不改变看法
+}
 ```
 
 范围 [-1, +1]，初始值来自角色设定。
+
+**记忆人格联动 (v2)**: 人格自适应引擎每次调整时，同步评估是否影响记忆行为，通过同一 PersonaAdapter 输出 `memory_config` 增量。LLM 根据交互模式判断角色是否"变得更念旧/更健忘/更记仇"，与 tone/speech/emotional 共用同一护栏机制。
 
 ### 4.4 安全护栏
 
@@ -261,6 +300,37 @@ emotional_range: {expressiveness, empathy, playfulness}
 | 连续同向 ≤ 3 次 | 防止滑坡到极端 |
 | 24h 无信号回归 0.05 | 自然遗忘曲线 |
 | 显式用户指令优先 | 立刻生效，不受限速 |
+
+### 4.5 纠正快路径 (v2)
+
+**问题**: 用户纠正（"不是/记错了/改了"）要等 SessionEnd 才生效，期间系统还在用错误画像。
+
+**解决**: 双路径设计：
+- **慢路径**（SessionEnd）: LLM 批量提取 facts → mergeFacts → 逐条冲突解决
+- **快路径**（Realtime）: 检测到纠正信号 → 立即旧条 superseded → 新条 source=user, confidence=1.0 插入
+
+**纠正信号检测** (`detectCorrectionSignal`):
+- 关键词: "不是"、"记错了"、"改了"、"不对"、"纠正一下"
+- LLM 辅助: 小 prompt 定位被纠正的事实 + 提取新事实内容
+- 证据优先级: 用户纠正 > 行为模式 > 稳定模式 > 单次推断
+
+### 4.6 隐私模式 (v2)
+
+**问题**: 临时话题/借用设备时，记忆照写照读，无控制开关。
+
+**解决**: MemoryManager 暴露 `setPrivacyMode(mode)`:
+
+| 模式 | 写入 EventLog | 读取 Profile/Worldbook | 使用场景 |
+|------|:---:|:---:|------|
+| `'off'` | ✅ | ✅ | 正常模式（默认） |
+| `'readonly'` | ✅ | ❌ | 本次对话不被长期记忆引用 |
+| `'full'` | ❌ | ❌ | 临时隐身/借用设备 |
+
+会话结束后自动恢复 `'off'`。
+
+触发方式:
+- 用户消息: `//privacy full`、`//privacy readonly`、`//privacy off`
+- Pipeline 阶段: 检测到隐私指令 → 调用 `memoryManager.setPrivacyMode()`
 
 ---
 
@@ -302,11 +372,18 @@ emotional_range: {expressiveness, empathy, playfulness}
 聊天 → 编程: 压缩人格 + 精简画像 + 编码偏好 + Worldbook(both)，不传对话摘要。
 编程 → 聊天: 完整恢复人格 + 完整恢复画像 + 写入一次编程摘要 + 更新编码偏好。
 
-### 5.4 注入时机
+### 5.4 注入时机与过滤
 
 - 会话启动: 读取持久化数据 → 生成初始 system prompt
 - 每条用户消息: Worldbook 重新匹配
 - 每 N 轮或用户主动: 重新向量检索刷新上下文
+
+**召回过滤 (v2)**: 向量只找候选，状态决定用不用。
+1. 只注入 `status='active'` 且 `valid_until` 未过期的事实
+2. 按 `confidence` 降序，同 normalizeKey 只保留 active 的那条
+3. `source='inferred'` 的事实前加 `(待确认)` 前缀
+4. `source='user'` 的事实标注来源为「你告诉我的」
+5. 隐私模式 `readonly`/`full` 时跳过 Profile/Worldbook 注入
 
 ---
 
@@ -363,3 +440,4 @@ query → Worldbook 匹配 → embed API → LanceDB 向量检索
 |---|---|
 | 2026-06-28 | 初始设计，确认所有 7 节内容 |
 | 2026-06-28 | 修正：编程模式改为注入精简画像（仅技术相关字段） |
+| 2026-07-29 | v2 画像系统: ProfileFact 加 source/valid_from/valid_until/status 四字段; 冲突解决改为 supersede+审计链; 召回加状态过滤和置信度排序; 新增纠正快路径 (RealtimeProcessor); 新增隐私模式 (full/readonly/off); 新增记忆人格旋钮 (memory_config) 与 PersonaAdapter 联动 |

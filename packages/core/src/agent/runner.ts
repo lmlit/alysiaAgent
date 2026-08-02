@@ -6,17 +6,20 @@ import type { LLMResponse } from '../provider/types.js';
 import type { ToolRegistry } from '../tools/registry.js';
 import { MessageChain } from '../platform/chain.js';
 
-const MAX_STEPS = 10;
+const DEFAULT_MAX_STEPS = 10;
 
 export class AgentRunner {
   private hooks: AgentHooks;
+  private maxSteps: number;
 
   constructor(
     private providerManager: ProviderManager,
     private toolRegistry: ToolRegistry,
     hooks?: AgentHooks,
+    maxSteps?: number,
   ) {
     this.hooks = hooks ?? new NoopAgentHooks();
+    this.maxSteps = maxSteps ?? DEFAULT_MAX_STEPS;
   }
 
   async run(
@@ -27,6 +30,8 @@ export class AgentRunner {
   ): Promise<{
     chain: MessageChain;
     tokenUsage: { input: number; output: number; total: number };
+    /** 工具发图结果（IMG: 前缀返回值），由调用方附加到回复链 */
+    images: string[];
   }> {
     const ctx = new AgentContext();
     ctx.addMessage({ role: 'system', content: systemPrompt });
@@ -35,18 +40,17 @@ export class AgentRunner {
     let totalOutput = 0;
     let stepCount = 0;
     let finalText = '';
+    const toolImages: string[] = [];
 
-    await this.hooks.onAgentBegin?.(
-      { getSenderId: () => sessionId, messageStr: prompt } as any,
-      ctx.messages,
-    );
+    await this.hooks.onAgentBegin?.(null, ctx.messages);
 
-    while (stepCount < MAX_STEPS) {
+    while (stepCount < this.maxSteps) {
       stepCount++;
 
       // Truncate based on default provider's max context tokens
-      const provider = this.providerManager.getDefault() as any;
-      ctx.truncate(provider.config?.maxContextTokens ?? 16000);
+      const provider = this.providerManager.getDefault();
+      const maxTokens = provider?.config?.maxContextTokens || 16000;
+      ctx.truncate(maxTokens);
 
       const req = {
         prompt,
@@ -54,7 +58,7 @@ export class AgentRunner {
         systemPrompt: '', // already in ctx.messages
         contexts: ctx.toOpenAIFormat() as Array<{ role: string; content: string }>,
         imageUrls: stepCount === 1 ? imageUrls : [],
-        funcTool: stepCount < MAX_STEPS ? this.toolRegistry.toToolSet() : undefined,
+        funcTool: stepCount < this.maxSteps ? this.toolRegistry.toToolSet() : undefined,
       };
 
       const response: LLMResponse =
@@ -99,20 +103,24 @@ export class AgentRunner {
           const args = (toolArgsList[i] ?? {}) as Record<string, unknown>;
           const callId = toolCallIds[i] ?? `call_${i}`;
 
-          await this.hooks.onToolStart?.(null as any, name, args);
+          await this.hooks.onToolStart?.(null, name, args);
 
           let result: string;
           try {
-            const toolResult = await this.toolRegistry.execute(name, args);
+            const toolResult = await this.toolRegistry.execute(name, args, sessionId);
             result =
               typeof toolResult === 'string'
                 ? toolResult
                 : JSON.stringify(toolResult);
+            // ★ 工具发图协议：返回值以 IMG: 开头 → 图片路径收集到回复链
+            if (result.startsWith('IMG:')) {
+              toolImages.push(result.slice(4));
+            }
           } catch (err: any) {
             result = `Error: ${err.message}`;
           }
 
-          await this.hooks.onToolEnd?.(null as any, name, args, result);
+          await this.hooks.onToolEnd?.(null, name, args, result);
 
           ctx.addMessage({
             role: 'tool',
@@ -127,15 +135,15 @@ export class AgentRunner {
       }
     }
 
-    if (stepCount >= MAX_STEPS) {
+    if (stepCount >= this.maxSteps) {
       finalText = finalText || '(达到最大步数限制)';
     }
 
     const chain = new MessageChain().message(finalText);
-    await this.hooks.onAgentDone?.(
-      null as any,
-      { role: 'assistant', completionText: finalText } as any,
-    );
+    await this.hooks.onAgentDone?.(null, {
+      role: 'assistant',
+      completionText: finalText,
+    });
 
     return {
       chain,
@@ -144,6 +152,7 @@ export class AgentRunner {
         output: totalOutput,
         total: totalInput + totalOutput,
       },
+      images: toolImages,
     };
   }
 }

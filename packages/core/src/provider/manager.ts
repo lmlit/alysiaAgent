@@ -1,3 +1,4 @@
+import { logger } from '../utils/logger.js';
 import { OpenAIProvider } from './openai.js';
 import type { ProviderConfig, ProviderRequest, LLMResponse } from './types.js';
 
@@ -35,11 +36,15 @@ export class ProviderManager {
     const primary = this.getDefault();
     const candidates = [primary, ...fallbackIds.map(id => this.getById(id)).filter(Boolean)];
 
-    for (const provider of candidates) {
+    for (let i = 0; i < candidates.length; i++) {
+      const provider = candidates[i];
       if (!provider) continue;
       const resp = await provider.textChat(req);
-      if (resp.role !== 'err') return resp;
-      console.warn(`Provider failed, trying next...`);
+      if (resp.role !== 'err') {
+        if (i > 0) logger.info(`[Provider] fallback success via ${provider.config.id} (${resp.completionText.slice(0, 60)})`);
+        return resp;
+      }
+      logger.warn(`[Provider] ${provider.config.id} failed, trying next...`);
     }
 
     return { role: 'err', completionText: 'All providers failed' };

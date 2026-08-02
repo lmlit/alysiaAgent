@@ -174,6 +174,19 @@ describe('ToolRegistry', () => {
     };
     registry.register(tool);
     await registry.execute('test', { key: 'value' });
-    expect(handler).toHaveBeenCalledWith({ key: 'value' });
+    expect(handler).toHaveBeenCalledWith({ key: 'value' }, undefined);
+  });
+
+  it('should pass sessionId to handler when provided', async () => {
+    const handler = vi.fn().mockResolvedValue('ok');
+    const tool: ToolDefinition = {
+      name: 'test2',
+      description: 'Test',
+      parameters: { type: 'object', properties: {}, required: [] },
+      handler,
+    };
+    registry.register(tool);
+    await registry.execute('test2', {}, 'sess-1');
+    expect(handler).toHaveBeenCalledWith({}, 'sess-1');
   });
 });

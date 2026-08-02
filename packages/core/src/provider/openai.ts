@@ -1,3 +1,4 @@
+import { logger } from '../utils/logger.js';
 import type { ProviderConfig, ProviderRequest, LLMResponse } from './types.js';
 
 export class OpenAIProvider {
@@ -5,8 +6,9 @@ export class OpenAIProvider {
 
   async textChat(req: ProviderRequest): Promise<LLMResponse> {
     const messages = this.buildMessages(req);
+    const model = req.model || this.config.model;
     const body: Record<string, unknown> = {
-      model: req.model || this.config.model,
+      model,
       messages,
       stream: false,
     };
@@ -16,6 +18,80 @@ export class OpenAIProvider {
       body.tool_choice = 'auto';
     }
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 60_000);
+    const start = Date.now();
+
+    try {
+      const response = await fetch(`${this.config.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.config.apiKey}`,
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        logger.error(`[LLM] API error ${response.status}: ${errText.slice(0, 300)} (${Date.now() - start}ms)`);
+        return { role: 'err', completionText: `API error ${response.status}: ${errText.slice(0, 200)}` };
+      }
+
+      const data = await response.json() as any;
+      const choice = data.choices?.[0];
+      const message = choice?.message;
+      const usage = data.usage ? {
+        input: data.usage.prompt_tokens,
+        output: data.usage.completion_tokens,
+        total: data.usage.total_tokens,
+      } : undefined;
+
+      // ★ 成功调用日志：耗时 + tokens + 回复/工具调用摘要
+      const toolNames = message?.tool_calls?.map((tc: any) => tc.function?.name).filter(Boolean) ?? [];
+      logger.info(
+        `[LLM] ${model} → ${toolNames.length ? `tool_call: ${toolNames.join(',')}` : (message?.content || '').slice(0, 80).replace(/\n/g, ' ')}` +
+        ` tokens=${usage ? `${usage.input}+${usage.output}=${usage.total}` : '?'} (${Date.now() - start}ms)`
+      );
+
+      return {
+        role: 'assistant',
+        completionText: message?.content || '',
+        toolsCallName: toolNames,
+        toolsCallArgs: message?.tool_calls?.map((tc: any) => {
+          try { return JSON.parse(tc.function?.arguments || '{}'); } catch { return {}; }
+        }),
+        toolsCallIds: message?.tool_calls?.map((tc: any) => tc.id),
+        usage,
+      };
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        logger.error(`[LLM] ${model} timed out after 60s`);
+        return { role: 'err', completionText: 'Request timed out (60s)' };
+      }
+      logger.error(`[LLM] ${model} request error: ${err.message} (${Date.now() - start}ms)`);
+      return { role: 'err', completionText: `Request error: ${err.message}` };
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  async *textChatStream(req: ProviderRequest): AsyncGenerator<LLMResponse> {
+    const messages = this.buildMessages(req);
+    const model = req.model || this.config.model;
+    const body: Record<string, unknown> = {
+      model,
+      messages,
+      stream: true,
+    };
+
+    if (req.funcTool && req.funcTool.tools.length > 0) {
+      body.tools = req.funcTool.toOpenAI();
+      body.tool_choice = 'auto';
+    }
+
+    const start = Date.now();
     const response = await fetch(`${this.config.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
@@ -26,53 +102,16 @@ export class OpenAIProvider {
     });
 
     if (!response.ok) {
-      const errText = await response.text();
-      console.error(`[LLM] API error ${response.status}: ${errText.slice(0, 300)}`);
-      return { role: 'err', completionText: `API error ${response.status}: ${errText.slice(0, 200)}` };
+      const errText = await response.text().catch(() => '');
+      logger.error(`[LLM stream] API error ${response.status}: ${errText.slice(0, 300)} (${Date.now() - start}ms)`);
+      yield { role: 'err', completionText: `API error ${response.status}` };
+      return;
     }
 
-    const data = await response.json() as any;
-    const choice = data.choices?.[0];
-    const message = choice?.message;
-
-    return {
-      role: 'assistant',
-      completionText: message?.content || '',
-      toolsCallName: message?.tool_calls?.map((tc: any) => tc.function.name),
-      toolsCallArgs: message?.tool_calls?.map((tc: any) => JSON.parse(tc.function.arguments || '{}')),
-      toolsCallIds: message?.tool_calls?.map((tc: any) => tc.id),
-      usage: data.usage ? {
-        input: data.usage.prompt_tokens,
-        output: data.usage.completion_tokens,
-        total: data.usage.total_tokens,
-      } : undefined,
-    };
-  }
-
-  async *textChatStream(req: ProviderRequest): AsyncGenerator<LLMResponse> {
-    const messages = this.buildMessages(req);
-    const body: Record<string, unknown> = {
-      model: req.model || this.config.model,
-      messages,
-      stream: true,
-    };
-
-    if (req.funcTool && req.funcTool.tools.length > 0) {
-      body.tools = req.funcTool.toOpenAI();
-      body.tool_choice = 'auto';
-    }
-
-    const response = await fetch(`${this.config.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.config.apiKey}`,
-      },
-      body: JSON.stringify(body),
-    });
-
+    logger.info(`[LLM stream] ${model} start (${Date.now() - start}ms to headers)`);
     const reader = response.body?.getReader();
     if (!reader) {
+      logger.error(`[LLM stream] ${model}: no response body`);
       yield { role: 'err', completionText: 'No response body' };
       return;
     }

@@ -1,6 +1,6 @@
 // src/memory/stores/CodeContextStore.ts
 import type Database from 'better-sqlite3';
-import type { CodeContext } from '../types';
+import type { CodeContext } from '../types.js';
 
 export class CodeContextStore {
   constructor(private db: Database.Database) {}

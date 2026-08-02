@@ -1,14 +1,14 @@
 import type Database from 'better-sqlite3';
-import type { WorldbookEntry } from '../types';
+import type { WorldbookEntry } from '../types.js';
 
 export class WorldbookStore {
   constructor(private db: Database.Database) {}
 
   insert(entry: WorldbookEntry): void {
     this.db.prepare(`
-      INSERT INTO worldbook_entries (id, trigger_keys, trigger_mode, content, scope, priority, cooldown_sec, last_triggered, hit_count, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(entry.id, entry.trigger_keys, entry.trigger_mode, entry.content, entry.scope, entry.priority, entry.cooldown_sec, entry.last_triggered, entry.hit_count, entry.created_at, entry.updated_at);
+      INSERT INTO worldbook_entries (id, trigger_keys, trigger_mode, content, scope, priority, cooldown_sec, last_triggered, hit_count, created_at, updated_at, role, content_type)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(entry.id, entry.trigger_keys, entry.trigger_mode, entry.content, entry.scope, entry.priority, entry.cooldown_sec, entry.last_triggered, entry.hit_count, entry.created_at, entry.updated_at, entry.role ?? 'alysia', entry.content_type ?? 'text');
   }
 
   getById(id: string): WorldbookEntry | null {
@@ -17,7 +17,7 @@ export class WorldbookStore {
     return this.rowToEntry(row);
   }
 
-  matchByKeywords(keywords: string[], scope?: string): WorldbookEntry[] {
+  matchByKeywords(keywords: string[], scope?: string, role: string = 'alysia'): WorldbookEntry[] {
     // Fetch all entries matching any keyword (OR logic initially)
     let query = 'SELECT * FROM worldbook_entries WHERE ';
     const conditions: string[] = [];
@@ -32,6 +32,10 @@ export class WorldbookStore {
       conditions.push("(scope = ? OR scope = 'both')");
       params.push(scope);
     }
+
+    // ★ 按角色过滤（v3 角色系统）
+    conditions.push('role = ?');
+    params.push(role);
 
     query += conditions.join(' AND ');
     query += ' ORDER BY priority DESC';
@@ -65,11 +69,16 @@ export class WorldbookStore {
     ).run(now, now, id);
   }
 
+  private static ALLOWED_COLUMNS = new Set([
+    'trigger_keys', 'trigger_mode', 'content', 'scope', 'priority',
+    'cooldown_sec', 'last_triggered', 'hit_count', 'updated_at',
+  ]);
+
   updateEntry(id: string, updates: Partial<WorldbookEntry>): void {
     const sets: string[] = [];
     const values: unknown[] = [];
     for (const [key, value] of Object.entries(updates)) {
-      if (key === 'id') continue;
+      if (key === 'id' || !WorldbookStore.ALLOWED_COLUMNS.has(key)) continue;
       sets.push(`${key} = ?`);
       values.push(value);
     }
@@ -97,6 +106,8 @@ export class WorldbookStore {
       hit_count: row.hit_count as number,
       created_at: row.created_at as string,
       updated_at: row.updated_at as string,
+      role: (row.role as string) ?? 'alysia',
+      content_type: (row.content_type as string) ?? 'text',
     };
   }
 }

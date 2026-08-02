@@ -33,16 +33,19 @@ describe('ProfileExtractor', () => {
     expect(facts[0].confidence).toBe(0.9);
   });
 
-  it('should merge facts, keeping higher confidence on conflict', () => {
+  it('should merge facts, keeping higher confidence on conflict (v2: supersede + audit trail)', () => {
     const existing: ProfileFact[] = [
-      { fact: '用户是前端工程师', confidence: 0.5, evidence: 'old', source_event: 'e1', updated_at: '' },
+      { fact: '用户是前端工程师', confidence: 0.5, evidence: 'old', source_event: 'e1', updated_at: '', source: 'inferred', valid_from: '', valid_until: null, status: 'active' },
     ];
     const newFacts: ProfileFact[] = [
-      { fact: '用户是后端工程师', confidence: 0.9, evidence: 'new', source_event: 'e2', updated_at: '' },
+      { fact: '用户是后端工程师', confidence: 0.9, evidence: 'new', source_event: 'e2', updated_at: '', source: 'inferred', valid_from: '', valid_until: null, status: 'active' },
     ];
     const merged = extractor.mergeFacts(newFacts, existing);
-    expect(merged).toHaveLength(1);
-    expect(merged[0].fact).toBe('用户是后端工程师'); // higher confidence wins
+    // v2: 旧条 superseded + 新条 active = 2
+    expect(merged).toHaveLength(2);
+    const activeFacts = merged.filter(f => f.status === 'active');
+    expect(activeFacts).toHaveLength(1);
+    expect(activeFacts[0].fact).toBe('用户是后端工程师');
   });
 
   it('should add new facts without conflict', () => {
@@ -56,17 +59,19 @@ describe('ProfileExtractor', () => {
     expect(merged).toHaveLength(2);
   });
 
-  it('should deduplicate semantically identical facts', () => {
+  it('should deduplicate semantically identical facts (v2: supersede + audit trail)', () => {
     const existing: ProfileFact[] = [
-      { fact: '用户职业是后端开发', confidence: 0.8, evidence: 'old', source_event: 'e1', updated_at: '' },
+      { fact: '用户职业是后端开发', confidence: 0.8, evidence: 'old', source_event: 'e1', updated_at: '', source: 'inferred', valid_from: '', valid_until: null, status: 'active' },
     ];
     const newFacts: ProfileFact[] = [
-      { fact: '用户是后端工程师', confidence: 0.9, evidence: 'new', source_event: 'e2', updated_at: '' },
+      { fact: '用户是后端工程师', confidence: 0.9, evidence: 'new', source_event: 'e2', updated_at: '', source: 'inferred', valid_from: '', valid_until: null, status: 'active' },
     ];
     const merged = extractor.mergeFacts(newFacts, existing);
-    // Dedup: similar facts, higher confidence wins
-    expect(merged).toHaveLength(1);
-    expect(merged[0].confidence).toBe(0.9);
+    // v2: 旧条 superseded + 新条 active = 2
+    expect(merged).toHaveLength(2);
+    const activeFacts = merged.filter(f => f.status === 'active');
+    expect(activeFacts).toHaveLength(1);
+    expect(activeFacts[0].confidence).toBe(0.9);
   });
 
   it('should return empty for events with no extractable info', async () => {

@@ -1,7 +1,7 @@
 // src/memory/engines/PersonaAdapter.ts
-import type { MemoryEvent, PersonaAdjustment } from '../types';
-import { PersonaStore } from '../stores/PersonaStore';
-import type { ILLMService } from '../interfaces/ILLMService';
+import type { MemoryEvent, PersonaAdjustment } from '../types.js';
+import { PersonaStore } from '../stores/PersonaStore.js';
+import type { ILLMService } from '../interfaces/ILLMService.js';
 
 const MAX_DELTA = 0.1;
 const COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
@@ -13,6 +13,8 @@ const EXPLICIT_PATTERN = /不要|别|不许|不可以|必须|以后都|千万别
 export class PersonaAdapter {
   private lastAdjustmentTime = new Map<string, number>();
   private consecutiveDirection = new Map<string, { direction: number; count: number }>();
+  private applyLock = false;
+  private lastSignalProcessed = 0; // 全局冷却：避免短时间内重复调 LLM
 
   constructor(private store: PersonaStore, private llm: ILLMService) {}
 
@@ -26,16 +28,25 @@ export class PersonaAdapter {
     const hasPreferenceSignal = /太+|能不能别|我喜欢|我讨厌|不要|别|更|再/.test(content);
     if (!hasPreferenceSignal && !isExplicit) return null;
 
-    // Ask LLM to determine adjustment
+    // ★ 冷却检查前置：全局 2 分钟内不再调 LLM（显式指令除外）
+    if (!isExplicit && Date.now() - this.lastSignalProcessed < 2 * 60_000) {
+      return null;
+    }
+
+    // Ask LLM to determine adjustment (v2: 包含 memory_config)
     const persona = this.store.get();
+    const memoryConfig = this.store.getMemoryConfig();
     const prompt = `当前人格参数: ${JSON.stringify({
       tone: JSON.parse(persona.tone),
       speech: JSON.parse(persona.speech_style),
       emotional: JSON.parse(persona.emotional_range),
-    })}\n用户消息: "${content}"\n判断是否需要调整，返回JSON: {"adjustments": [{"param": "...", "delta": 0.0, "reason": "..."}]} 或 {"adjustments": []}`;
+      memory: memoryConfig,
+    })}\n用户消息: "${content}"\n判断是否需要调整。记忆旋钮(memory): retention_bias(-1=只记坏的,+1=只记好的), decay_rate(0=不忘,1=秒忘), importance_threshold(0=什么都记,1=只记大事), recency_weight(0=念旧,1=只认最近), confirmation_bias(0=随风倒,1=固执)。返回JSON: {"adjustments": [{"param": "...", "delta": 0.0, "reason": "..."}]}`;
+
+    this.lastSignalProcessed = Date.now();
 
     const response = await this.llm.complete(
-      '你是人格参数调节器。根据用户反馈判断人格参数是否需要微调。delta范围[-0.1, 0.1]。',
+      '你是人格参数调节器。根据用户反馈判断人格参数和记忆偏好是否需要微调。delta范围[-0.1, 0.1]。',
       prompt
     );
 
@@ -43,10 +54,14 @@ export class PersonaAdapter {
       const parsed = JSON.parse(response);
       if (parsed.adjustments && parsed.adjustments.length > 0) {
         const adj = parsed.adjustments[0];
+        // Validate required fields exist before using them
+        if (typeof adj.param !== 'string' || typeof adj.delta !== 'number') {
+          return null;
+        }
         return {
           param: adj.param,
           delta: adj.delta,
-          reason: adj.reason,
+          reason: adj.reason || '',
           ...(isExplicit ? { explicit: true } : {}),
         };
       }
@@ -57,6 +72,17 @@ export class PersonaAdapter {
   }
 
   apply(adjustment: PersonaAdjustment, options?: { bypassLimits?: boolean }): boolean {
+    // Prevent concurrent apply() calls from racing on Maps
+    if (this.applyLock) return false;
+    this.applyLock = true;
+    try {
+      return this._applyLocked(adjustment, options);
+    } finally {
+      this.applyLock = false;
+    }
+  }
+
+  private _applyLocked(adjustment: PersonaAdjustment, options?: { bypassLimits?: boolean }): boolean {
     const bypass = adjustment.explicit || options?.bypassLimits || false;
 
     // Regress stale params toward default before processing new adjustment
@@ -125,6 +151,9 @@ export class PersonaAdapter {
       } else if (paramParts[0] === 'emotional_range' && paramParts[1]) {
         const range = JSON.parse(persona.emotional_range);
         currentValue = range[paramParts[1]] || 0;
+      } else if (paramParts[0] === 'memory' && paramParts[1]) {
+        const config = this.store.getMemoryConfig();
+        currentValue = (config as unknown as Record<string, number>)[paramParts[1]] || 0;
       }
 
       if (currentValue === 0) continue;
@@ -162,6 +191,14 @@ export class PersonaAdapter {
       const range = JSON.parse(persona.emotional_range);
       range[paramParts[1]] = this.clamp((range[paramParts[1]] || 0) + delta);
       this.store.updateEmotionalRange(JSON.stringify(range));
+    } else if (paramParts[0] === 'memory' && paramParts[1]) {
+      // v2: 记忆人格旋钮
+      const config = this.store.getMemoryConfig();
+      const key = paramParts[1] as keyof typeof config;
+      if (key in config) {
+        (config as unknown as Record<string, number>)[key] = this.clamp(((config as unknown as Record<string, number>)[key] || 0) + delta);
+        this.store.updateMemoryConfig(config);
+      }
     }
   }
 

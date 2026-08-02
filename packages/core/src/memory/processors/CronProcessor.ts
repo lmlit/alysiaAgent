@@ -1,12 +1,12 @@
 // src/memory/processors/CronProcessor.ts
-import { PROCESSED_PROFILE, PROCESSED_SUMMARY, PROCESSED_PERSONA, PROCESSED_KNOWLEDGE } from '../types';
-import type { EventStore } from '../stores/EventStore';
-import type { ConversationStore } from '../stores/ConversationStore';
-import type { KnowledgeStore } from '../stores/KnowledgeStore';
-import type { ProfileStore } from '../stores/ProfileStore';
-import type { ProfileExtractor } from '../engines/ProfileExtractor';
-import type { ILLMService } from '../interfaces/ILLMService';
-import type { IVectorStore } from '../interfaces/IVectorStore';
+import { PROCESSED_PROFILE, PROCESSED_SUMMARY, PROCESSED_PERSONA, PROCESSED_KNOWLEDGE } from '../types.js';
+import type { EventStore } from '../stores/EventStore.js';
+import type { ConversationStore } from '../stores/ConversationStore.js';
+import type { KnowledgeStore } from '../stores/KnowledgeStore.js';
+import type { ProfileStore } from '../stores/ProfileStore.js';
+import type { ProfileExtractor } from '../engines/ProfileExtractor.js';
+import type { ILLMService } from '../interfaces/ILLMService.js';
+import type { IVectorStore } from '../interfaces/IVectorStore.js';
 
 /**
  * CronProcessor handles periodic maintenance tasks:

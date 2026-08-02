@@ -1,5 +1,6 @@
 import type { MessageEvent } from '../platform/event.js';
 import type { PipelineScheduler } from '../pipeline/scheduler.js';
+import { logger } from '../utils/logger.js';
 
 export class EventBus {
   private queue: MessageEvent[] = [];
@@ -7,6 +8,9 @@ export class EventBus {
   private defaultScheduler?: PipelineScheduler;
   private running = false;
   private resolveWaiters: Array<() => void> = [];
+  private dispatchPromise?: Promise<void>;
+  /** 队列上限，防止内存无限增长 */
+  private static MAX_QUEUE = 500;
 
   setDefaultScheduler(scheduler: PipelineScheduler): void {
     this.defaultScheduler = scheduler;
@@ -21,43 +25,67 @@ export class EventBus {
   }
 
   put(event: MessageEvent): void {
+    // Rate limit: drop oldest event if queue is full
+    if (this.queue.length >= EventBus.MAX_QUEUE) {
+      logger.warn(`EventBus queue full (${EventBus.MAX_QUEUE}), dropping oldest event`);
+      this.queue.shift();
+    }
+    logger.debug(`EventBus put: ${event.unifiedMsgOrigin} queue=${this.queue.length + 1}`);
     this.queue.push(event);
-    for (const resolve of this.resolveWaiters) resolve();
+    // Wake up dispatch loop. JS single-threaded → no race on resolveWaiters.
+    const waiters = this.resolveWaiters;
     this.resolveWaiters = [];
+    for (const resolve of waiters) resolve();
   }
 
-  async dispatch(): Promise<void> {
+  dispatch(): Promise<void> {
+    if (this.dispatchPromise) return this.dispatchPromise;
+    this.dispatchPromise = this._dispatchLoop();
+    return this.dispatchPromise;
+  }
+
+  private async _dispatchLoop(): Promise<void> {
     this.running = true;
     while (this.running) {
       if (this.queue.length === 0) {
         await new Promise<void>(resolve => { this.resolveWaiters.push(resolve); });
         continue;
       }
-      const event = this.queue.shift()!;
-      const umo = event.unifiedMsgOrigin;
-      // Exact match first, then prefix match, then default
-      let scheduler = this.schedulerMap.get(umo);
-      if (!scheduler) {
-        // Try prefix match: "qq-official-1:private:123" should match "qq-official-1"
-        for (const [key, s] of this.schedulerMap) {
-          if (umo.startsWith(key)) { scheduler = s; break; }
+      // Drain queue atomically to avoid holding the lock
+      const batch: MessageEvent[] = [];
+      while (this.queue.length > 0) {
+        const event = this.queue.shift();
+        if (event) batch.push(event);
+      }
+
+      for (const event of batch) {
+        const umo = event.unifiedMsgOrigin;
+        // Exact match first, then prefix match, then default
+        let scheduler = this.schedulerMap.get(umo);
+        if (!scheduler) {
+          // Try prefix match: "qq-official-1:private:123" should match "qq-official-1"
+          for (const [key, s] of this.schedulerMap) {
+            if (umo.startsWith(key)) { scheduler = s; break; }
+          }
         }
-      }
-      if (!scheduler) scheduler = this.defaultScheduler;
-      if (!scheduler) {
-        console.warn(`No scheduler for ${umo}, ignored.`);
-        continue;
-      }
-      try {
-        await scheduler.execute(event);
-      } catch (err) {
-        console.error('Pipeline error:', err);
+        if (!scheduler) scheduler = this.defaultScheduler;
+        if (!scheduler) {
+          logger.warn(`No scheduler for ${umo}, event ignored.`);
+          continue;
+        }
+        try {
+          logger.info(`EventBus dispatch → ${umo} (pipeline ${event.pipelineMode ?? 'chat'})`);
+          await scheduler.execute(event);
+        } catch (err) {
+          logger.error('Pipeline error:', err);
+        }
       }
     }
   }
 
   stop(): void {
     this.running = false;
+    this.dispatchPromise = undefined;
     for (const resolve of this.resolveWaiters) {
       resolve();
     }

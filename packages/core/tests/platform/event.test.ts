@@ -77,9 +77,9 @@ describe('MessageEvent', () => {
       sessionId: 'chat-1',
     });
 
-    event.setExtra('key', 'value');
-    expect(event.getExtra('key')).toBe('value');
-    expect(event.getExtra('nonexistent', 'default')).toBe('default');
+    event.setArbitraryExtra('key', 'value');
+    expect(event.getArbitraryExtra('key')).toBe('value');
+    expect(event.getArbitraryExtra('nonexistent', 'default')).toBe('default');
   });
 
   it('should get message outline', () => {
