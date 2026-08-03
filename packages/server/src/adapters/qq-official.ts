@@ -84,9 +84,15 @@ export class QQOfficialAgentAdapter implements Platform {
   private lastHeartbeatAck = 0;
   /** 表情包解析回调：名字 → 图片路径（由 bootstrap 注入 core.memoryManager.findSticker） */
   private stickerResolver: ((name: string) => string | null) | null = null;
+  /** Vision Bridge：用户发图片 → 视觉模型转文字描述 → 喂给 DeepSeek */
+  private visionBridge: { describe: (url: string, prompt?: string) => Promise<string | null> } | null = null;
 
   setStickerResolver(fn: (name: string) => string | null): void {
     this.stickerResolver = fn;
+  }
+
+  setVisionBridge(bridge: { describe: (url: string, prompt?: string) => Promise<string | null> }): void {
+    this.visionBridge = bridge;
   }
 
   constructor(config: QQConfig, private adapterId = 'qq-official') {
@@ -229,7 +235,7 @@ export class QQOfficialAgentAdapter implements Platform {
       this.parseFrame(data, (payload) => {
         try {
           const msg: QQGatewayPayload = JSON.parse(payload);
-          this.handleGatewayMessage(msg);
+          this.handleGatewayMessage(msg).catch(err => logger.error('[QQ Official] gateway error:', err));
         } catch {}
       });
     });
@@ -347,7 +353,7 @@ export class QQOfficialAgentAdapter implements Platform {
     }
   }
 
-  private handleGatewayMessage(msg: QQGatewayPayload): void {
+  private async handleGatewayMessage(msg: QQGatewayPayload): Promise<void> {
     logger.info('[QQ Official] ← op:', msg.op, msg.t || '');
     switch (msg.op) {
       case 10: // Hello → send IDENTIFY
@@ -391,7 +397,7 @@ export class QQOfficialAgentAdapter implements Platform {
 
       case 0: // Dispatch — 消息事件
         this.seq = msg.s ?? this.seq;
-        this.handleEvent(msg.t || '', msg.d || {});
+        this.handleEvent(msg.t || '', msg.d || {}).catch(err => logger.error('[QQ Official] handleEvent error:', err));
         break;
 
       default:
@@ -399,7 +405,7 @@ export class QQOfficialAgentAdapter implements Platform {
     }
   }
 
-  private handleEvent(eventType: string, data: any): void {
+  private async handleEvent(eventType: string, data: any): Promise<void> {
     // Log ALL events for debugging
     logger.info('[QQ Official] Event:', eventType, 'keys:', Object.keys(data || {}).join(','));
 
@@ -436,7 +442,27 @@ export class QQOfficialAgentAdapter implements Platform {
       nickname: data.author?.username || userId,
     };
 
-    const content = data.content || '';
+    let content = data.content || '';
+
+    // ★ 图片 → 文字描述（Vision Bridge）：当用户发图片时，msg_elements 包含图片附件。
+    //   用 GLM-4V-Flash 转成文字描述后拼入 messageStr，DeepSeek 即可"看懂"图片。
+    const elements: any[] = data.msg_elements ?? data.attachments ?? [];
+    const imageDescs: string[] = [];
+    if (elements.length > 0 && this.visionBridge) {
+      await Promise.all(elements.map(async (el: any) => {
+        const elType = el?.msg_type ?? el?.content_type ?? '';
+        if (elType === 7 || String(elType).startsWith('image')) {
+          const url = el?.url || el?.file_info || '';
+          if (!url) return;
+          const desc = await this.visionBridge!.describe(typeof url === 'string' ? url : '', '请用一两句话描述这张图片，注意图中的文字、场景和情绪。');
+          if (desc) imageDescs.push(`[图片内容: ${desc}]`);
+        }
+      }));
+    }
+    if (imageDescs.length > 0) {
+      content = imageDescs.join('\n') + (content ? '\n' + content : '');
+    }
+
     const message: Message = {
       sessionId,
       groupId: chatType === 'private' ? '' : groupId,

@@ -16,7 +16,8 @@
     "./tools": "./dist/tools/index.js",
     "./commands": "./dist/commands/index.js",
     "./persona": "./dist/persona/loader.js",
-    "./utils/logger": "./dist/utils/logger.js"
+    "./utils/logger": "./dist/utils/logger.js",
+    "./vision": "./dist/vision/bridge.js"
   },
   "scripts": {
     "build": "tsc && node -e \"const{cpSync}=require('fs');cpSync('src/persona','dist/persona',{recursive:true})\"",

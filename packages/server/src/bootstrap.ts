@@ -19,6 +19,7 @@ try {
 
 import { AlysiaCore, logger } from '@alysia/core';
 import { createReminderTool } from '@alysia/core/tools';
+import { VisionBridge } from '@alysia/core/vision';
 import { TelegramAdapter } from './adapters/telegram.js';
 import { QQOneBotAdapter } from './adapters/qq-onebot.js';
 import { QQOfficialAgentAdapter } from './adapters/qq-official.js';
@@ -73,6 +74,14 @@ async function main() {
     qqOff.setEventBus(core.eventBus);
     // ★ 表情包解析回调：文案标记 [表情包:名字] → 图片路径
     qqOff.setStickerResolver((name) => core.memoryManager.findSticker(name)?.content ?? null);
+    // ★ Vision Bridge：用户发图片 → GLM-4V-Flash 描述 → 文本喂给 DeepSeek
+    if (config.embed?.apiKey) {
+      const visionBridge = new VisionBridge({
+        baseUrl: config.embed.baseUrl || 'https://open.bigmodel.cn/api/paas/v4',
+        apiKey: config.embed.apiKey,
+      });
+      qqOff.setVisionBridge(visionBridge);
+    }
     await qqOff.run();
   }
 
