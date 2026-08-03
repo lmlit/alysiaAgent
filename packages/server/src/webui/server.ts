@@ -9,12 +9,15 @@
  *   GET  /api/sessions            — 会话列表
  *   GET  /api/profile             — 画像快照
  *   GET  /api/persona             — 人格状态
- *   GET  /api/stats               — Token 用量
+ *   GET  /api/stats               — Token 用量（全局 + 分会话）
  *   GET  /api/roles               — 角色列表
+ *   GET  /api/roles/active        — 当前激活角色摘要
+ *   GET  /api/roles/:id/export    — 导出角色包
  *   GET  /api/knowledge           — 知识库文档列表
  *   GET  /api/stickers            — 表情包列表
  *   POST /api/sessions/:id/extract   — 手动提取画像（LLM 异步）
  *   POST /api/roles/switch         — 切换激活角色
+ *   POST /api/roles/import         — 导入角色包
  *   POST /api/persona/adjust       — 手动调整人格参数
  *   POST /api/knowledge/import     — 导入知识
  *   DELETE /api/knowledge/:id      — 删除知识文档
@@ -55,23 +58,19 @@ export function createWebuiApp(core: AlysiaCore) {
 
   // ── Token 统计 ─────────────────────────────────────
   app.get('/api/stats', async () => {
-    // getSessionStats 是模块级函数；通过 import 获取
-    const { getSessionStats } = await import('@alysia/core/pipeline');
-    // 返回所有已知会话的统计 + 全局汇总
-    const sessions = core.memoryManager.listSessions(100);
+    // ★ 走 MemoryManager 公开接口，不直接读 pipeline 内部状态
+    const result = core.memoryManager.getTokenStats() as {
+      global: { input: number; output: number; tokens: number };
+      perSession: Record<string, { recordCount: number; totalInput: number; totalOutput: number; totalTokens: number }>;
+    };
+    // 补充关联的 session 元信息（messageCount / lastActive）
+    const sessions = core.memoryManager.listSessions(200);
+    const sessionMeta = new Map(sessions.map(s => [s.sessionId, { messageCount: s.messageCount, lastActive: s.lastActive }]));
     const perSession: Record<string, unknown> = {};
-    let globalInput = 0;
-    let globalOutput = 0;
-    let globalTokens = 0;
-    for (const s of sessions) {
-      // 尝试查 stat（key 为 unifiedMsgOrigin）
-      const stat = (getSessionStats as any)(s.sessionId) || { recordCount: 0, totalInput: 0, totalOutput: 0, totalTokens: 0 };
-      perSession[s.sessionId] = stat;
-      globalInput += stat.totalInput;
-      globalOutput += stat.totalOutput;
-      globalTokens += stat.totalTokens;
+    for (const [id, stat] of Object.entries(result.perSession)) {
+      perSession[id] = { ...stat, ...(sessionMeta.get(id) ?? {}) };
     }
-    return { global: { input: globalInput, output: globalOutput, tokens: globalTokens }, perSession };
+    return { global: result.global, perSession };
   });
 
   // ── 角色系统 ───────────────────────────────────────
@@ -83,8 +82,22 @@ export function createWebuiApp(core: AlysiaCore) {
 
   app.post('/api/roles/switch', async (req) => {
     const { roleId } = req.body as { roleId: string };
-    core.memoryManager.switchRole(roleId);
-    return { activeRole: core.memoryManager.getActiveRoleId() };
+    const result = core.memoryManager.switchRole(roleId);
+    return { activeRole: core.memoryManager.getActiveRoleId(), ...result };
+  });
+
+  app.get('/api/roles/active', async () => core.memoryManager.getActiveRole());
+
+  app.post('/api/roles/import', async (req) => {
+    const result = core.memoryManager.importRole(req.body as any);
+    return result;
+  });
+
+  app.get('/api/roles/:id/export', async (req) => {
+    const { id } = req.params as { id: string };
+    const pkg = core.memoryManager.exportRole(id);
+    if (!pkg) return { error: 'Role not found' };
+    return pkg;
   });
 
   // ── 知识库 ─────────────────────────────────────────

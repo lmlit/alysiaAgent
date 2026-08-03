@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { LLMAgentStage, getSessionStats } from '../../src/pipeline/stages/llm-agent.js';
+import { LLMAgentStage } from '../../src/pipeline/stages/llm-agent.js';
 import { MessageEvent } from '../../src/platform/event.js';
 import { MessageType } from '../../src/platform/types.js';
 import type {
@@ -59,6 +59,8 @@ function makeEvent(
 
 function makeMockContext(): PipelineContext {
   const cmdRegistry = { execute: vi.fn(), register: vi.fn() };
+  // Real in-memory token stats so tests can verify accumulation
+  const tokenStatsMap = new Map<string, { recordCount: number; totalInput: number; totalOutput: number; totalTokens: number }>();
   return {
     providerManager: {} as any,
     toolRegistry: {} as any,
@@ -68,6 +70,20 @@ function makeMockContext(): PipelineContext {
       onSessionEnd: vi.fn().mockResolvedValue(undefined),
       listStickers: vi.fn().mockReturnValue([{ name: '睡觉', path: '/data/stickers/睡觉.png' }]),
       findSticker: vi.fn().mockReturnValue({ content: '/data/stickers/睡觉.png' }),
+      recordTokenUsage: vi.fn().mockImplementation(
+        (sid: string, usage: { input: number; output: number; total: number }) => {
+          const e = tokenStatsMap.get(sid) ?? { recordCount: 0, totalInput: 0, totalOutput: 0, totalTokens: 0 };
+          e.recordCount += 1;
+          e.totalInput += usage.input;
+          e.totalOutput += usage.output;
+          e.totalTokens += usage.total;
+          tokenStatsMap.set(sid, e);
+        },
+      ),
+      getTokenStats: vi.fn().mockImplementation((sid?: string) => {
+        if (sid) return tokenStatsMap.get(sid) ?? { recordCount: 0, totalInput: 0, totalOutput: 0, totalTokens: 0 };
+        return { global: { input: 0, output: 0, tokens: 0 }, perSession: {} };
+      }),
     } as any,
     config: {
       bot: { name: 'Alysia', ownerId: '' },
@@ -320,7 +336,7 @@ describe('LLMAgentStage', () => {
       const event = makeEvent('test', 'stats-session-1');
       await consumeGenerator(stage.process(event));
 
-      const stats = getSessionStats('t-1:private:stats-session-1');
+      const stats = ctx.memoryManager.getTokenStats('t-1:private:stats-session-1') as any;
       expect(stats.recordCount).toBe(1);
       expect(stats.totalInput).toBe(100);
       expect(stats.totalOutput).toBe(50);
@@ -348,7 +364,7 @@ describe('LLMAgentStage', () => {
       const ev2 = makeEvent('msg2', sessionId);
       await consumeGenerator(stage.process(ev2));
 
-      const stats = getSessionStats(`t-1:private:${sessionId}`);
+      const stats = ctx.memoryManager.getTokenStats(`t-1:private:${sessionId}`) as any;
       expect(stats.recordCount).toBe(2);
       expect(stats.totalInput).toBe(300); // 100 + 200
       expect(stats.totalOutput).toBe(150); // 50 + 100
@@ -368,8 +384,8 @@ describe('LLMAgentStage', () => {
       const ev2 = makeEvent('msg2', 'session-b');
       await consumeGenerator(stage.process(ev2));
 
-      const statsA = getSessionStats('t-1:private:session-a');
-      const statsB = getSessionStats('t-1:private:session-b');
+      const statsA = ctx.memoryManager.getTokenStats('t-1:private:session-a') as any;
+      const statsB = ctx.memoryManager.getTokenStats('t-1:private:session-b') as any;
 
       expect(statsA.recordCount).toBe(1);
       expect(statsB.recordCount).toBe(1);
@@ -390,14 +406,15 @@ describe('LLMAgentStage', () => {
       await gen.next();
 
       // No LLM call, no token usage recorded
-      const stats = getSessionStats('t-1:private:cmd-session');
+      const stats = ctx.memoryManager.getTokenStats('t-1:private:cmd-session') as any;
       expect(stats.recordCount).toBe(0);
     });
   });
 
-  describe('getSessionStats', () => {
+  describe('getTokenStats (via MemoryManager)', () => {
     it('should return zero stats for unknown sessions', () => {
-      const stats = getSessionStats('nonexistent');
+      const ctx = makeMockContext();
+      const stats = ctx.memoryManager.getTokenStats('nonexistent') as any;
       expect(stats).toEqual({
         recordCount: 0,
         totalInput: 0,
@@ -416,7 +433,7 @@ describe('LLMAgentStage', () => {
       const event = makeEvent('hi', 'known-session');
       await consumeGenerator(stage.process(event));
 
-      const stats = getSessionStats('t-1:private:known-session');
+      const stats = ctx.memoryManager.getTokenStats('t-1:private:known-session') as any;
       expect(stats.recordCount >= 1).toBe(true);
     });
   });

@@ -17,6 +17,7 @@ import { CronProcessor } from './processors/CronProcessor.js';
 import { PromptAssembler } from './PromptAssembler.js';
 import { filterPII } from './PIIFilter.js';
 import { logger } from '../utils/logger.js';
+import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { createHash } from 'crypto';
 import type { MemoryEvent, MemoryReadRequest, MemoryReadResult, MemoryConfig, KnowledgeDoc, SearchResult, WorldbookEntry } from './types.js';
 import { DEFAULT_MEMORY_CONFIG } from './types.js';
@@ -27,6 +28,16 @@ import type { ILLMService } from './interfaces/ILLMService.js';
 // ── 知识库分块参数（参考 AstrBot：chunk 512 / overlap 50）──
 const KB_CHUNK_SIZE = 500;
 const KB_CHUNK_OVERLAP = 50;
+
+// ── Token 统计 ──────────────────────────────────────────
+interface TokenStats {
+  recordCount: number;
+  totalInput: number;
+  totalOutput: number;
+  totalTokens: number;
+}
+
+const TOKEN_STATS_FILE = './data/token_stats.json';
 
 function chunkText(text: string, size = KB_CHUNK_SIZE, overlap = KB_CHUNK_OVERLAP): string[] {
   if (text.length <= size) return [text];
@@ -59,6 +70,8 @@ export class MemoryManager {
   private sessionEndProcessor: SessionEndProcessor;
   private cronProcessor: CronProcessor;
   private privacyMode: PrivacyMode = 'off';
+  private tokenStats: Map<string, TokenStats> = new Map();
+  private tokenStatsSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private db: Database.Database,
@@ -95,6 +108,9 @@ export class MemoryManager {
       this.eventStore, this.conversationStore, this.knowledgeStore,
       this.profileStore, this.profileExtractor, this.llmService, this.vectorStore,
     );
+
+    // Load persisted token stats on startup
+    this.loadTokenStats();
   }
 
   // ===== 隐私模式 =====
@@ -110,6 +126,60 @@ export class MemoryManager {
   /** 会话结束时自动恢复隐私模式 */
   resetPrivacyMode(): void {
     this.privacyMode = 'off';
+  }
+
+  // ===== Token 统计（由 LLMAgentStage POST 调用）=====
+
+  private loadTokenStats(): void {
+    try {
+      if (existsSync(TOKEN_STATS_FILE)) {
+        const data = JSON.parse(readFileSync(TOKEN_STATS_FILE, 'utf-8'));
+        for (const [k, v] of Object.entries(data)) {
+          this.tokenStats.set(k, v as TokenStats);
+        }
+      }
+    } catch { /* ignore load errors */ }
+  }
+
+  private saveTokenStats(): void {
+    if (this.tokenStatsSaveTimer) return;
+    this.tokenStatsSaveTimer = setTimeout(() => {
+      this.tokenStatsSaveTimer = null;
+      try {
+        writeFileSync(TOKEN_STATS_FILE, JSON.stringify(Object.fromEntries(this.tokenStats)));
+      } catch { /* ignore save errors */ }
+    }, 5000);
+  }
+
+  /** ★ 记录一次 LLM token 用量（LLMAgentStage POST 阶段调用）。 */
+  recordTokenUsage(sessionId: string, usage: { input: number; output: number; total: number }): void {
+    const existing = this.tokenStats.get(sessionId) ?? {
+      recordCount: 0, totalInput: 0, totalOutput: 0, totalTokens: 0,
+    };
+    existing.recordCount += 1;
+    existing.totalInput += usage.input;
+    existing.totalOutput += usage.output;
+    existing.totalTokens += usage.total;
+    this.tokenStats.set(sessionId, existing);
+    this.saveTokenStats();
+  }
+
+  /** ★ 获取 token 统计（Web 端 /stats 路由使用）。
+   *  不传 sessionId 返回全局汇总；传入则返回单会话。 */
+  getTokenStats(sessionId?: string): TokenStats | { global: { input: number; output: number; tokens: number }; perSession: Record<string, TokenStats> } {
+    if (sessionId) {
+      return this.tokenStats.get(sessionId) ?? { recordCount: 0, totalInput: 0, totalOutput: 0, totalTokens: 0 };
+    }
+    // 返回全局 + 所有会话
+    const perSession: Record<string, TokenStats> = {};
+    let globalInput = 0, globalOutput = 0, globalTokens = 0;
+    for (const [id, s] of this.tokenStats) {
+      perSession[id] = s;
+      globalInput += s.totalInput;
+      globalOutput += s.totalOutput;
+      globalTokens += s.totalTokens;
+    }
+    return { global: { input: globalInput, output: globalOutput, tokens: globalTokens }, perSession };
   }
 
   // ===== 纠正快路径 =====
@@ -245,10 +315,17 @@ export class MemoryManager {
   /** ★ 手动调整人格参数（Web 端滑条/按钮）。
    *  包装 PersonaAdapter.apply()，带护栏（|Δ|≤0.1 / 5min 冷却 / 24h 回归 / 显式 bypass）。
    *  param 格式: "tone.warmth" / "speech_style.emoji_usage" / "emotional_range.empathy" 等。
-   *  返回 { applied, reason } —— applied=false 表示被护栏拦截。 */
-  adjustPersona(param: string, delta: number, reason: string = '手动调整'): { applied: boolean; reason: string } {
+   *  返回 { applied, newValue } —— applied=false 表示被护栏拦截。 */
+  adjustPersona(param: string, delta: number, reason: string = '手动调整'): { applied: boolean; newValue: number | null } {
     const applied = this.personaAdapter.apply({ param, delta, reason });
-    return { applied, reason: applied ? '已应用' : '被护栏拦截（幅度/频率超限或冷却中）' };
+    // Read the new value after adjustment
+    const snapshot = this.getPersonaSnapshot();
+    const [category, key] = param.split('.');
+    let newValue: number | null = null;
+    if (category === 'tone' && key) newValue = (snapshot.tone as any)[key] ?? null;
+    else if (category === 'speech_style' && key) newValue = (snapshot.speechStyle as any)[key] ?? null;
+    else if (category === 'emotional_range' && key) newValue = (snapshot.emotionalRange as any)[key] ?? null;
+    return { applied, newValue };
   }
 
   /** ★ 手动触发画像提取（Web 端"提取画像"按钮）。
@@ -406,6 +483,18 @@ export class MemoryManager {
   /** 当前激活角色 ID */
   getActiveRoleId(): string {
     return this.personaStore.get().role ?? 'alysia';
+  }
+
+  /** ★ 获取激活角色摘要（Web 端角色切换展示）。
+   *  返回 { role, name, systemPromptPreview }。 */
+  getActiveRole(): { role: string; name: string; systemPromptPreview: string } {
+    const p = this.personaStore.get();
+    const prompt = p.system_prompt || '';
+    return {
+      role: p.role ?? 'alysia',
+      name: p.name,
+      systemPromptPreview: prompt.slice(0, 100) + (prompt.length > 100 ? '…' : ''),
+    };
   }
 
   /** ★ 表情包列表：当前激活角色的 image 类型世界书条目（send_sticker 工具用） */

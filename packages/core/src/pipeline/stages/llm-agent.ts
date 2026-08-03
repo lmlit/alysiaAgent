@@ -6,61 +6,13 @@ import { AgentRunner } from '../../agent/runner.js';
 import { MessageChain } from '../../platform/chain.js';
 import { logger } from '../../utils/logger.js';
 
-// ── Token 统计持久化 ──────────────────────────────────
-const STATS_FILE = './data/token_stats.json';
-
-interface TokenStats {
-  recordCount: number;
-  totalInput: number;
-  totalOutput: number;
-  totalTokens: number;
-}
-
-const sessionStats: Map<string, TokenStats> = new Map();
-
-function loadStats(): void {
-  try {
-    if (existsSync(STATS_FILE)) {
-      const data = JSON.parse(readFileSync(STATS_FILE, 'utf-8'));
-      for (const [k, v] of Object.entries(data)) {
-        sessionStats.set(k, v as TokenStats);
-      }
-    }
-  } catch { /* ignore load errors */ }
-}
-
-let saveTimer: ReturnType<typeof setTimeout> | null = null;
-
-function saveStats(): void {
-  // Debounce writes: batch within 5s window
-  if (saveTimer) return;
-  saveTimer = setTimeout(() => {
-    saveTimer = null;
-    try {
-      writeFileSync(STATS_FILE, JSON.stringify(Object.fromEntries(sessionStats)));
-    } catch { /* ignore save errors (disk full etc.) */ }
-  }, 5000);
-}
-
-// Load persisted stats on module import
-loadStats();
-
-export function getSessionStats(sessionId: string): TokenStats {
-  return sessionStats.get(sessionId) ?? {
-    recordCount: 0,
-    totalInput: 0,
-    totalOutput: 0,
-    totalTokens: 0,
-  };
-}
-
 /**
  * LLMAgentStage — the core onion-model stage.
  *
  * PRE:  intercepts commands via CommandRegistry, otherwise runs AgentRunner
  *       (system prompt from memory_context, image URL extraction)
  * YIELD:→ RespondStage sends the response
- * POST: records token usage into the in-memory sessionStats store
+ * POST: records token usage via MemoryManager.recordTokenUsage()
  */
 export class LLMAgentStage implements Stage {
   private runner!: AgentRunner;
@@ -168,22 +120,10 @@ export class LLMAgentStage implements Stage {
     // ===== YIELD: Let RespondStage send the response =====
     yield;
 
-    // ===== POST: Token stats recording =====
+    // ===== POST: Token stats recording (delegated to MemoryManager) =====
     const usage = event.getExtra('_token_usage');
     if (usage) {
-      const umo = event.unifiedMsgOrigin;
-      const existing = sessionStats.get(umo) ?? {
-        recordCount: 0,
-        totalInput: 0,
-        totalOutput: 0,
-        totalTokens: 0,
-      };
-      existing.recordCount += 1;
-      existing.totalInput += usage.input;
-      existing.totalOutput += usage.output;
-      existing.totalTokens += usage.total;
-      sessionStats.set(umo, existing);
-      saveStats(); // 持久化到磁盘
+      this.ctx.memoryManager.recordTokenUsage(event.unifiedMsgOrigin, usage);
 
       // 上下文超过阈值 → 触发记忆压缩
       if (usage.input > 8_000) {

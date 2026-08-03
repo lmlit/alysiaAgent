@@ -14,6 +14,7 @@ export class ConversationStore {
 
     if (vector && this.vectorStore) {
       await this.vectorStore.insert(conv.id, vector, conv.summary, {
+        source: 'conversation',
         topics: conv.topics,
         session_id: conv.session_id,
       });
@@ -42,7 +43,7 @@ export class ConversationStore {
 
   async searchByVector(vector: number[], topK: number): Promise<SearchResult[]> {
     if (!this.vectorStore) return [];
-    return this.vectorStore.search(vector, topK);
+    return this.vectorStore.search(vector, topK, { source: 'conversation' });
   }
 
   searchByText(query: string, limit: number): SearchResult[] {

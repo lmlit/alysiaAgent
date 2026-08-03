@@ -92,29 +92,45 @@ describe('CommandRegistry', () => {
 
 describe('Session commands', () => {
   it('/new should call onNew with unifiedMsgOrigin', async () => {
-    const onNew = vi.fn().mockResolvedValue('new_session_id');
+    const onNew = vi.fn().mockResolvedValue(undefined);
     const onReset = vi.fn();
-    const cmds = createSessionCommands(onNew, onReset);
+    const onStop = vi.fn();
+    const cmds = createSessionCommands(onNew, onReset, onStop);
     const newCmd = cmds.find(c => c.name === 'new')!;
     expect(newCmd).toBeDefined();
 
     const event = makeTestEvent('/new');
     const result = await newCmd.handler(event, []);
     expect(onNew).toHaveBeenCalledWith(event.unifiedMsgOrigin);
-    expect(result).toContain('new_');
+    expect(result).toContain('新对话');
   });
 
   it('/reset should call onReset with unifiedMsgOrigin', async () => {
     const onNew = vi.fn();
     const onReset = vi.fn().mockResolvedValue(undefined);
-    const cmds = createSessionCommands(onNew, onReset);
+    const onStop = vi.fn();
+    const cmds = createSessionCommands(onNew, onReset, onStop);
     const resetCmd = cmds.find(c => c.name === 'reset')!;
     expect(resetCmd).toBeDefined();
 
     const event = makeTestEvent('/reset');
     const result = await resetCmd.handler(event, []);
     expect(onReset).toHaveBeenCalledWith(event.unifiedMsgOrigin);
-    expect(result).toContain('Session reset');
+    expect(result).toContain('已重置');
+  });
+
+  it('/stop should call onStop with unifiedMsgOrigin', async () => {
+    const onNew = vi.fn();
+    const onReset = vi.fn();
+    const onStop = vi.fn().mockResolvedValue(undefined);
+    const cmds = createSessionCommands(onNew, onReset, onStop);
+    const stopCmd = cmds.find(c => c.name === 'stop')!;
+    expect(stopCmd).toBeDefined();
+
+    const event = makeTestEvent('/stop');
+    const result = await stopCmd.handler(event, []);
+    expect(onStop).toHaveBeenCalledWith(event.unifiedMsgOrigin);
+    expect(result).toContain('已停止');
   });
 });
 

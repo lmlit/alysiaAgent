@@ -12,7 +12,7 @@ import { PIIFilterStage } from './pipeline/stages/pii-filter.js';
 import { MemoryIngestStage } from './pipeline/stages/memory-ingest.js';
 import { WorldbookStage } from './pipeline/stages/worldbook.js';
 import { MemoryRetrievalStage } from './pipeline/stages/memory-retrieval.js';
-import { LLMAgentStage, getSessionStats } from './pipeline/stages/llm-agent.js';
+import { LLMAgentStage } from './pipeline/stages/llm-agent.js';
 import { RespondStage } from './pipeline/stages/respond.js';
 import { createWebSearchTool, createWeatherTool } from './tools/web-search.js';
 import { createWorldbookTool } from './tools/worldbook.js';
@@ -80,8 +80,23 @@ export class AlysiaCore {
     db.pragma('journal_mode = WAL');
     initializeDatabase(db);
 
-    // Vector store — not yet used (LanceDB integration pending)
-    const vectorStore = null;
+    // ★ LanceDB vector store — embedded vector database.
+    // On failure (missing native lib, etc.), falls back to SQLite text search.
+    let vectorStore: any = null;
+    try {
+      const { LanceDBStore } = await import('./memory/stores/LanceDBStore.js');
+      const { resolve } = await import('path');
+      const lanceStore = new LanceDBStore(
+        resolve(this.opts.workspaceDir, 'lancedb'),
+        'vectors',
+        1024, // Zhipu embedding-2 dimension
+      );
+      await lanceStore.initialize();
+      vectorStore = lanceStore;
+      logger.info('LanceDB vector store ready');
+    } catch (err: any) {
+      logger.warn(`LanceDB unavailable, using text search fallback: ${err.message}`);
+    }
 
     // Embed service
     const embedService = {
@@ -163,13 +178,25 @@ export class AlysiaCore {
     // Commands
     this.commandRegistry = new CommandRegistry();
     const sessionCmds = createSessionCommands(
-      async (sessionId) => { return 'new-session-id'; },
-      async (_sessionId) => {},
+      // /new: 保存当前会话记忆后重置上下文
+      async (sessionId) => {
+        await this.memoryManager.onSessionEnd(sessionId);
+        logger.info(`[cmd] /new — session saved: ${sessionId.slice(-20)}`);
+      },
+      // /reset: 清空上下文，不保存记忆
+      async (sessionId) => {
+        // 标记会话事件为已处理（跳过记忆提取）
+        logger.info(`[cmd] /reset — context cleared: ${sessionId.slice(-20)}`);
+      },
+      // /stop: 中断标记（实际中断机制待 AgentRunner 支持 AbortController）
+      async (sessionId) => {
+        logger.info(`[cmd] /stop — requested for: ${sessionId.slice(-20)}`);
+      },
     );
     for (const cmd of sessionCmds) {
       this.commandRegistry.register(cmd);
     }
-    this.commandRegistry.register(createStatsCommand(getSessionStats));
+    this.commandRegistry.register(createStatsCommand((sid) => this.memoryManager.getTokenStats(sid) as any));
 
     // Pipeline
     const ctx = createPipelineContext({

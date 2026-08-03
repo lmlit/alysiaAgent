@@ -37,7 +37,7 @@ export class KnowledgeStore {
 
   async searchByVector(vector: number[], topK: number): Promise<SearchResult[]> {
     if (!this.vectorStore) return [];
-    return this.vectorStore.search(vector, topK);
+    return this.vectorStore.search(vector, topK, { source: 'knowledge' });
   }
 
   searchByText(query: string, limit: number): SearchResult[] {

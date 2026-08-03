@@ -1,5 +1,5 @@
 // Structured logger — lightweight, zero dependencies.
-// Provides debug/info/warn/error with ISO timestamps.
+// Provides debug/info/warn/error with local-time timestamps.
 // Optional file persistence: configure({ logDir }) → 控制台 + 文件双写，按天滚动。
 
 import { appendFileSync, mkdirSync, readdirSync, rmSync } from 'fs';
@@ -7,14 +7,19 @@ import { join } from 'path';
 
 let logDir: string | null = null;
 
+/** 本地时间戳（UTC+8 / 系统时区），格式 YYYY-MM-DD HH:mm:ss */
 function ts(): string {
-  return new Date().toISOString().slice(0, 19).replace('T', ' ');
+  const now = new Date();
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())} ${p(now.getHours())}:${p(now.getMinutes())}:${p(now.getSeconds())}`;
 }
 
-/** 当日日志文件路径（logDir 未配置时返回 null） */
+/** 当日日志文件路径（logDir 未配置时返回 null）。日期使用本地时间，与日志行时间一致。 */
 function todayLogPath(): string | null {
   if (!logDir) return null;
-  const day = new Date().toISOString().slice(0, 10);
+  const now = new Date();
+  const p = (n: number) => String(n).padStart(2, '0');
+  const day = `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`;
   return join(logDir, `alysia-${day}.log`);
 }
 

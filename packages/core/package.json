@@ -24,6 +24,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@lancedb/lancedb": "^0.14.1",
     "better-sqlite3": "^12.11.1",
     "uuid": "^14.0.1"
   },
