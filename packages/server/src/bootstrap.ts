@@ -126,6 +126,16 @@ async function main() {
   process.once('SIGINT', shutdown);
   process.once('SIGTERM', shutdown);
 
+  // ★ WebUI 管理面板（Fastify 路由层，每条路由 = core 方法的真实调用方）
+  try {
+    const { createWebuiApp } = await import('./webui/server.js');
+    const webui = createWebuiApp(core);
+    await webui.listen({ port: config.server.port, host: '0.0.0.0' });
+    logger.info(`WebUI on http://localhost:${config.server.port} (routes exercise all core methods)`);
+  } catch (err: any) {
+    logger.error('WebUI init failed:', err.message);
+  }
+
   logger.info(`Server started on port ${config.server.port}`);
 }
 

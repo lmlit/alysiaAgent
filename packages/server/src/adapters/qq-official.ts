@@ -192,21 +192,31 @@ export class QQOfficialAgentAdapter implements Platform {
       `\r\n`
     );
 
-    let handshakeBuffer = '';
+    let handshakeBuffer = Buffer.alloc(0);
     let handshakeDone = false;
 
     socket.on('data', (data: Buffer) => {
       if (!handshakeDone) {
-        handshakeBuffer += data.toString('utf-8');
-        if (handshakeBuffer.includes('\r\n\r\n')) {
-          const statusLine = handshakeBuffer.split('\r\n')[0];
+        handshakeBuffer = Buffer.concat([handshakeBuffer, data]);
+        const text = handshakeBuffer.toString('utf-8');
+        if (text.includes('\r\n\r\n')) {
+          const statusLine = text.split('\r\n')[0];
           if (statusLine.includes('101')) {
             handshakeDone = true;
             logger.info('[QQ Official] WebSocket connected');
-            // Wait for HELLO (op:10) before sending IDENTIFY
+            // ★ 同一 TCP chunk 中 HTTP 头后的 WebSocket 帧字节（如 Hello op:10）
+            //   不会再次触发 data 事件，必须立即喂给帧解析器，否则 Hello 永久丢失 → bot 不上线
+            const headerEnd = text.indexOf('\r\n\r\n') + 4;
+            if (headerEnd < handshakeBuffer.length) {
+              const trailing = handshakeBuffer.subarray(headerEnd);
+              logger.debug(`[QQ Official] handshake: ${trailing.length} trailing bytes after header`);
+              this.parseFrame(trailing, (payload) => {
+                try { const msg: QQGatewayPayload = JSON.parse(payload); this.handleGatewayMessage(msg); } catch {}
+              });
+            }
           } else {
-            const bodyStart = handshakeBuffer.indexOf('\r\n\r\n') + 4;
-            const body = bodyStart < handshakeBuffer.length ? handshakeBuffer.slice(bodyStart) : '';
+            const bodyStart = text.indexOf('\r\n\r\n') + 4;
+            const body = bodyStart < text.length ? text.slice(bodyStart) : '';
             logger.error('[QQ Official] WS handshake failed:', statusLine);
             logger.error('[QQ Official] Response body:', body.slice(0, 500));
             socket.destroy();

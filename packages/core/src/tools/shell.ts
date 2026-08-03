@@ -9,18 +9,24 @@ const execAsync = promisify(exec);
 const SHELL_TIMEOUT_MS = 30_000;
 const MAX_OUTPUT_BYTES = 8_000;
 
-// 禁止的危险命令模式（黑名单，大小写不敏感）
+// 禁止的危险命令模式（黑名单，大小写不敏感）。
+// 注意：shell 已 cwd 锁定到 workspaceDir，黑名单防的是逃逸到系统路径。
 const BLOCKED_PATTERNS = [
-  /rm\s+(?:-rf?\s+|--.*\s+)*\//i,  // rm -rf / 及变体
-  />\s*\/dev\/sd[a-z]/i,             // 覆写磁盘
+  // 递归删除系统路径（含 ~、$HOME、绝对路径 / 等）
+  /rm\s+(?:-[rf]+\s+)*(?:\/|~\/|\$HOME\b|%HOME%|%USERPROFILE%)/i,
+  // 覆写磁盘/设备
+  />\s*\/(?:dev|proc|sys|etc|bin|sbin|boot|lib|usr|var|tmp|root|home|opt|mnt|media|run|srv)\b/i,
+  />\s*\$HOME\b/i,
   /mkfs\./i,                          // 格式化
   /dd\s+if=/i,                        // dd 磁盘操作
   /:\(\)\s*\{/i,                      // fork bomb
-  /chmod\s+777/i,                     // chmod 777 任意路径
+  /chmod\s+(?:777|o\+w\s*\/|\+w\s*\/)/i,  // 全局可写（系统路径）
   /sudo\s/i,                          // 禁止 sudo (大小写不敏感)
   /shutdown/i,                        // 禁止关机
   /reboot/i,                          // 禁止重启
   /systemctl\s/i,                     // 禁止 systemd 操作
+  /\bcurl.*\|\s*(?:ba)?sh\b/i,        // curl pipe shell
+  /\bwget.*-O-.*\|\s*(?:ba)?sh\b/i,   // wget pipe shell
 ];
 
 function isSafe(command: string): string | null {

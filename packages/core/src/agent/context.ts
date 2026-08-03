@@ -21,19 +21,26 @@ export class AgentContext {
     this.messages.push(msg);
   }
 
-  // Simple truncation: keep system prompt + last N turns
+  // Truncation: remove oldest turns until under token budget.
+  // A "turn" = user message through all assistant/tool messages until the next user (or end).
+  // This preserves tool_call ↔ tool_result pairing, which splice(2) would break.
   truncate(maxTokens: number): void {
     let tokenEstimate = this.messages.reduce(
       (sum, m) => sum + m.content.length / 3,
       0,
     );
     while (tokenEstimate > maxTokens && this.messages.length > 2) {
-      // Remove oldest non-system message
-      const idx = this.messages.findIndex(
+      // Find first non-system message (start of oldest turn)
+      const turnStart = this.messages.findIndex(
         (m, i) => i > 0 && m.role !== 'system',
       );
-      if (idx === -1) break;
-      const removed = this.messages.splice(idx, 2); // Remove user+assistant pair
+      if (turnStart === -1) break;
+      // Find end of this turn: next user message or end of array
+      const nextUser = this.messages.findIndex(
+        (m, i) => i > turnStart && m.role === 'user',
+      );
+      const turnEnd = nextUser === -1 ? this.messages.length : nextUser;
+      const removed = this.messages.splice(turnStart, turnEnd - turnStart);
       tokenEstimate -= removed.reduce(
         (sum, m) => sum + m.content.length / 3,
         0,

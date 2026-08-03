@@ -242,6 +242,15 @@ export class MemoryManager {
     this.privacyMode = 'off';
   }
 
+  /** ★ 手动调整人格参数（Web 端滑条/按钮）。
+   *  包装 PersonaAdapter.apply()，带护栏（|Δ|≤0.1 / 5min 冷却 / 24h 回归 / 显式 bypass）。
+   *  param 格式: "tone.warmth" / "speech_style.emoji_usage" / "emotional_range.empathy" 等。
+   *  返回 { applied, reason } —— applied=false 表示被护栏拦截。 */
+  adjustPersona(param: string, delta: number, reason: string = '手动调整'): { applied: boolean; reason: string } {
+    const applied = this.personaAdapter.apply({ param, delta, reason });
+    return { applied, reason: applied ? '已应用' : '被护栏拦截（幅度/频率超限或冷却中）' };
+  }
+
   /** ★ 手动触发画像提取（Web 端"提取画像"按钮）。
    *  对指定会话执行 SessionEnd 处理：对话摘要 + LLM 事实提取 + 合并入画像。
    *  返回本次提取到的 facts 数量。 */
