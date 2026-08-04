@@ -106,13 +106,24 @@ async function main() {
   }
 
   // ★ 提醒主动推送：到点时通过 QQ 官方主动消息发给设置者
-  // （reminder 工具已记录设置时的会话 ID，这里解析出 openid）
+  //   过 LLM 用昔涟语气生成自然提醒文案，失败回落原始文本
   if (qqOff) {
     core.toolRegistry.register(createReminderTool(async (text, sessionId) => {
       if (!sessionId) { logger.info(`Reminder (no session): ${text}`); return; }
       const m = sessionId.match(/:private:private_(.+)$/);
       if (m) {
-        const ok = await qqOff.sendProactive(m[1], `⏰ ${text}`);
+        let message = `⏰ ${text}`;
+        try {
+          const resp = await core.providerManager.textChatWithFallback({
+            prompt: `用户之前设了提醒："${text}"。现在时间到了，请用昔涟的语气（温柔、自然、30-60字）提醒用户。只输出提醒文案本身，不要解释。`,
+            sessionId: 'reminder-push',
+            systemPrompt: '你是昔涟，一个温柔贴心的 AI 伴侣。用自然的口语提醒用户，可以加一两个 emoji，语气轻松亲切。',
+          });
+          if (resp.role === 'assistant' && resp.completionText) {
+            message = resp.completionText.trim();
+          }
+        } catch { /* LLM 失败用原始文案 */ }
+        const ok = await qqOff.sendProactive(m[1], message);
         logger.info(`Reminder push → ${m[1].slice(0, 8)}...: ${ok ? 'sent' : 'failed'}`);
       } else {
         logger.info(`Reminder (non-private): ${text}`);

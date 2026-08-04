@@ -44,7 +44,7 @@ export function createReminderTool(notifyFn: (text: string, sessionId?: string) 
       }
 
       const timer = setTimeout(async () => {
-        await notifyFn(`Reminder: ${text}`, sessionId);
+        await notifyFn(text, sessionId);
         const idx = reminders.findIndex(r => r.id === id);
         if (idx >= 0) reminders.splice(idx, 1);
       }, delay);
@@ -66,8 +66,9 @@ export function createListRemindersTool(): ToolDefinition {
     },
     handler: async () => {
       if (reminders.length === 0) return 'No active reminders.';
+      // ★ 不返回提醒内容，防止 LLM 提前泄露。只在到时提醒时通过 notifyFn 发送。
       return reminders
-        .map(r => `[${r.id}] ${r.text} — ${r.triggerAt.toLocaleString()}`)
+        .map(r => `[${r.id}] 将在 ${r.triggerAt.toLocaleString()} 触发（内容仅到时可见）`)
         .join('\n');
     },
   };
