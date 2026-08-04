@@ -67,21 +67,32 @@ export function createWebSearchTool(): ToolDefinition {
 
       // Try multiple search backends in order
       const backends = [
-        // ★ Bing 国内版 (cn.bing.com) — 中国大陆可直接访问（主后端）
+        // ★ Bing 国内版 (cn.bing.com) — 中国大陆可直接访问
         async () => {
           const resp = await fetch(
-            `https://cn.bing.com/search?q=${query}&mkt=zh-CN`,
+            `https://cn.bing.com/search?q=${query}&mkt=zh-CN&setlang=zh-cn`,
             { signal: AbortSignal.timeout(10000), headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0' } },
           );
           const html = await resp.text();
-          // 解析 b_algo 结果块：标题 + 摘要
           const results: string[] = [];
-          const algoRe = /<li class="b_algo"[\s\S]*?<h2[^>]*><a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a><\/h2>[\s\S]*?(?:<p class="b_lineclamp[^"]*">([\s\S]*?)<\/p>)?/g;
+          // Bing 可能用 b_algo 或 b_caption 或直接 <h2><a> 结构，放宽匹配
+          // 先尝试 b_algo
+          let algoRe = /<li class="b_algo"[\s\S]*?<h2[^>]*><a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a><\/h2>[\s\S]*?(?:<p[^>]*>([\s\S]*?)<\/p>)?/g;
           for (const m of html.matchAll(algoRe)) {
             const title = m[2].replace(/<[^>]+>/g, '').trim();
             const snippet = (m[3] || '').replace(/<[^>]+>/g, '').replace(/&ensp;|&#0183;|&#183;|&amp;/g, ' ').trim();
-            if (title) results.push(`**${title}**\n${snippet}`);
+            if (title && title.length > 1) results.push(`**${title}**\n${snippet}`);
             if (results.length >= 5) break;
+          }
+          // 如果 b_algo 什么都没匹配到，尝试更宽松的规则：抓所有 h2>a + 后续 p
+          if (results.length === 0) {
+            const looseRe = /<h2[^>]*><a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a><\/h2>[\s\S]{0,500}?<p[^>]*>([\s\S]*?)<\/p>/g;
+            for (const m of html.matchAll(looseRe)) {
+              const title = m[2].replace(/<[^>]+>/g, '').trim();
+              const snippet = (m[3] || '').replace(/<[^>]+>/g, '').replace(/&ensp;|&#0183;|&#183;|&amp;/g, ' ').trim();
+              if (title && title.length > 1) results.push(`**${title}**\n${snippet}`);
+              if (results.length >= 5) break;
+            }
           }
           return results.length > 0 ? results.join('\n\n') : null;
         },
