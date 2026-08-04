@@ -4,7 +4,7 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/core/package.json packages/core/
 COPY packages/server/package.json packages/server/
-RUN npm install -g pnpm@8 && pnpm install --frozen-lockfile
+RUN npm install -g pnpm@9 && pnpm install --frozen-lockfile
 COPY packages/core/src packages/core/src/
 COPY packages/core/tsconfig.json packages/core/
 COPY packages/server/src packages/server/src/
