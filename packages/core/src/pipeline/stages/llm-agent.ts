@@ -61,6 +61,12 @@ export class LLMAgentStage implements Stage {
       memoryContext ? '\n---\n## 当前记忆\n' + memoryContext : '',
     ].filter(Boolean).join('\n');
 
+    // ★ 注入当前本地时间，让 LLM 能回答"今天几号"、感知早晚、判断时效
+    const now = new Date();
+    const weekdays = ['日', '一', '二', '三', '四', '五', '六'];
+    const timeStr = `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日 星期${weekdays[now.getDay()]} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    systemPrompt += `\n\n[当前时间] ${timeStr}`;
+
     // 工具调用纪律：禁止把工具调用以文本形式写进回复（模型偶发行为，双层防护）
     systemPrompt += '\n\n[工具调用] 需要实时信息时通过系统提供的工具调用机制发起。严禁在回复文本中书写任何工具调用 XML 标签（tool_calls / invoke），工具调用标签只会由系统生成，出现在回复文本里的此类标签将被系统剥离。';
 
