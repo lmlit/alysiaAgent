@@ -198,17 +198,22 @@ export class ProactiveService {
 
   private async tick(): Promise<void> {
     const now = new Date();
-    const today = now.toISOString().slice(0, 10);
+    // ★ 使用本地日期（非 UTC），与 getHours/getMinutes 时区一致
+    const p = (n: number) => String(n).padStart(2, '0');
+    const today = `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`;
 
     // 0. 时段问候（每天各时段一次，发给 owner）— 文案优先 LLM 个性化
     for (const g of DAILY_GREETINGS) {
       const key = `${today}-${g.hour}`;
       if (this.sentGreetings.has(key)) continue;
       if (now.getHours() === g.hour && now.getMinutes() >= g.minute) {
-        this.sentGreetings.add(key);
-        this.scheduleSave();
         const text = await this.personalize(g.text, `现在是${g.hour < 12 ? '早上' : g.hour < 18 ? '中午' : '晚上'}，给用户发一条${g.hour < 12 ? '早安' : g.hour < 18 ? '午安' : '晚安'}问候`);
         const ok = await this.qqOff.sendProactive(this.opts.ownerOpenid, text);
+        // ★ 先发后标记：避免 API 失败时该时段永久丢失
+        if (ok) {
+          this.sentGreetings.add(key);
+          this.scheduleSave();
+        }
         logger.info(`Proactive greeting ${g.hour}:${g.minute}: ${ok ? 'sent' : 'failed'}`);
       }
     }
@@ -216,10 +221,12 @@ export class ProactiveService {
     // 1. 节日祝福（当天只发一次，发给 owner）— 含 24 节气，文案优先 LLM 个性化
     const festival = this.todayFestival();
     if (festival && !this.sentFestivals.has(today)) {
-      this.sentFestivals.add(today);
-      this.scheduleSave();
       const text = await this.personalize(festival.greeting, `今天是${festival.name}，给用户发一条节日祝福`);
       const ok = await this.qqOff.sendProactive(this.opts.ownerOpenid, text);
+      if (ok) {
+        this.sentFestivals.add(today);
+        this.scheduleSave();
+      }
       logger.info(`Proactive festival "${festival.name}": ${ok ? 'sent' : 'failed'}`);
     }
 
@@ -237,17 +244,22 @@ export class ProactiveService {
       const openid = this.extractOpenid(s.sessionId);
       if (!openid || openid !== this.opts.ownerOpenid) continue; // 只关怀 owner
 
-      const lastDate = s.lastActive.slice(0, 10);
-      if (lastDate === today) continue; // 今天聊过
+      // ★ lastActive 是 ISO/UTC 格式，转本地日期后比较
+      const lastActiveDate = new Date(s.lastActive);
+      const lastLocalDate = `${lastActiveDate.getFullYear()}-${p(lastActiveDate.getMonth() + 1)}-${p(lastActiveDate.getDate())}`;
+      if (lastLocalDate === today) continue; // 今天聊过
       if (this.lastCareByUser.get(openid) === today) continue; // 今天关怀过
 
-      const hoursSince = (Date.now() - new Date(s.lastActive).getTime()) / 3_600_000;
+      const hoursSince = (Date.now() - lastActiveDate.getTime()) / 3_600_000;
       if (hoursSince < (this.opts.careIntervalHours ?? 24)) continue;
 
       const msg = CARE_MESSAGES[Math.floor(Math.random() * CARE_MESSAGES.length)];
-      this.lastCareByUser.set(openid, today);
-      this.scheduleSave();
       const ok = await this.qqOff.sendProactive(openid, msg);
+      // ★ 先发后标记
+      if (ok) {
+        this.lastCareByUser.set(openid, today);
+        this.scheduleSave();
+      }
       logger.info(`Proactive care → ${openid.slice(0, 8)}...: ${ok ? 'sent' : 'failed'}`);
     }
   }
