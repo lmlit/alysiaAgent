@@ -97,12 +97,13 @@ export class LifeService {
     if (now.getTime() - this.state.lastProactiveAt < cooldownMs) return;
 
     // ③ 聊天锁：最近 chatLockMinutes 有用户互动则跳过
+    //    只认 user 角色——AI 主动消息回写的 assistant 消息不算"互动"，否则 cooldownHours < 1 时自锁
     const lockMinutes = this.opts.chatLockMinutes ?? 30;
     const recent = this.memoryManager.getRecentMessages(
       this.sessionId(),
-      1,
+      100,
       new Date(now.getTime() - lockMinutes * 60_000),
-    );
+    ).filter((m: any) => m.role === 'user');
     if (recent.length > 0) {
       logger.debug(`[Life] skipped — user active within ${lockMinutes}min`);
       return;
@@ -182,7 +183,8 @@ export class LifeService {
     ].filter(Boolean).join('\n');
 
     try {
-      const text = await this.opts.generateEvent?.(context) ?? '';
+      const text = ((await this.opts.generateEvent?.(context)) ?? '')
+        .replace(/^```(?:json)?\s*|\s*```$/g, '').trim(); // 剥离 markdown fence（LLM 常包 ```json）
       const parsed = JSON.parse(text);
       if (parsed.content) {
         return {
@@ -211,7 +213,9 @@ export class LifeService {
       r -= t.weight;
       if (r <= 0) return t;
     }
-    return LIFE_TEMPLATES[LIFE_TEMPLATES.length - 1];
+    // 数学上不可达：r < total 恒成立（Math.random() ∈ [0,1)），循环内必命中。
+    // 保留返回值以满足 TS 控制流分析。
+    return LIFE_TEMPLATES[0];
   }
 
   // ── 每日摘要生成 ────────────────────────────────────
@@ -252,8 +256,8 @@ export class LifeService {
       // 频率：近 7 天活跃度（消息数近似，0 条 → 0，40 条 → 35 封顶）
       const freqScore = Math.min(35, msgs.length / 4 * 5);
 
-      // 时长：>20 条视为有长会话
-      const longScore = Math.min(21, (msgs.length > 20 ? 10 : msgs.length / 2) * 2);
+      // 时长：>20 条视为有长会话（封顶 21；旧实现 (n>20?10:n/2)*2 最大只到 20，达不到上限）
+      const longScore = Math.min(21, msgs.length > 20 ? 21 : msgs.length * 1.05);
 
       // 主动占比：用户消息首条占比（连续 user 消息只计一条）
       const userFirst = msgs.filter((m: any, i: number) => m.role === 'user' && (i === 0 || msgs[i - 1]?.role !== 'user')).length;
