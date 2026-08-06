@@ -8,6 +8,8 @@ import { ConversationStore } from './stores/ConversationStore.js';
 import { KnowledgeStore } from './stores/KnowledgeStore.js';
 import { WorldbookStore } from './stores/WorldbookStore.js';
 import { CodeContextStore } from './stores/CodeContextStore.js';
+import { LifeStore } from './stores/LifeStore.js';
+import type { LifeEvent } from './stores/LifeStore.js';
 import { WorldbookMatcher } from './engines/WorldbookMatcher.js';
 import { PersonaAdapter } from './engines/PersonaAdapter.js';
 import { ProfileExtractor } from './engines/ProfileExtractor.js';
@@ -17,6 +19,7 @@ import { CronProcessor } from './processors/CronProcessor.js';
 import { PromptAssembler } from './PromptAssembler.js';
 import { filterPII } from './PIIFilter.js';
 import { logger } from '../utils/logger.js';
+import { formatLocalTime, localDateKey } from '../utils/time.js';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { createHash } from 'crypto';
 import type { MemoryEvent, MemoryReadRequest, MemoryReadResult, MemoryConfig, KnowledgeDoc, SearchResult, WorldbookEntry } from './types.js';
@@ -62,6 +65,7 @@ export class MemoryManager {
   private knowledgeStore: KnowledgeStore;
   private worldbookStore: WorldbookStore;
   private codeContextStore: CodeContextStore;
+  private lifeStore: LifeStore;
   private worldbookMatcher: WorldbookMatcher;
   private personaAdapter: PersonaAdapter;
   private profileExtractor: ProfileExtractor;
@@ -86,6 +90,7 @@ export class MemoryManager {
     this.knowledgeStore = new KnowledgeStore(db, vectorStore);
     this.worldbookStore = new WorldbookStore(db);
     this.codeContextStore = new CodeContextStore(db);
+    this.lifeStore = new LifeStore(db);
 
     this.worldbookMatcher = new WorldbookMatcher(this.worldbookStore);
     this.personaAdapter = new PersonaAdapter(this.personaStore, llmService);
@@ -212,6 +217,78 @@ export class MemoryManager {
   /** 获取最近消息（短期记忆）。limit 上限；since 可选时间窗口（如最近 2 小时） */
   getRecentMessages(sessionId: string, limit: number = 10, since?: Date): Array<{ role: string; content: string }> {
     return this.eventStore.getRecentBySession(sessionId, limit, since);
+  }
+
+  // ===== AI 主动生活系统（v4）=====
+
+  /** ★ 生活状态快照（Web 展示） */
+  getLifeSnapshot(): { currentActivity: string; mood: string; intimacy: number } {
+    const s = this.lifeStore.getState();
+    return { currentActivity: s.currentActivity, mood: s.mood, intimacy: s.intimacy };
+  }
+
+  /** 更新 AI 实时状态（活动/心情），亲密度由 LifeService 更新 */
+  updateLifeState(partial: { currentActivity?: string; mood?: string }): void {
+    this.lifeStore.updateState(partial);
+  }
+
+  /** ★ 事件流注入块（对话 prompt 用）：今天逐条 + 近 7 天摘要。无事件返回 '' */
+  getLifeEventInjection(): string {
+    const todayKey = localDateKey();
+    const today = this.lifeStore.getTodayEvents(todayKey);
+    const summaries = this.lifeStore.getRecentSummaries(7).filter(s => s.date !== todayKey);
+    if (today.length === 0 && summaries.length === 0) return '';
+
+    const lines: string[] = [];
+    for (const e of today) {
+      const time = e.createdAt.slice(11, 16);
+      lines.push(`- 今天 ${time} ${e.content}`);
+    }
+    for (const s of summaries) {
+      lines.push(`- ${s.date}: ${s.summary}`);
+    }
+    return `[我的近期日常]\n${lines.join('\n')}`;
+  }
+
+  /** ★ 记录 AI 生活事件 + 更新当前活动 */
+  recordLifeEvent(input: { type: 'chat' | 'internal'; content: string; moodDelta?: string; referenceEventId?: string }): void {
+    const now = new Date().toISOString();
+    const id = `life-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    this.lifeStore.addEvent({
+      id, createdAt: now, type: input.type, content: input.content,
+      moodDelta: input.moodDelta, referenceEventId: input.referenceEventId,
+    });
+    this.lifeStore.updateState({ currentActivity: input.content, mood: input.moodDelta ?? undefined, lastEventId: id });
+    logger.info(`[Life] event: [${input.type}] ${input.content.slice(0, 60)}`);
+  }
+
+  /** ★ 激活角色世界书采样（事件生成人设背景，priority 加权） */
+  getWorldbookSample(limit: number = 5): Array<{ content: string }> {
+    const role = this.getActiveRoleId();
+    const rows = this.db.prepare(
+      "SELECT content, priority FROM worldbook_entries WHERE role = ? AND scope IN ('chat', 'both') AND content_type = 'text' ORDER BY priority DESC LIMIT ?"
+    ).all(role, limit) as Array<{ content: string; priority: number }>;
+    return rows.map(r => ({ content: r.content.slice(0, 100) }));
+  }
+
+  /** ★ 用户近况摘要（事件生成器用）：活跃 facts 前 5 条 */
+  getUserActivitySummary(): string {
+    const facts = this.profileStore.getActiveFacts()
+      .sort((a, b) => b.confidence - a.confidence)
+      .slice(0, 5)
+      .map(f => f.fact);
+    return facts.join('；');
+  }
+
+  /** ★ 生活事件列表（Web 展示） */
+  listLifeEvents(days: number = 7): LifeEvent[] {
+    const start = new Date(Date.now() - days * 86_400_000).toISOString();
+    return this.lifeStore.getEventsSince(start);
+  }
+
+  /** ★ 每日生活摘要写入（LifeService 每日 0 点调用） */
+  upsertDailySummary(date: string, summary: string): void {
+    this.lifeStore.upsertDailySummary(date, summary);
   }
 
   async ingest(event: MemoryEvent): Promise<void> {
