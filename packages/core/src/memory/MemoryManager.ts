@@ -19,7 +19,7 @@ import { CronProcessor } from './processors/CronProcessor.js';
 import { PromptAssembler } from './PromptAssembler.js';
 import { filterPII } from './PIIFilter.js';
 import { logger } from '../utils/logger.js';
-import { formatLocalTime, localDateKey } from '../utils/time.js';
+import { formatLocalTime, localDateKey, localDateKeyFromISO } from '../utils/time.js';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { createHash } from 'crypto';
 import type { MemoryEvent, MemoryReadRequest, MemoryReadResult, MemoryConfig, KnowledgeDoc, SearchResult, WorldbookEntry } from './types.js';
@@ -235,13 +235,17 @@ export class MemoryManager {
   /** ★ 事件流注入块（对话 prompt 用）：今天逐条 + 近 7 天摘要。无事件返回 '' */
   getLifeEventInjection(): string {
     const todayKey = localDateKey();
-    const today = this.lifeStore.getTodayEvents(todayKey);
+    // 本地今天 0 点对应的 ISO 时刻，作为时间窗口起点（避免 LifeStore 字符串比较的 UTC 边界错位）
+    const sinceIso = new Date(`${todayKey}T00:00:00`).toISOString();
+    const today = this.lifeStore.getEventsSince(sinceIso)
+      .filter(e => localDateKeyFromISO(e.createdAt) === todayKey); // 边界兜底
     const summaries = this.lifeStore.getRecentSummaries(7).filter(s => s.date !== todayKey);
     if (today.length === 0 && summaries.length === 0) return '';
 
     const lines: string[] = [];
     for (const e of today) {
-      const time = e.createdAt.slice(11, 16);
+      // 本地时间显示 HH:MM
+      const time = formatLocalTime(new Date(e.createdAt)).slice(-5);
       lines.push(`- 今天 ${time} ${e.content}`);
     }
     for (const s of summaries) {

@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { initializeDatabase } from '../../src/memory/database.js';
 import { MemoryManager } from '../../src/memory/MemoryManager.js';
+import { localDateKey, localDateKeyFromISO } from '../../src/utils/time.js';
 
 function makeManager(db: Database.Database): MemoryManager {
   const embedService = { embed: async () => [0], dimension: () => 1024 };
@@ -37,6 +38,28 @@ describe('MemoryManager life methods', () => {
     const inj = mm.getLifeEventInjection();
     expect(inj).toContain('[我的近期日常]');
     expect(inj).toContain('在阳台看书');
+  });
+
+  it('getLifeEventInjection 时区边界：本地 0 点前的 UTC 事件归"今天" + 本地时间显示', () => {
+    vi.useFakeTimers();
+    try {
+      // 用本地构造器设置"现在"，任何时区下 localDateKey 都是 2026-08-07
+      vi.setSystemTime(new Date(2026, 7, 7, 2, 0, 0));
+      expect(localDateKey()).toBe('2026-08-07');
+      // 北京时区：UTC 2026-08-06T16:30:00Z = 本地 8-07 00:30（UTC 日期仍是前一天）
+      expect(localDateKeyFromISO('2026-08-06T16:30:00Z')).toBe('2026-08-07');
+      mm.lifeStore.addEvent({
+        id: 'tz-boundary', createdAt: '2026-08-06T16:30:00Z',
+        type: 'chat', content: '午夜事件',
+      });
+      const inj = mm.getLifeEventInjection();
+      // 旧实现会因 '2026-08-06T16:30:00Z' < '2026-08-07T00:00:00' 字符串比较漏掉该事件，
+      // 且时间显示为 16:30（UTC 切片）
+      expect(inj).toContain('- 今天 00:30 午夜事件');
+      expect(inj).not.toContain('16:30');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('getWorldbookSample returns active role entries', () => {
