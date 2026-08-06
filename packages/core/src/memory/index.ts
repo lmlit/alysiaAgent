@@ -20,3 +20,4 @@ export * from './types.js';
 export * from './interfaces/IVectorStore.js';
 export * from './interfaces/IEmbedService.js';
 export * from './interfaces/ILLMService.js';
+export { formatLocalTime, localDateKey, localDateKeyFromISO } from '../utils/time.js';

@@ -6,28 +6,10 @@
  * 顺带：亲密度更新、每日摘要生成
  */
 import { readFileSync, writeFileSync, mkdirSync } from 'fs';
-import { dirname, resolve } from 'path';
+import { dirname } from 'path';
 import { logger } from '@alysia/core';
-
-// ── 本地时间工具 ─────────────────────────────────────
-// core 的 utils/time.ts 未从 @alysia/core/memory 导出（exports map 只暴露
-// ./utils/logger），这里内联最小实现，保证 server 包可独立编译运行。
-const pad = (n: number) => String(n).padStart(2, '0');
-
-/** 本地日期 key: 2026-08-06 */
-function todayKey(d: Date = new Date()): string {
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-
-/** ISO/UTC 时间字符串 → 本地日期 key（LifeEvent.createdAt 存的是 ISO） */
-function dateKeyFromISO(iso: string): string {
-  return todayKey(new Date(iso));
-}
-
-/** 2026年8月6日 14:30（本地时间，事件生成 prompt 用） */
-function formatLocalTime(d: Date = new Date()): string {
-  return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
+import { formatLocalTime, localDateKey, localDateKeyFromISO } from '@alysia/core/memory';
+import { LIFE_TEMPLATES, LifeTemplate } from './life-templates.js';
 
 export interface LifeOpts {
   ownerOpenid: string;
@@ -214,35 +196,36 @@ export class LifeService {
       logger.warn(`[Life] LLM event generation failed, fallback to template: ${err.message}`);
     }
 
-    // 失败回落：通用模板随机（模板文件由 Task 7 提供，缺失时返回 null）
-    const templates = this.loadTemplates();
-    if (templates.length > 0) {
-      const t = templates[Math.floor(Math.random() * templates.length)];
-      return { content: t.activity, type: t.type, mood_delta: '平静' };
-    }
+    // 失败回落：通用模板加权随机（无角色特色；角色特色事件由 LLM 结合世界书自创）
+    const t = this.pickTemplate();
+    if (t) return { content: t.activity, type: t.type, mood_delta: '平静' };
     return null;
   }
 
-  private loadTemplates(): Array<{ activity: string; type: 'chat' | 'internal'; weight: number }> {
-    try {
-      return JSON.parse(readFileSync(resolve(process.cwd(), 'data', 'life-templates.json'), 'utf-8'));
-    } catch {
-      return [];
+  /** 加权随机模板（权重越高越常被选中）；空库返回 null */
+  private pickTemplate(): LifeTemplate | null {
+    if (LIFE_TEMPLATES.length === 0) return null;
+    const total = LIFE_TEMPLATES.reduce((s, t) => s + t.weight, 0);
+    let r = Math.random() * total;
+    for (const t of LIFE_TEMPLATES) {
+      r -= t.weight;
+      if (r <= 0) return t;
     }
+    return LIFE_TEMPLATES[LIFE_TEMPLATES.length - 1];
   }
 
   // ── 每日摘要生成 ────────────────────────────────────
 
   private async maybeGenerateDailySummary(now: Date): Promise<void> {
-    const today = todayKey(now);
+    const today = localDateKey(now);
     if (this.state.lastSummaryDate === today) return;
     this.state.lastSummaryDate = today;
     this.saveState();
 
     // 昨天的摘要（如果有昨天的事件）
     const yesterday = new Date(now.getTime() - 86_400_000);
-    const yesterdayKey = todayKey(yesterday);
-    const events = this.memoryManager.listLifeEvents(2).filter((e: any) => dateKeyFromISO(e.createdAt) === yesterdayKey);
+    const yesterdayKey = localDateKey(yesterday);
+    const events = this.memoryManager.listLifeEvents(2).filter((e: any) => localDateKeyFromISO(e.createdAt) === yesterdayKey);
     if (events.length === 0) return;
 
     try {
