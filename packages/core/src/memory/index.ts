@@ -6,6 +6,8 @@ export { PersonaStore } from './stores/PersonaStore.js';
 export { ConversationStore } from './stores/ConversationStore.js';
 export { KnowledgeStore } from './stores/KnowledgeStore.js';
 export { WorldbookStore } from './stores/WorldbookStore.js';
+export { LifeStore } from './stores/LifeStore.js';
+export type { LifeEvent, LifeState } from './stores/LifeStore.js';
 export { WorldbookMatcher } from './engines/WorldbookMatcher.js';
 export { PersonaAdapter } from './engines/PersonaAdapter.js';
 export { ProfileExtractor } from './engines/ProfileExtractor.js';
