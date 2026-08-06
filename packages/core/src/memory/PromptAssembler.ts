@@ -106,10 +106,11 @@ export class PromptAssembler {
 
     // AI 近期生活（主动生活系统）— 由调用方通过 getLifeEventInjection() 预组装（今天事件 + 近 7 天摘要）
     if (lifeInjection) {
-      const lifeBlock = lifeInjection;
-      if (budget.canFit(lifeBlock)) {
-        budget.reserve(lifeBlock);
-        blocks.push(lifeBlock);
+      if (budget.canFit(lifeInjection)) {
+        budget.reserve(lifeInjection);
+        blocks.push(lifeInjection);
+      } else {
+        logger.debug('[Life] life block skipped (budget)');
       }
     }
 
@@ -199,10 +200,11 @@ ${persona.name} 编程助手模式。语气: ${tone.formality < 0 ? '随意' : '
 
     // AI 近期生活（主动生活系统）— AI 把生活带进编程模式（今天事件 + 近 7 天摘要）
     if (lifeInjection) {
-      const lifeBlock = lifeInjection;
-      if (budget.canFit(lifeBlock)) {
-        budget.reserve(lifeBlock);
-        blocks.push(lifeBlock);
+      if (budget.canFit(lifeInjection)) {
+        budget.reserve(lifeInjection);
+        blocks.push(lifeInjection);
+      } else {
+        logger.debug('[Life] life block skipped (budget)');
       }
     }
 
