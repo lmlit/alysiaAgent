@@ -644,8 +644,9 @@ export class QQOfficialAgentAdapter implements Platform {
       const imgPath = this.stickerResolver?.(name) ?? null;
       if (!imgPath) continue;
       await this.uploadImage('private', { author: { user_openid: openid } }, imgPath);
-      // 直发模式上传即发送（成功返回 null），uploadImage 内部已记录成败日志
-      logger.info(`[QQ Official] Proactive sticker sent: ${name}`);
+      // 直发模式上传即发送（成功返回 null），uploadImage 内部已记录成败日志；
+      // 失败也返回 null，info 行会误导——降为 debug，成败以 uploadImage 自身日志为准
+      logger.debug(`[QQ Official] Proactive sticker sent: ${name}`);
     }
 
     // 文本和图片都为空 → 失败

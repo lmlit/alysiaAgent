@@ -227,8 +227,8 @@ export class MemoryManager {
     return { currentActivity: s.currentActivity, mood: s.mood, intimacy: s.intimacy };
   }
 
-  /** 更新 AI 实时状态（活动/心情），亲密度由 LifeService 更新 */
-  updateLifeState(partial: { currentActivity?: string; mood?: string }): void {
+  /** 更新 AI 实时状态（活动/心情/亲密度），亲密度由 LifeService 每小时推导后传入 */
+  updateLifeState(partial: { currentActivity?: string; mood?: string; intimacy?: number }): void {
     this.lifeStore.updateState(partial);
   }
 
