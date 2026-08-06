@@ -19,15 +19,15 @@ export class PromptAssembler {
     private codeContextStore: CodeContextStore,
   ) {}
 
-  async assemble(mode: 'chat' | 'code', extraRetrieved: SearchResult[] = [], worldbookTriggers: WorldbookEntry[] = []): Promise<string> {
+  async assemble(mode: 'chat' | 'code', extraRetrieved: SearchResult[] = [], worldbookTriggers: WorldbookEntry[] = [], lifeInjection: string = ''): Promise<string> {
     if (mode === 'chat') {
-      return this.assembleChat(extraRetrieved, worldbookTriggers);
+      return this.assembleChat(extraRetrieved, worldbookTriggers, lifeInjection);
     } else {
-      return this.assembleCode(extraRetrieved, worldbookTriggers);
+      return this.assembleCode(extraRetrieved, worldbookTriggers, lifeInjection);
     }
   }
 
-  private async assembleChat(retrieved: SearchResult[], triggers: WorldbookEntry[]): Promise<string> {
+  private async assembleChat(retrieved: SearchResult[], triggers: WorldbookEntry[], lifeInjection: string = ''): Promise<string> {
     const persona = this.personaStore.get();
     const profile = this.profileStore.get();
     const recentConvs = this.conversationStore.getRecent(3);
@@ -104,6 +104,15 @@ export class PromptAssembler {
       }
     }
 
+    // AI 近期生活（主动生活系统）— 由调用方通过 getLifeEventInjection() 预组装（今天事件 + 近 7 天摘要）
+    if (lifeInjection) {
+      const lifeBlock = lifeInjection;
+      if (budget.canFit(lifeBlock)) {
+        budget.reserve(lifeBlock);
+        blocks.push(lifeBlock);
+      }
+    }
+
     // Retrieved memories
     if (retrieved.length > 0) {
       const memBlock = `[相关记忆]\n${retrieved.map(r => `- ${r.text}`).join('\n')}`;
@@ -119,7 +128,7 @@ export class PromptAssembler {
     return blocks.join('\n\n');
   }
 
-  private async assembleCode(retrieved: SearchResult[], triggers: WorldbookEntry[]): Promise<string> {
+  private async assembleCode(retrieved: SearchResult[], triggers: WorldbookEntry[], lifeInjection: string = ''): Promise<string> {
     const persona = this.personaStore.get();
     const profile = this.profileStore.get();
     const codeCtx = this.codeContextStore.getActive();
@@ -185,6 +194,15 @@ ${persona.name} 编程助手模式。语气: ${tone.formality < 0 ? '随意' : '
       if (budget.canFit(wbBlock)) {
         budget.reserve(wbBlock);
         blocks.push(wbBlock);
+      }
+    }
+
+    // AI 近期生活（主动生活系统）— AI 把生活带进编程模式（今天事件 + 近 7 天摘要）
+    if (lifeInjection) {
+      const lifeBlock = lifeInjection;
+      if (budget.canFit(lifeBlock)) {
+        budget.reserve(lifeBlock);
+        blocks.push(lifeBlock);
       }
     }
 
