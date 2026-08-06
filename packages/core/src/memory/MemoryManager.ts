@@ -372,11 +372,15 @@ export class MemoryManager {
 
   /** 带 Worldbook 匹配的 assemble — 供 MemoryRetrievalStage 使用 */
   async assembleWithWorldbook(mode: 'chat' | 'code', triggers: WorldbookEntry[], retrieved: SearchResult[]): Promise<string> {
-    // 隐私模式 readonly/full: 不注入 Profile/Worldbook
+    // 隐私模式 readonly/full: 不注入 Profile/Worldbook/Life
     if (this.privacyMode !== 'off') {
       return this.promptAssembler.assembleMinimal(mode);
     }
-    return this.promptAssembler.assemble(mode, retrieved, triggers);
+    const lifeInjection = this.getLifeEventInjection();
+    if (lifeInjection) {
+      logger.debug(`[Memory] life injection: ${lifeInjection.length} chars into ${mode} prompt`);
+    }
+    return this.promptAssembler.assemble(mode, retrieved, triggers, lifeInjection);
   }
 
   async onSessionEnd(sessionId: string): Promise<void> {
