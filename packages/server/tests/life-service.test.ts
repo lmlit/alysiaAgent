@@ -375,3 +375,40 @@ describe('LifeService', () => {
     expect(call.intimacy).toBeCloseTo(44.5, 4);
   });
 });
+
+describe('LifeService — todayProactive 感知（方案 B：避免重复打扰）', () => {
+  it('已发问候时 prompt 注入感知块，生成器可据此避开重复内容', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.1);
+    let capturedContext = '';
+    const { memoryManager, qqOff } = makeMocks();
+    const svc = new LifeService(memoryManager as any, qqOff as any, {
+      ownerOpenid: 'openid-1',
+      todayProactive: () => '早安问候、立秋节日祝福',
+      generateEvent: async (context: string) => {
+        capturedContext = context;
+        return '{"content":"在阳台看书","type":"internal","mood_delta":"平静"}';
+      },
+    });
+    await svc.tick();
+    expect(capturedContext).toContain('【今天已主动联系】今天已经发过: 早安问候、立秋节日祝福');
+    expect(capturedContext).toContain('不要生成同类问候/祝福内容');
+    vi.restoreAllMocks();
+  });
+
+  it('无今日主动联系时不注入感知块', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.1);
+    let capturedContext = '';
+    const { memoryManager, qqOff } = makeMocks();
+    const svc = new LifeService(memoryManager as any, qqOff as any, {
+      ownerOpenid: 'openid-1',
+      todayProactive: () => '',
+      generateEvent: async (context: string) => {
+        capturedContext = context;
+        return '{"content":"发呆","type":"internal","mood_delta":"平静"}';
+      },
+    });
+    await svc.tick();
+    expect(capturedContext).not.toContain('【今天已主动联系】');
+    vi.restoreAllMocks();
+  });
+});

@@ -307,4 +307,24 @@ export class ProactiveService {
     const m = sessionId.match(/:private:private_(.+)$/);
     return m ? m[1] : null;
   }
+
+  /** ★ 今天已主动联系的内容摘要（LifeService 感知用，避免重复打扰）。
+   *  返回如 "早安问候、立秋节日祝福"；今天没发过则返回空串。 */
+  getTodayActivity(): string {
+    const now = new Date();
+    const p = (n: number) => String(n).padStart(2, '0');
+    const today = `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`;
+
+    const parts: string[] = [];
+    for (const g of DAILY_GREETINGS) {
+      if (this.sentGreetings.has(`${today}-${g.hour}`)) {
+        parts.push(g.hour < 12 ? '早安问候' : g.hour < 18 ? '中午问候' : '晚安问候');
+      }
+    }
+    const festival = this.todayFestival();
+    if (festival && this.sentFestivals.has(today)) {
+      parts.push(`${festival.name}节日祝福`);
+    }
+    return parts.join('、');
+  }
 }
