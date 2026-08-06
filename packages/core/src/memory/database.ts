@@ -105,6 +105,34 @@ export function initializeDatabase(db: Database.Database): void {
       created_at      TEXT NOT NULL,
       updated_at      TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS ai_life_state (
+      id              INTEGER PRIMARY KEY DEFAULT 1,
+      current_activity TEXT,
+      mood            TEXT,
+      intimacy        INTEGER DEFAULT 30,
+      last_event_id   TEXT,
+      updated_at      TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS ai_life_events (
+      id              TEXT PRIMARY KEY,
+      created_at      TEXT NOT NULL,
+      type            TEXT NOT NULL,
+      content         TEXT NOT NULL,
+      mood_delta      TEXT,
+      reference_event_id TEXT,
+      wb_entry_id     TEXT,
+      delivered       INTEGER DEFAULT 0
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_life_events_time ON ai_life_events(created_at);
+
+    CREATE TABLE IF NOT EXISTS ai_life_daily_summaries (
+      date            TEXT PRIMARY KEY,
+      summary         TEXT NOT NULL,
+      created_at      TEXT
+    );
   `);
 
   // Migration: add memory_config to existing persona table (v2)
