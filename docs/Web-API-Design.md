@@ -54,6 +54,7 @@
 | 角色 | `POST /api/roles/switch` | 切换角色 | 🟢 core 已封装 |
 | 角色 | `POST /api/roles/import` | 导入角色包 | 🟢 core 已封装 |
 | 角色 | `GET /api/roles/:id/export` | 导出角色包 | 🟢 core 已封装 |
+| 生活 | `GET /api/life` | AI 生活状态快照 + 事件流 | 🟢 core 已封装 |
 
 > 🟢 = core 方法已就绪，只需 Web 路由层包装
 > ⚠️ = 部分就绪，需补充
@@ -166,6 +167,23 @@ getPersonaSnapshot(): {
 
 ---
 
+## 2.6 生活系统（AI 主动生活，2026-08-06 已封装）
+
+**Web 路由**: `GET /api/life` → `{ snapshot, events }`（快照 + 近 7 天事件流）
+
+| Core 方法 | 用途 |
+|-----------|------|
+| `getLifeSnapshot()` | AI 生活状态快照（活动/心情/亲密度） |
+| `listLifeEvents(days)` | 生活事件列表（默认 7 天） |
+| `recordLifeEvent(...)` | 记录 AI 生活事件（LifeService 内部） |
+| `getLifeEventInjection()` | 事件流注入块（PromptAssembler 用） |
+| `getWorldbookSample(n)` | 世界书人设采样（事件生成用） |
+| `getUserActivitySummary()` | 用户近况摘要（事件生成用） |
+| `updateLifeState(partial)` | 更新 AI 实时状态 |
+| `upsertDailySummary(date, summary)` | 写入/更新某天生活摘要 |
+
+---
+
 ## 3. 需要新增的接口
 
 ### 3.1 `POST /api/persona/adjust` — 手动调整人格
@@ -263,3 +281,4 @@ await app.listen({ port: config.server.port });
 | 日期 | 变更 |
 |------|------|
 | 2026-07-31 | 初始设计。core 封装 4 个方法：listSessions / extractProfile / getProfileSnapshot / getPersonaSnapshot |
+| 2026-08-06 | Task 7：生活系统接口全部封装（getLifeSnapshot / listLifeEvents / recordLifeEvent / getLifeEventInjection / getWorldbookSample / getUserActivitySummary / updateLifeState / upsertDailySummary），Web 路由 `GET /api/life` 上线 |
