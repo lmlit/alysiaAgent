@@ -104,4 +104,24 @@ describe('LifeService', () => {
     expect(qqOff.sendProactive).not.toHaveBeenCalled();
     expect(memoryManager.ingest).not.toHaveBeenCalled();
   });
+
+  it('LLM returns invalid JSON → falls back to weighted template (pickTemplate)', async () => {
+    freezeTime(14); // 白天，非深夜
+    // Math.random 同时用于概率门（0.1 ≤ 0.3 通过）与模板加权选择（r = 0.1 * total < 首条权重 5 → 选中首条）
+    vi.spyOn(Math, 'random').mockReturnValue(0.1);
+    const { memoryManager, qqOff } = makeMocks();
+    const svc = new LifeService(memoryManager as any, qqOff as any, {
+      ownerOpenid: 'openid-1',
+      probability: 0.3,
+      generateEvent: async () => 'not json', // LLM 返回非法 JSON → 解析失败 → 回落模板
+    });
+    await svc.tick();
+    // 模板库首条（权重最大）: 给自己倒了杯水（internal）
+    expect(memoryManager.recordLifeEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'internal', content: '给自己倒了杯水', moodDelta: '平静' })
+    );
+    // 模板事件都是 internal → 不推送、不回写
+    expect(qqOff.sendProactive).not.toHaveBeenCalled();
+    expect(memoryManager.ingest).not.toHaveBeenCalled();
+  });
 });
