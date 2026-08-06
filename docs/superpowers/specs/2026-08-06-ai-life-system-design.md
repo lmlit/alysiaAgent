@@ -30,7 +30,8 @@
 | 聊天锁 | 30 分钟内有用户互动 → 跳过本轮，下小时再试 |
 | 窗口外事件 | 照常生成（生活积累），窗口内尝试推送 |
 | 事件时间感知 | 生成器/事件流注入/判定器全部注入当前本地时间 |
-| 事件连续性 | 事件可引用历史事件（剧情链），昨日摘要缓存 |
+| 事件连续性 | 事件可引用历史事件（剧情链），每日摘要生成 |
+| 事件存储分层 | 原始事件全量存；注入/引用分层（今天逐条+近7天摘要） |
 | 亲密度 | 互动数据自动推导 0-100 |
 | 主动消息回写 | 推送成功的消息 ingest 回 EventStore（assistant 角色） |
 | 主动消息表情包 | 本次支持（扩展 sendProactive 解析 `[表情包:xxx]`） |
@@ -49,12 +50,12 @@ LifeService（新建，每小时 tick，与 ProactiveService 并存）
 │      → 深夜(0-7点)强制 type=internal
 │
 ├── ② 事件生成器（LLM，woke 模式）
-│      输入: [当前时间] + 当前状态 + 事件回顾(今日逐条+昨日摘要缓存)
+│      输入: [当前时间] + 当前状态 + 事件回顾(今日逐条+近7天日摘要)
 │            + 世界书人设背景(采样N条) + 用户画像 + 亲密度 + 通用模板参考
 │      输出: { content, type('chat'|'internal'), mood_delta, reference_event_id? }
 │
 ├── ③ AI 状态机（持久化）
-│      current_activity / mood / intimacy / daily_summary(昨日生活摘要缓存)
+│      current_activity / mood / intimacy（每日摘要独立存摘要表）
 │
 ├── ④ 事件流存储（SQLite 新表 ai_life_events，完整历史）
 │
@@ -85,7 +86,6 @@ CREATE TABLE ai_life_state (
   current_activity TEXT,        -- 此刻在做什么（如 "在阳台看书"）
   mood            TEXT,         -- 心情（由事件驱动变化，如 "平静/开心/困"）
   intimacy        INTEGER DEFAULT 30,  -- 亲密度 0-100
-  daily_summary   TEXT,         -- 昨日生活摘要缓存（每天 0 点预生成）
   last_event_id   TEXT,
   updated_at      TEXT
 );
@@ -103,6 +103,13 @@ CREATE TABLE ai_life_events (
 );
 
 CREATE INDEX idx_life_events_time ON ai_life_events(created_at);
+
+-- 每日生活摘要（分层注入用；原始事件全量保留在 ai_life_events）
+CREATE TABLE ai_life_daily_summaries (
+  date            TEXT PRIMARY KEY,  -- 日期 'YYYY-MM-DD'（本地时间）
+  summary         TEXT,              -- 当日生活摘要（LLM 生成）
+  created_at      TEXT
+);
 ```
 
 ---
@@ -153,10 +160,13 @@ tick() {
 - 09:30 在阳台看书，看到一朵像兔子的云
 - 15:00 听到楼下琴声，有点想学
 
-【昨天的生活】摘要: 在旧书店待了一下午，淘到一本讲星星的书
+【最近的生活】（近 7 天日摘要，今天除外）
+- 昨天: 在旧书店待了一下午，淘到一本讲星星的书
+- 前天: 下雨，在窗边听了很久的雨
 
 【你的人设背景】（世界书采样，保持角色一致性）
-- 出身仙舟，经历过很多年岁
+- 翁法罗斯之心（PHILIA093），记忆命途的无漏净子
+- 在哀丽秘榭长大，走过逐火之旅，与白厄同行
 - 喜欢星空和传说故事
 - ...
 
@@ -183,10 +193,10 @@ tick() {
 实际探索确认：世界书 66 条是**静态 lore**（关键词触发注入的设定/回忆），不是时间性事件。定位修正：
 
 ```
-worldbook_entries（激活角色：仙舟/翁法罗斯/白厄等设定）
+worldbook_entries（激活角色：翁法罗斯/白厄/哀丽秘榭等设定）
 │
 ├── ① 人设背景注入：事件生成器采样 N=5 条 → 「你的人设背景」块
-│      保证事件贴合角色："看星空想起仙舟的夜" 而非泛泛的"看云"
+│      保证事件贴合角色："看星空想起翁法罗斯的夜" 而非泛泛的"看云"
 │
 ├── ② 命中统计：事件引用条目 → hit_count+1，与对话触发共用冷却
 │
@@ -197,12 +207,21 @@ worldbook_entries（激活角色：仙舟/翁法罗斯/白厄等设定）
 
 ---
 
-## 8. 事件连续性（剧情链）
+## 8. 事件连续性（剧情链）与存储分层
 
-- 生成时注入「事件回顾」：**今天逐条 + 昨日摘要缓存**（`ai_life_state.daily_summary`，每天 0 点由 LLM 预生成，避免每次实时压缩）
-- 事件可带 `reference_event_id` 引用历史事件
-- 注入对话 prompt 时：**今天的事件 + 被引用链上的关联事件**
-- 效果：AI 的生活连贯，今天的事能关联昨天，不会"今天做了明天就忘"
+**存储**：原始事件全量保留在 `ai_life_events`（450 条/90 天仅几百 KB，SQLite 无压力），不删除。
+
+**注入/引用分层**（瓶颈在 prompt 大小，不在存储）：
+
+| 层 | 内容 | 用途 |
+|----|------|------|
+| 活跃层 | 今天的事件逐条 | 对话注入、事件生成回顾 |
+| 摘要层 | 近 7 天日摘要（`ai_life_daily_summaries`） | 对话注入、事件生成回顾 |
+| 记忆层 | 7 天前的日摘要（保留 90 天） | AI 可记得"两周前的旧书店"（通过摘要） |
+
+- **每日摘要生成**：每天 0 点（tick 检测跨天），LLM 把昨日事件压缩成一条日摘要存入 `ai_life_daily_summaries`
+- **剧情链引用**：`reference_event_id` 默认引用 7 天内原始事件；引用更早的 → 引用摘要（reference 指向 `ai_life_daily_summaries.date`）
+- **效果**：AI 的生活连贯——今天的事能关联昨天，两周前的旧书店也记得（通过摘要），不会"今天做了明天就忘"
 
 ---
 
@@ -213,7 +232,7 @@ worldbook_entries（激活角色：仙舟/翁法罗斯/白厄等设定）
 | 对话 prompt | `[当前时间]`（已实现于 llm-agent.ts） | AI 答"今天几号"、感知早晚 |
 | 事件生成器 | `[当前时间]` + 当前状态/心情 | 事件贴合时间线 |
 | 事件流注入 prompt | 每条事件带时间戳 | 引用时时间线清晰 |
-| 昨日摘要生成 | 定时在 0 点，标注日期 | 摘要缓存 |
+| 每日摘要生成 | 每日 0 点（tick 检测跨天），LLM 压缩昨日事件 | 摘要层/记忆层数据源 |
 
 时间格式统一：`2026年8月6日 星期四 21:35`（本地时间）。
 
@@ -227,8 +246,12 @@ worldbook_entries（激活角色：仙舟/翁法罗斯/白厄等设定）
 [我的近期日常]
 - 今天 09:30 在阳台看书，看到一朵像兔子的云
 - 今天 15:00 听到楼下琴声，有点想学
+- 昨天: 在旧书店待了一下午，淘到一本讲星星的书
+- 前天: 下雨，在窗边听了很久的雨
 - （被引用链上的关联事件 + 命中的世界书条目）
 ```
+
+**注入规则**：今天的事件逐条 + 近 7 天日摘要（每条一行）。7 天前的摘要不注入（太远，只在 AI 主动回忆时通过摘要检索）。
 
 实现：`MemoryManager.getLifeEventInjection(limit)` → PromptAssembler `assembleChat` 注入。受隐私模式控制（readonly/full 不注入）。事件为空时不加块。
 
@@ -305,13 +328,14 @@ await memoryManager.ingest({
 ## 15. 分阶段
 
 **本次（一期，完整实现）**：
-- [ ] ai_life_state / ai_life_events 表
-- [ ] LifeService（判定器 + 生成器 + 状态机 + 亲密度 + 昨日摘要）
+- [ ] ai_life_state / ai_life_events / ai_life_daily_summaries 表
+- [ ] LifeService（判定器 + 生成器 + 状态机 + 亲密度 + 每日摘要生成）
+- [ ] 事件存储分层（全量存 + 摘要层 + 剧情链引用）
 - [ ] 世界书背景采样注入 + 命中统计
 - [ ] 通用模板库 `data/life-templates.json`
 - [ ] 主动消息回写 EventStore（assistant 角色）
 - [ ] sendProactive 表情包解析扩展
-- [ ] 事件流注入 PromptAssembler
+- [ ] 事件流注入 PromptAssembler（今天逐条 + 近 7 天摘要）
 - [ ] bootstrap 接线（与 ProactiveService 并存）
 - [ ] 测试
 
