@@ -108,3 +108,25 @@ describe('ProactiveService — 去重状态持久化', () => {
     }
   });
 });
+
+describe('ProactiveService — getTodayActivity (LifeService 感知用)', () => {
+  it('今天无问候无节日时返回空串', () => {
+    const { svc } = makeService();
+    expect(svc.getTodayActivity()).toBe('');
+  });
+
+  it('已发早安 + 节日时返回对应描述', () => {
+    const { svc } = makeService();
+    (svc as any).sentGreetings.add('2026-08-07-9');
+    (svc as any).sentFestivals.add('2026-08-07'); // 立秋
+    const act = svc.getTodayActivity();
+    expect(act).toContain('早安问候');
+    expect(act).toContain('立秋节日祝福');
+  });
+
+  it('晚间问候归类为晚安', () => {
+    const { svc } = makeService();
+    (svc as any).sentGreetings.add('2026-08-07-21');
+    expect(svc.getTodayActivity()).toContain('晚安问候');
+  });
+});

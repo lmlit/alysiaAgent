@@ -27,6 +27,9 @@ export interface LifeOpts {
    *  与 generateEvent 分离：generateEvent 的 systemPrompt 强制输出 JSON，
    *  复用会导致摘要被存成 JSON 文本污染摘要层。缺失则跳过摘要生成（降级）。 */
   generateSummary?: (context: string) => Promise<string>;
+  /** ★ 今天已主动联系的内容（ProactiveService.getTodayActivity），
+   *  注入事件生成器避免重复打扰（如问候后生成"早上好"类事件）。 */
+  todayProactive?: () => string;
   /** 去重状态持久化文件 */
   stateFile?: string;
 }
@@ -201,6 +204,9 @@ export class LifeService {
     const wbIds = new Set(wbSample.map((w: any) => w.id));
     const wbBlock = wbSample.map((w: any) => `- [wb: ${w.id}] ${w.content}`).join('\n');
 
+    // ★ 今天已主动联系内容（ProactiveService 感知，避免重复打扰）
+    const todayActive = this.opts.todayProactive?.() ?? '';
+
     const context = [
       `【当前时间】${formatLocalTime()}`,
       `【当前状态】你正在: ${snapshot.currentActivity || '发呆'}；心情: ${snapshot.mood || '平静'}`,
@@ -208,6 +214,7 @@ export class LifeService {
       `【今天的生活】${todayBlock || '（还没有特别的事）'}`,
       `【你的人设背景】${wbBlock || '（暂无）'}`,
       `【轻月最近】${this.memoryManager.getUserActivitySummary() || '（暂无）'}`,
+      todayActive ? `【今天已主动联系】今天已经发过: ${todayActive}。请聚焦生活日常本身，不要生成同类问候/祝福内容。` : '',
       deepNight ? '【注意】现在是深夜，只能生成安静的内部事件（发呆/看书/听雨），不要打扰轻月。' : '',
     ].filter(Boolean).join('\n');
 

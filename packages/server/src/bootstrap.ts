@@ -86,9 +86,10 @@ async function main() {
   }
 
   // ★ 主动消息服务（时段问候 + 节日祝福 + 主动关怀，私聊场景）
+  let proactive: any = null;
   if (qqOff && config.bot.ownerId) {
     const { ProactiveService } = await import('./proactive.js');
-    const proactive = new ProactiveService(qqOff, core.memoryManager, {
+    proactive = new ProactiveService(qqOff, core.memoryManager, {
       ownerOpenid: config.bot.ownerId,
       // ★ 去重状态持久化：重启后当天问候/祝福不重复发
       stateFile: `${config.server.dataDir}/proactive-state.json`,
@@ -133,6 +134,8 @@ async function main() {
         });
         return resp.role === 'assistant' ? resp.completionText : '';
       },
+      // ★ 感知今天已发的问候/节日（ProactiveService），事件生成避免重复打扰
+      todayProactive: () => proactive?.getTodayActivity() ?? '',
     });
     life.start();
   }
