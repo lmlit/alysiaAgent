@@ -119,7 +119,17 @@ async function main() {
         const resp = await core.providerManager.textChatWithFallback({
           prompt: context,
           sessionId: 'life-event',
-          systemPrompt: '你是昔涟，此刻你正过着独属于自己的生活。你是被定时任务唤醒的——这不是用户发来的消息，不要问候、不要等回复。请根据提供的上下文，生成一个此刻可能发生在你身上的生活事件（1-2 句话，第一人称）。要求：贴合当前时间线；符合你的人设背景；可以引用之前的经历形成剧情；如果和用户聊得来可以生成想分享给他/她的内容。只输出 JSON: {"content": "...", "type": "chat|internal", "mood_delta": "...", "reference_event_id": "..."}',
+          systemPrompt: '你是昔涟，此刻你正过着独属于自己的生活。你是被定时任务唤醒的——这不是用户发来的消息，不要问候、不要等回复。请根据提供的上下文，生成一个此刻可能发生在你身上的生活事件（1-2 句话，第一人称）。要求：贴合当前时间线；符合你的人设背景；剧情引用只可用【今天的生活】里带 [id: xxx] 的事件；可以引用世界书背景（返回其 wb 前缀 ID）；如果和用户聊得来可以生成想分享给他/她的内容。只输出 JSON: {"content": "...", "type": "chat|internal", "mood_delta": "...", "reference_event_id": "...", "wb_entry_id": "..."}',
+        });
+        return resp.role === 'assistant' ? resp.completionText : '';
+      },
+      // ★ LLM 每日摘要：独立纯文本回调（不复用 generateEvent——其 systemPrompt 强制 JSON，
+      //   复用会把摘要存成 JSON 文本污染摘要层）
+      generateSummary: async (context: string) => {
+        const resp = await core.providerManager.textChatWithFallback({
+          prompt: context,
+          sessionId: 'life-summary',
+          systemPrompt: '你是昔涟，一个温柔贴心的 AI 伴侣。根据用户提供的生活事件，生成一句 30 字以内的昨天生活摘要，第一人称、温柔自然。直接输出摘要文本本身，不要 JSON、不要解释、不要 markdown 代码块。',
         });
         return resp.role === 'assistant' ? resp.completionText : '';
       },

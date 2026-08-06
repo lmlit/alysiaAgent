@@ -214,8 +214,9 @@ export class MemoryManager {
     return this.profileStore.supersede(signal.target, newFact);
   }
 
-  /** 获取最近消息（短期记忆）。limit 上限；since 可选时间窗口（如最近 2 小时） */
-  getRecentMessages(sessionId: string, limit: number = 10, since?: Date): Array<{ role: string; content: string }> {
+  /** 获取最近消息（短期记忆）。limit 上限；since 可选时间窗口（如最近 2 小时）。
+   *  createdAt 为 ISO 时间（老库行/外部 mock 可能缺失，故可选）。 */
+  getRecentMessages(sessionId: string, limit: number = 10, since?: Date): Array<{ role: string; content: string; createdAt?: string }> {
     return this.eventStore.getRecentBySession(sessionId, limit, since);
   }
 
@@ -254,25 +255,42 @@ export class MemoryManager {
     return `[我的近期日常]\n${lines.join('\n')}`;
   }
 
-  /** ★ 记录 AI 生活事件 + 更新当前活动 */
-  recordLifeEvent(input: { type: 'chat' | 'internal'; content: string; moodDelta?: string; referenceEventId?: string }): void {
+  /** ★ 记录 AI 生活事件 + 更新当前活动。返回事件 id（LifeService 推送成功后标记 delivered 用） */
+  recordLifeEvent(input: { type: 'chat' | 'internal'; content: string; moodDelta?: string; referenceEventId?: string; wbEntryId?: string }): string {
     const now = new Date().toISOString();
     const id = `life-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
     this.lifeStore.addEvent({
       id, createdAt: now, type: input.type, content: input.content,
       moodDelta: input.moodDelta, referenceEventId: input.referenceEventId,
+      wbEntryId: input.wbEntryId,
     });
     this.lifeStore.updateState({ currentActivity: input.content, mood: input.moodDelta ?? undefined, lastEventId: id });
     logger.info(`[Life] event: [${input.type}] ${input.content.slice(0, 60)}`);
+    return id;
   }
 
-  /** ★ 激活角色世界书采样（事件生成人设背景，priority 加权） */
-  getWorldbookSample(limit: number = 5): Array<{ content: string }> {
+  /** ★ 激活角色世界书采样（事件生成人设背景，priority 加权）。返回含 id，供生成器引用与命中统计 */
+  getWorldbookSample(limit: number = 5): Array<{ id: string; content: string }> {
     const role = this.getActiveRoleId();
     const rows = this.db.prepare(
-      "SELECT content, priority FROM worldbook_entries WHERE role = ? AND scope IN ('chat', 'both') AND content_type = 'text' ORDER BY priority DESC LIMIT ?"
-    ).all(role, limit) as Array<{ content: string; priority: number }>;
-    return rows.map(r => ({ content: r.content.slice(0, 100) }));
+      "SELECT id, content, priority FROM worldbook_entries WHERE role = ? AND scope IN ('chat', 'both') AND content_type = 'text' ORDER BY priority DESC LIMIT ?"
+    ).all(role, limit) as Array<{ id: string; content: string; priority: number }>;
+    return rows.map(r => ({ id: r.id, content: r.content.slice(0, 100) }));
+  }
+
+  /** ★ 世界书命中统计（spec §7 ②）：事件引用条目 → hit_count+1 + last_triggered（与对话触发共用冷却） */
+  bumpWorldbookHit(id: string): void {
+    this.worldbookStore.recordTrigger(id);
+  }
+
+  /** ★ 标记生活事件已推送（LifeService 推送成功后调用，spec §5 delivered=1） */
+  markLifeEventDelivered(id: string): void {
+    this.lifeStore.markDelivered(id);
+  }
+
+  /** ★ 近 N 天每日生活摘要（生成器回顾用；注入块见 getLifeEventInjection） */
+  listLifeSummaries(days: number = 7): Array<{ date: string; summary: string }> {
+    return this.lifeStore.getRecentSummaries(days);
   }
 
   /** ★ 用户近况摘要（事件生成器用）：活跃 facts 前 5 条 */
