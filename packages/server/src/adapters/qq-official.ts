@@ -628,14 +628,38 @@ export class QQOfficialAgentAdapter implements Platform {
   }
 
   /** ★ 主动消息发送（不带 msg_id，bot 主动发起）。
-   *  私聊互动窗口（48h）内可用；群聊主动消息受限（需群主开权限，4条/月）。 */
+   *  私聊互动窗口（48h）内可用；支持 [表情包:名字] 标记（文本+图片分开发）。 */
   async sendProactive(openid: string, text: string): Promise<boolean> {
     await this.ensureToken();
+    const { text: cleanText, marks } = parseStickerMarks(text);
+
+    // 先发文本
+    if (cleanText.trim()) {
+      const ok = await this.postMessage(openid, cleanText.trim());
+      if (!ok) return false;
+    }
+
+    // 再发表情包图片（私聊直发 srv_send_msg=true，uploadImage 内部完成发送）
+    for (const name of marks) {
+      const imgPath = this.stickerResolver?.(name) ?? null;
+      if (!imgPath) continue;
+      await this.uploadImage('private', { author: { user_openid: openid } }, imgPath);
+      // 直发模式上传即发送（成功返回 null），uploadImage 内部已记录成败日志
+      logger.info(`[QQ Official] Proactive sticker sent: ${name}`);
+    }
+
+    // 文本和图片都为空 → 失败
+    if (!cleanText.trim() && marks.length === 0) return false;
+    return true;
+  }
+
+  /** 主动消息文本发送（POST /v2/users/{openid}/messages） */
+  private async postMessage(openid: string, content: string): Promise<boolean> {
     try {
       const resp = await fetch(`${QQ_API_HOST}/v2/users/${openid}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `QQBot ${this.accessToken}` },
-        body: JSON.stringify({ content: text, msg_type: 0 }),
+        body: JSON.stringify({ content, msg_type: 0 }),
       });
       const result = await resp.json().catch(() => ({}));
       const ok = resp.status === 200 && (result?.code === 0 || result?.code === undefined);
