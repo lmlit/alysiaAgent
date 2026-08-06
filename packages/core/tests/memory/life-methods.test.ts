@@ -62,6 +62,21 @@ describe('MemoryManager life methods', () => {
     }
   });
 
+  it('privacy readonly: assembleWithWorldbook 不含 [我的近期日常]，reset 后恢复', async () => {
+    mm.recordLifeEvent({ type: 'chat', content: '在阳台看书' });
+    expect(mm.getLifeEventInjection()).toContain('[我的近期日常]');
+
+    // readonly：只注入角色设定，生活事件流不注入
+    mm.setPrivacyMode('readonly');
+    const minimal = await mm.assembleWithWorldbook('chat', [], []);
+    expect(minimal).not.toContain('[我的近期日常]');
+
+    // 会话结束 reset 后恢复完整注入
+    mm.resetPrivacyMode();
+    const normal = await mm.assembleWithWorldbook('chat', [], []);
+    expect(normal).toContain('[我的近期日常]');
+  });
+
   it('getWorldbookSample returns active role entries', () => {
     // seed 一条世界书
     const wb = db.prepare(`INSERT INTO worldbook_entries (id, trigger_keys, trigger_mode, content, scope, priority, cooldown_sec, last_triggered, hit_count, created_at, updated_at, role, content_type)
