@@ -1,7 +1,7 @@
 # AI 主动生活系统 — 设计文档
 
 > 日期: 2026-08-06  
-> 状态: 已设计（待实现）  
+> 状态: 已实现（2026-08-06）  
 > 前置: ProactiveService（`packages/server/src/proactive.ts`）、sendProactive（`packages/server/src/adapters/qq-official.ts`）、EventStore、ProfileStore、WorldbookStore
 
 ---
@@ -327,16 +327,16 @@ await memoryManager.ingest({
 ## 15. 分阶段
 
 **本次（一期，完整实现）**：
-- [ ] ai_life_state / ai_life_events / ai_life_daily_summaries 表
-- [ ] LifeService（判定器 + 生成器 + 状态机 + 亲密度 + 每日摘要生成）
-- [ ] 事件存储分层（全量存 + 摘要层 + 剧情链引用）
-- [ ] 世界书背景采样注入 + 命中统计
-- [ ] 通用模板库 `data/life-templates.json`
-- [ ] 主动消息回写 EventStore（assistant 角色）
-- [ ] sendProactive 表情包解析扩展
-- [ ] 事件流注入 PromptAssembler（今天逐条 + 近 7 天摘要）
-- [ ] bootstrap 接线（与 ProactiveService 并存）
-- [ ] 测试
+- [x] ai_life_state / ai_life_events / ai_life_daily_summaries 表
+- [x] LifeService（判定器 + 生成器 + 状态机 + 亲密度 + 每日摘要生成）
+- [x] 事件存储分层（全量存 + 摘要层 + 剧情链引用）
+- [x] 世界书背景采样注入 + 命中统计
+- [x] 通用模板库 `data/life-templates.json`
+- [x] 主动消息回写 EventStore（assistant 角色）
+- [x] sendProactive 表情包解析扩展
+- [x] 事件流注入 PromptAssembler（今天逐条 + 近 7 天摘要）
+- [x] bootstrap 接线（与 ProactiveService 并存）
+- [x] 测试
 
 **二期（独立立项）**：
 - [ ] 主提示词瘦身（细节动态注入）
