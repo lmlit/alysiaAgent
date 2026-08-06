@@ -174,10 +174,13 @@ getPersonaSnapshot(): {
 | Core 方法 | 用途 |
 |-----------|------|
 | `getLifeSnapshot()` | AI 生活状态快照（活动/心情/亲密度） |
-| `listLifeEvents(days)` | 生活事件列表（默认 7 天） |
-| `recordLifeEvent(...)` | 记录 AI 生活事件（LifeService 内部） |
+| `listLifeEvents(days)` | 生活事件列表（默认 7 天，含 id/wbEntryId/delivered） |
+| `listLifeSummaries(days)` | 近 N 天每日生活摘要（生成器回顾用） |
+| `recordLifeEvent(...)` | 记录 AI 生活事件（LifeService 内部，返回事件 id） |
+| `markLifeEventDelivered(id)` | 标记事件已推送（delivered=1，LifeService 推送成功后） |
+| `bumpWorldbookHit(id)` | 世界书命中统计 hit_count+1（事件引用时） |
 | `getLifeEventInjection()` | 事件流注入块（PromptAssembler 用） |
-| `getWorldbookSample(n)` | 世界书人设采样（事件生成用） |
+| `getWorldbookSample(n)` | 世界书人设采样（返回 `{id, content}`，事件生成用） |
 | `getUserActivitySummary()` | 用户近况摘要（事件生成用） |
 | `updateLifeState(partial)` | 更新 AI 实时状态 |
 | `upsertDailySummary(date, summary)` | 写入/更新某天生活摘要 |

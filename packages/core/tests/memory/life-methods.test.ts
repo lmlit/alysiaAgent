@@ -86,6 +86,49 @@ describe('MemoryManager life methods', () => {
     expect(sample.some(x => x.content === '测试设定内容')).toBe(true);
   });
 
+  it('getWorldbookSample 返回含 id 的结构（终审修复：生成器引用 + 命中统计）', () => {
+    db.prepare(`INSERT INTO worldbook_entries (id, trigger_keys, trigger_mode, content, scope, priority, cooldown_sec, last_triggered, hit_count, created_at, updated_at, role, content_type)
+      VALUES ('wb-test', '["测试"]', 'any', '测试设定内容', 'chat', 10, 0, NULL, 0, '2026-08-06T00:00:00', '2026-08-06T00:00:00', 'alysia', 'text')`).run();
+    const sample = mm.getWorldbookSample(5);
+    expect(sample).toEqual([{ id: 'wb-test', content: '测试设定内容' }]);
+  });
+
+  it('bumpWorldbookHit 递增 hit_count + 记录 last_triggered（spec §7 ②）', () => {
+    db.prepare(`INSERT INTO worldbook_entries (id, trigger_keys, trigger_mode, content, scope, priority, cooldown_sec, last_triggered, hit_count, created_at, updated_at, role, content_type)
+      VALUES ('wb-test', '["测试"]', 'any', '测试设定内容', 'chat', 10, 0, NULL, 0, '2026-08-06T00:00:00', '2026-08-06T00:00:00', 'alysia', 'text')`).run();
+    mm.bumpWorldbookHit('wb-test');
+    mm.bumpWorldbookHit('wb-test');
+    const row = db.prepare('SELECT hit_count, last_triggered FROM worldbook_entries WHERE id = ?').get('wb-test') as any;
+    expect(row.hit_count).toBe(2);
+    expect(row.last_triggered).toBeTruthy();
+  });
+
+  it('recordLifeEvent 返回事件 id，wbEntryId/referenceEventId 透传入库（终审修复）', () => {
+    const id = mm.recordLifeEvent({ type: 'chat', content: '在阳台看书', wbEntryId: 'wb-test', referenceEventId: 'life-0' });
+    expect(id.startsWith('life-')).toBe(true);
+    const events = mm.listLifeEvents(2);
+    expect(events).toHaveLength(1);
+    expect(events[0].id).toBe(id);
+    expect(events[0].wbEntryId).toBe('wb-test');
+    expect(events[0].referenceEventId).toBe('life-0');
+  });
+
+  it('markLifeEventDelivered 置 delivered=1（终审修复：markDelivered 接线）', () => {
+    const id = mm.recordLifeEvent({ type: 'chat', content: '在阳台看书' });
+    expect(mm.listLifeEvents(2)[0].delivered).toBe(0);
+    mm.markLifeEventDelivered(id);
+    expect(mm.listLifeEvents(2)[0].delivered).toBe(1);
+  });
+
+  it('listLifeSummaries 返回近 7 天摘要（旧 → 新）', () => {
+    mm.upsertDailySummary('2026-08-06', '下雨听雨');
+    mm.upsertDailySummary('2026-08-05', '在旧书店待了一下午');
+    expect(mm.listLifeSummaries(7)).toEqual([
+      { date: '2026-08-05', summary: '在旧书店待了一下午' },
+      { date: '2026-08-06', summary: '下雨听雨' },
+    ]);
+  });
+
   it('getUserActivitySummary returns facts or empty', () => {
     expect(mm.getUserActivitySummary()).toBe('');
     const p = db.prepare("SELECT * FROM user_profile WHERE id = 1");

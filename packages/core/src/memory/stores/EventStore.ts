@@ -69,21 +69,22 @@ export class EventStore {
   }
 
   /** 获取某个会话最近的消息（用于短期上下文） */
-  /** 最近消息（短期记忆）。limit 上限；since 可选时间窗口（ISO 字符串比较，created_at 存 ISO）。 */
-  getRecentBySession(sessionId: string, limit: number = 20, since?: Date): Array<{ role: string; content: string }> {
+  /** 最近消息（短期记忆）。limit 上限；since 可选时间窗口（ISO 字符串比较，created_at 存 ISO）。
+   *  返回附带 createdAt（ISO），供亲密度衰减等需要"最后消息时间"的调用方使用。 */
+  getRecentBySession(sessionId: string, limit: number = 20, since?: Date): Array<{ role: string; content: string; createdAt?: string }> {
     const rows = since
       ? this.db.prepare(`
-        SELECT payload, source FROM events
+        SELECT payload, source, created_at FROM events
         WHERE session_id = ? AND type = 'message' AND created_at >= ?
         ORDER BY created_at DESC
         LIMIT ?
-      `).all(sessionId, since.toISOString(), limit) as Array<{ payload: string; source: string }>
+      `).all(sessionId, since.toISOString(), limit) as Array<{ payload: string; source: string; created_at: string }>
       : this.db.prepare(`
-        SELECT payload, source FROM events
+        SELECT payload, source, created_at FROM events
         WHERE session_id = ? AND type = 'message'
         ORDER BY created_at DESC
         LIMIT ?
-      `).all(sessionId, limit) as Array<{ payload: string; source: string }>;
+      `).all(sessionId, limit) as Array<{ payload: string; source: string; created_at: string }>;
 
     return rows.reverse().map(r => {
       const p = JSON.parse(r.payload);
@@ -92,6 +93,7 @@ export class EventStore {
       return {
         role: p.sender_id ? 'user' : 'assistant',
         content: `${senderName}: ${content}`,
+        createdAt: r.created_at,
       };
     });
   }
