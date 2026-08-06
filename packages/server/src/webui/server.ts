@@ -22,6 +22,7 @@
  *   POST /api/knowledge/import     — 导入知识
  *   DELETE /api/knowledge/:id      — 删除知识文档
  *   POST /api/privacy              — 隐私模式开关
+ *   GET  /api/life                 — AI 生活状态快照 + 事件流
  */
 import Fastify from 'fastify';
 import type { AlysiaCore } from '@alysia/core';
@@ -121,6 +122,13 @@ export function createWebuiApp(core: AlysiaCore) {
     const { mode } = req.body as { mode: 'off' | 'readonly' | 'full' };
     core.memoryManager.setPrivacyMode(mode);
     return { privacyMode: core.memoryManager.getPrivacyMode() };
+  });
+
+  // ── AI 主动生活 ────────────────────────────────────
+  app.get('/api/life', async () => {
+    const snapshot = core.memoryManager.getLifeSnapshot();
+    const events = core.memoryManager.listLifeEvents(7);
+    return { snapshot, events };
   });
 
   return app;

@@ -105,6 +105,28 @@ async function main() {
     proactive.start();
   }
 
+  // ★ AI 主动生活系统（LifeService）：每小时生成生活事件，可主动推送
+  if (qqOff && config.bot.ownerId) {
+    const { LifeService } = await import('./life.js');
+    const life = new LifeService(core.memoryManager, qqOff, {
+      ownerOpenid: config.bot.ownerId,
+      probability: 0.3,
+      cooldownHours: 2,
+      chatLockMinutes: 30,
+      stateFile: `${config.server.dataDir}/life-state.json`,
+      // ★ LLM 事件生成：woke 模式，昔涟身份
+      generateEvent: async (context: string) => {
+        const resp = await core.providerManager.textChatWithFallback({
+          prompt: context,
+          sessionId: 'life-event',
+          systemPrompt: '你是昔涟，此刻你正过着独属于自己的生活。你是被定时任务唤醒的——这不是用户发来的消息，不要问候、不要等回复。请根据提供的上下文，生成一个此刻可能发生在你身上的生活事件（1-2 句话，第一人称）。要求：贴合当前时间线；符合你的人设背景；可以引用之前的经历形成剧情；如果和用户聊得来可以生成想分享给他/她的内容。只输出 JSON: {"content": "...", "type": "chat|internal", "mood_delta": "...", "reference_event_id": "..."}',
+        });
+        return resp.role === 'assistant' ? resp.completionText : '';
+      },
+    });
+    life.start();
+  }
+
   // ★ 提醒主动推送：到点时通过 QQ 官方主动消息发给设置者
   //   过 LLM 用昔涟语气生成自然提醒文案，失败回落原始文本
   if (qqOff) {
