@@ -10,6 +10,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { dirname } from 'path';
 import type { QQOfficialAgentAdapter } from './adapters/qq-official.js';
 import type { MemoryManager } from '@alysia/core/memory';
+import { localDateKey, localDateKeyFromISO } from '@alysia/core/memory';
 import { logger } from '@alysia/core';
 
 // ── 节日表 ──────────────────────────────────────────
@@ -123,6 +124,9 @@ export class ProactiveService {
   private lastCareByUser = new Map<string, string>(); // openid → 日期(YYYY-MM-DD)
   private timer: ReturnType<typeof setInterval> | null = null;
   private saveTimer: ReturnType<typeof setTimeout> | null = null; // 去重状态写盘防抖
+  // ★ 问候独立调度器（8-08 优化：30min tick 导致 9:00 早安 09:29 才发 → 精确到点触发）
+  private greetingTimer: ReturnType<typeof setTimeout> | null = null;
+  private greetingRetries = new Map<string, number>(); // key → 已重试次数（仅内存，重启由补发兜底）
 
   constructor(
     private qqOff: QQOfficialAgentAdapter,
@@ -180,20 +184,133 @@ export class ProactiveService {
     }
   }
 
-  /** 启动定时检查（每 30 分钟一次） */
+  /** 启动定时检查（每 30 分钟一次，负责节日 + 关怀；问候走独立精确调度器） */
   start(): void {
     if (this.timer) return;
     this.timer = setInterval(() => {
-      this.tick().catch(err => logger.error('Proactive tick:', err));
+      this.tick().catch(err => logger.error('[Proactive] tick:', err));
     }, 30 * 60_000);
-    logger.info('Proactive service started (festival greetings + care messages)');
-    // 启动后立即跑一次（若恰逢节日）
-    this.tick().catch(err => logger.error('Proactive tick:', err));
+    logger.info('[Proactive] service started (festival greetings + care messages)');
+    // 启动后立即跑一次（若恰逢节日/关怀窗口）
+    this.tick().catch(err => logger.error('[Proactive] tick:', err));
+    // ★ 问候精确到点调度（8-08 优化：不再等 30min tick，9:00 就到 9:00 发）
+    this.scheduleNextGreeting();
   }
 
   stop(): void {
     if (this.timer) { clearInterval(this.timer); this.timer = null; }
+    if (this.greetingTimer) { clearTimeout(this.greetingTimer); this.greetingTimer = null; }
     this.flushState();
+  }
+
+  // ── 问候独立调度器（8-08 优化：精确到点 + 重启补发 + 失败重试）────────
+
+  /** 问候去重 key：`YYYY-MM-DD-hour`（本地日期） */
+  private greetingKey(now: Date, hour: number): string {
+    return `${localDateKey(now)}-${hour}`;
+  }
+
+  /** 计算并安排下一次问候触发。当前处于某问候窗口期（hour 已到且未发）→ 立即补发（重启恢复）。 */
+  private scheduleNextGreeting(): void {
+    if (this.greetingTimer) { clearTimeout(this.greetingTimer); this.greetingTimer = null; }
+    const now = new Date();
+
+    // 重启补发：当前时刻已进入某问候窗口且今天未发 → 立即发送。
+    // ★ 重试已达上限（greetingRetries > 2）的 key 不补发——否则失败→补发→失败→补发死循环
+    for (const g of DAILY_GREETINGS) {
+      if (now.getHours() === g.hour && now.getMinutes() >= g.minute) {
+        const key = this.greetingKey(now, g.hour);
+        const retries = this.greetingRetries.get(key) ?? 0;
+        if (!this.sentGreetings.has(key) && retries <= 2) {
+          logger.info(`[Proactive] catch-up greeting ${g.hour}:${g.minute} (post-restart)`);
+          this.fireGreeting(g.hour, g.minute);
+          return;
+        }
+      }
+    }
+
+    // 今天未来最近的问候时刻
+    let next: { hour: number; minute: number } | null = null;
+    let nextTs = 0;
+    for (const g of DAILY_GREETINGS) {
+      const t = new Date(now);
+      t.setHours(g.hour, g.minute, 0, 0);
+      if (t.getTime() > now.getTime() + 5_000) { // 5s 余量防边界抖动
+        if (!next || t.getTime() < nextTs) { next = g; nextTs = t.getTime(); }
+      }
+    }
+    if (!next) next = DAILY_GREETINGS[0]; // 今天全过 → 明天最早时段
+
+    const target = new Date(now);
+    if (next.hour <= now.getHours() || (next.hour === now.getHours() && next.minute <= now.getMinutes())) {
+      target.setDate(target.getDate() + 1);
+    }
+    target.setHours(next.hour, next.minute, 0, 0);
+    const delay = target.getTime() - now.getTime();
+    this.greetingTimer = setTimeout(() => {
+      this.fireGreeting(next!.hour, next!.minute);
+    }, delay);
+    logger.debug(`[Proactive] next greeting scheduled: ${next.hour}:${String(next.minute).padStart(2, '0')} (+${Math.round(delay / 1000)}s)`);
+  }
+
+  /** 到点发送问候（去重 → 上下文注入 → personalize → sendProactive）。发送完成后排下一次。 */
+  private async fireGreeting(hour: number, minute: number): Promise<void> {
+    try {
+      const g = DAILY_GREETINGS.find(x => x.hour === hour && x.minute === minute);
+      if (!g) return;
+      const now = new Date();
+      const key = this.greetingKey(now, hour);
+      if (!this.sentGreetings.has(key)) {
+        const text = await this.personalize(
+          g.text,
+          `现在是${hour < 12 ? '早上' : hour < 18 ? '中午' : '晚上'}，给用户发一条${hour < 12 ? '早安' : hour < 18 ? '午安' : '晚安'}问候${this.contextSnippet()}`,
+        );
+        const ok = await this.qqOff.sendProactive(this.opts.ownerOpenid, text);
+        if (ok) {
+          this.sentGreetings.add(key);
+          this.greetingRetries.delete(key);
+          this.scheduleSave();
+          logger.info(`[Proactive] greeting ${hour}:${minute}: sent`);
+        } else {
+          // 失败重试：最多重试 2 次（初始 + 2 重试 = 3 次尝试）、间隔 10min
+          // （防 API 抖动丢问候；计数仅内存，达上限保留计数——scheduleNextGreeting 补发会跳过，防失败→补发→失败循环）
+          const retries = (this.greetingRetries.get(key) ?? 0) + 1;
+          this.greetingRetries.set(key, retries);
+          if (retries <= 2) {
+            logger.info(`[Proactive] greeting ${hour}:${minute}: failed (retry ${retries}/2)`);
+            this.greetingTimer = setTimeout(() => this.fireGreeting(hour, minute), 10 * 60_000);
+            return; // 重试路径：排下一次由重试 timer 负责
+          }
+          logger.info(`[Proactive] greeting ${hour}:${minute}: gave up after ${retries} retries`);
+        }
+      }
+    } catch (err: any) {
+      logger.warn(`[Proactive] greeting ${hour}:${minute} error: ${err.message}`);
+    }
+    this.scheduleNextGreeting(); // 成功 / 重试放弃 / 已去重 / 异常 → 排下一次
+  }
+
+  /** ★ 问候上下文素材（8-08 优化）：用户近况 + 今天生活事件 + 亲密度。
+   *  全部静默容错——素材缺失不阻塞问候；注明"不要生硬引用"防贴标签式文案。 */
+  private contextSnippet(): string {
+    const parts: string[] = [];
+    try {
+      const userAct = this.memoryManager.getUserActivitySummary();
+      if (userAct) parts.push(`用户近况：${userAct}`);
+    } catch { /* ignore */ }
+    try {
+      const todayKey = localDateKey();
+      const today = this.memoryManager.listLifeEvents(2)
+        .filter((e: any) => localDateKeyFromISO(e.createdAt) === todayKey)
+        .slice(-3);
+      if (today.length > 0) parts.push(`我今天的日常：${today.map((e: any) => e.content).join('；')}`);
+    } catch { /* ignore */ }
+    try {
+      const snap = this.memoryManager.getLifeSnapshot();
+      if (snap && snap.intimacy != null) parts.push(`我和用户的亲密度：${snap.intimacy}/100`);
+    } catch { /* ignore */ }
+    if (parts.length === 0) return '';
+    return `\n背景素材（用于让问候更自然贴切，不要生硬引用）：\n${parts.join('\n')}`;
   }
 
   private async tick(): Promise<void> {
@@ -202,32 +319,16 @@ export class ProactiveService {
     const p = (n: number) => String(n).padStart(2, '0');
     const today = `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`;
 
-    // 0. 时段问候（每天各时段一次，发给 owner）— 文案优先 LLM 个性化
-    for (const g of DAILY_GREETINGS) {
-      const key = `${today}-${g.hour}`;
-      if (this.sentGreetings.has(key)) continue;
-      if (now.getHours() === g.hour && now.getMinutes() >= g.minute) {
-        const text = await this.personalize(g.text, `现在是${g.hour < 12 ? '早上' : g.hour < 18 ? '中午' : '晚上'}，给用户发一条${g.hour < 12 ? '早安' : g.hour < 18 ? '午安' : '晚安'}问候`);
-        const ok = await this.qqOff.sendProactive(this.opts.ownerOpenid, text);
-        // ★ 先发后标记：避免 API 失败时该时段永久丢失
-        if (ok) {
-          this.sentGreetings.add(key);
-          this.scheduleSave();
-        }
-        logger.info(`Proactive greeting ${g.hour}:${g.minute}: ${ok ? 'sent' : 'failed'}`);
-      }
-    }
-
     // 1. 节日祝福（当天只发一次，发给 owner）— 含 24 节气，文案优先 LLM 个性化
     const festival = this.todayFestival();
     if (festival && !this.sentFestivals.has(today)) {
-      const text = await this.personalize(festival.greeting, `今天是${festival.name}，给用户发一条节日祝福`);
+      const text = await this.personalize(festival.greeting, `今天是${festival.name}，给用户发一条节日祝福${this.contextSnippet()}`);
       const ok = await this.qqOff.sendProactive(this.opts.ownerOpenid, text);
       if (ok) {
         this.sentFestivals.add(today);
         this.scheduleSave();
       }
-      logger.info(`Proactive festival "${festival.name}": ${ok ? 'sent' : 'failed'}`);
+      logger.info(`[Proactive] festival "${festival.name}": ${ok ? 'sent' : 'failed'}`);
     }
 
     // 2. 主动关怀：活跃私聊会话，超过间隔未聊
@@ -260,7 +361,7 @@ export class ProactiveService {
         this.lastCareByUser.set(openid, today);
         this.scheduleSave();
       }
-      logger.info(`Proactive care → ${openid.slice(0, 8)}...: ${ok ? 'sent' : 'failed'}`);
+      logger.info(`[Proactive] care → ${openid.slice(0, 8)}...: ${ok ? 'sent' : 'failed'}`);
     }
   }
 
@@ -271,7 +372,7 @@ export class ProactiveService {
       const text = await this.opts.generateText(context);
       if (text && text.trim()) return text.trim();
     } catch (err: any) {
-      logger.warn(`Proactive LLM generate failed, using fallback: ${err.message}`);
+      logger.warn(`[Proactive] LLM generate failed, using fallback: ${err.message}`);
     }
     return fallback;
   }
