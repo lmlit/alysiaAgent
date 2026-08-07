@@ -5,6 +5,12 @@ import { LifeService } from '../src/life.js';
 function makeMocks(overrides: Record<string, any> = {}) {
   const memoryManager = {
     getLifeSnapshot: vi.fn().mockReturnValue({ currentActivity: '', mood: '', intimacy: 30 }),
+    // ★ 旋钮（8-08：updateIntimacy 读 getPersonaSnapshot().memoryConfig，默认值 0.3/0.4/0.3/0.3）
+    getPersonaSnapshot: vi.fn().mockReturnValue({
+      name: '昔涟',
+      tone: {}, speechStyle: {}, emotionalRange: {},
+      memoryConfig: { retention_bias: 0.2, decay_rate: 0.3, importance_threshold: 0.4, recency_weight: 0.3, confirmation_bias: 0.3 },
+    }),
     recordLifeEvent: vi.fn().mockReturnValue('life-mock-id'),
     getLifeEventInjection: vi.fn().mockReturnValue(''),
     getWorldbookSample: vi.fn().mockReturnValue([{ id: 'wb-mock', content: '设定' }]),
@@ -347,9 +353,9 @@ describe('LifeService', () => {
     expect(memoryManager.markLifeEventDelivered).not.toHaveBeenCalled();
   });
 
-  // ── P4 亲密度无互动衰减（spec §11：近 3 天无互动每天 -2，下限 10）─────
+  // ── P4 亲密度无互动衰减（spec §11 + 旋钮接线：默认 threshold=2+(1-0.4)×10=8 天，decay=0.3×6=1.8/天）─────
 
-  it('亲密度：近 3 天无 user 互动 → 频率分按天数 -2 衰减', async () => {
+  it('亲密度：5 天无 user 互动 → 未过 8 天阈值，不衰减（默认旋钮）', async () => {
     freezeTime(12);
     const msgs = Array.from({ length: 5 }, (_, i) => ({
       role: 'user', content: `消息${i}`, createdAt: '2026-08-01T10:04:00', // 距现在 5 天
@@ -357,12 +363,14 @@ describe('LifeService', () => {
     const { memoryManager, qqOff } = makeMocks({ getRecentMessages: vi.fn().mockReturnValue(msgs) });
     const svc = new LifeService(memoryManager as any, qqOff as any, { ownerOpenid: 'openid-1' });
     svc.updateIntimacy();
-    // freqScore = min(35, 5/4*5=6.25) − 2×5天 → 0；longScore=5×1.05=5.25；activeScore=1×3=3；base=30 → 38.25
+    // weighted = 5条×max(0.1, 1-0.3×0.5=0.85)（全在 3 天外） = 4.25
+    // freqScore = 4.25/4×5 = 5.3125；longScore=5×1.05=5.25；activeScore=1×3=3；raw=43.5625
+    // 平滑：prev=30 + (43.5625-30)×(1-0.3×0.7=0.79) = 40.714
     const call = memoryManager.updateLifeState.mock.calls[0][0] as { intimacy: number };
-    expect(call.intimacy).toBeCloseTo(38.25, 4);
+    expect(call.intimacy).toBeCloseTo(40.714, 2);
   });
 
-  it('亲密度：3 天内有 user 互动 → 不衰减', async () => {
+  it('亲密度：今天有 user 互动 → 不衰减，recency 加权生效', async () => {
     freezeTime(12);
     const msgs = Array.from({ length: 5 }, (_, i) => ({
       role: 'user', content: `消息${i}`, createdAt: '2026-08-06T10:00:00', // 今天
@@ -370,9 +378,10 @@ describe('LifeService', () => {
     const { memoryManager, qqOff } = makeMocks({ getRecentMessages: vi.fn().mockReturnValue(msgs) });
     const svc = new LifeService(memoryManager as any, qqOff as any, { ownerOpenid: 'openid-1' });
     svc.updateIntimacy();
-    // 30 + 6.25 + 5.25 + 3 = 44.5（idleDays=0，无衰减）
+    // weighted = 5条×(1+0.3=1.3)（都在近 3 天）= 6.5 → freqScore=6.5/4×5=8.125
+    // longScore=5.25；activeScore=3；raw=46.375 → 平滑 30+(46.375-30)×0.79=42.936
     const call = memoryManager.updateLifeState.mock.calls[0][0] as { intimacy: number };
-    expect(call.intimacy).toBeCloseTo(44.5, 4);
+    expect(call.intimacy).toBeCloseTo(42.936, 2);
   });
 });
 
