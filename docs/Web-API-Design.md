@@ -1,7 +1,7 @@
 # Alysia Web 端接口档案（服务端开发约束）
 
-> 日期: 2026-07-31
-> 状态: 设计稿（接口已封装在 core，Web 路由待实现）
+> 日期: 2026-07-31（2026-08-07 治理对账更新状态）
+> 状态: ✅ 已实现（WebUI 路由层在 packages/server/src/webui/server.ts，routes exercise all core methods）
 > 目标: 为 WebUI 管理面板（Fastify + Vue）提供完整的后端接口清单
 > ★ 约束: **后续开发服务端功能时，新增/修改 core 方法必须先对照本文档**，
 >   确保不破坏 Web 端接口契约，避免 Web 端开发时返工回归。
@@ -39,21 +39,24 @@
 
 | 分组 | 接口 | 用途 | 状态 |
 |------|------|------|:--:|
-| 系统 | `GET /api/health` | 健康检查 | 待实现 |
+| 系统 | `GET /api/health` | 健康检查 | 🟢 core 已封装 |
 | 会话 | `GET /api/sessions` | 会话列表 | 🟢 core 已封装 |
 | 会话 | `POST /api/sessions/:id/extract` | 手动提取画像 | 🟢 core 已封装 |
 | 画像 | `GET /api/profile` | 画像快照 | 🟢 core 已封装 |
 | 人格 | `GET /api/persona` | 人格状态 | 🟢 core 已封装 |
-| 人格 | `POST /api/persona/adjust` | 手动调整人格参数 | 待实现 |
-| Token | `GET /api/stats` | Token 用量统计 | ⚠️ 部分封装 |
+| 人格 | `POST /api/persona/adjust` | 手动调整人格参数 | 🟢 core 已封装 |
+| Token | `GET /api/stats` | Token 用量统计 | 🟢 core 已封装 |
 | 知识库 | `GET /api/knowledge` | 知识文档列表 | 🟢 core 已封装 |
 | 知识库 | `POST /api/knowledge/import` | 导入知识（文本；PDF/URL 后续） | 🟢 core 已封装 |
 | 知识库 | `DELETE /api/knowledge/:id` | 删除知识文档 | 🟢 core 已封装 |
-| 平台 | `GET /api/platforms` | 平台连接状态 | 待实现 |
+| 平台 | `GET /api/platforms` | 平台连接状态 | ⬜ 未实现（backlog，见 openspec/changes/add-platforms-endpoint） |
 | 角色 | `GET /api/roles` | 角色列表 | 🟢 core 已封装 |
+| 角色 | `GET /api/roles/active` | 当前激活角色 | 🟢 core 已封装 |
 | 角色 | `POST /api/roles/switch` | 切换角色 | 🟢 core 已封装 |
 | 角色 | `POST /api/roles/import` | 导入角色包 | 🟢 core 已封装 |
 | 角色 | `GET /api/roles/:id/export` | 导出角色包 | 🟢 core 已封装 |
+| 素材 | `GET /api/stickers` | 表情包列表（findSticker） | 🟢 core 已封装 |
+| 隐私 | `POST /api/privacy` | 隐私模式切换 | 🟢 core 已封装 |
 | 生活 | `GET /api/life` | AI 生活状态快照 + 事件流 | 🟢 core 已封装 |
 
 > 🟢 = core 方法已就绪，只需 Web 路由层包装
