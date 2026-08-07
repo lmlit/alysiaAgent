@@ -88,6 +88,98 @@ describe('ProactiveService — 问候独立调度器 (scheduleNextGreeting/fireG
   });
 });
 
+describe('ProactiveService — CR 回归（proactive-greeting-scheduler-fixes）', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('P0 回归：12:15 启动 → 排今天 12:30（不推明天）', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 7, 8, 12, 15, 0));
+    const { svc } = makeService();
+    const spy = vi.spyOn(svc as any, 'fireGreeting').mockResolvedValue(undefined);
+    (svc as any).scheduleNextGreeting();
+    vi.advanceTimersByTime(15 * 60_000 + 100); // 今天 12:30
+    expect(spy).toHaveBeenCalledWith(12, 30);
+    svc.stop();
+  });
+
+  it('P1 回归：8:59:57 启动 → 3s 后排 9:00（5s 死区消除）', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 7, 8, 8, 59, 57));
+    const { svc } = makeService();
+    const spy = vi.spyOn(svc as any, 'fireGreeting').mockResolvedValue(undefined);
+    (svc as any).scheduleNextGreeting();
+    vi.advanceTimersByTime(3 * 1000 + 100); // 9:00:00.1
+    expect(spy).toHaveBeenCalledWith(9, 0);
+    svc.stop();
+  });
+
+  it('P1 回归：9:30 窗口期重启 → 立即补发 9:00 问候', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 7, 8, 9, 30, 0));
+    const { svc, qqOff } = makeService();
+    (svc as any).scheduleNextGreeting();
+    await vi.advanceTimersByTimeAsync(1); // flush setTimeout(0) 补发
+    expect(qqOff.sendProactive).toHaveBeenCalledTimes(1);
+    svc.stop();
+  });
+
+  it('P2 回归：sleep 跨天（21:30 timer 在 22:00 触发）→ 跳过不发送', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 7, 8, 22, 0, 0)); // 已过 21:30
+    const { svc, qqOff } = makeService();
+    await (svc as any).fireGreeting(21, 30); // 模拟延迟 timer 触发
+    expect(qqOff.sendProactive).not.toHaveBeenCalled();
+    svc.stop();
+  });
+
+  it('P1 回归：sendProactive 抛异常 → 走重试预算（不无限热循环）', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 7, 8, 9, 0, 5));
+    const { svc, qqOff } = makeService();
+    qqOff.sendProactive.mockRejectedValue(new Error('network down'));
+    await (svc as any).fireGreeting(9, 0);
+    expect(qqOff.sendProactive).toHaveBeenCalledTimes(1); // 首次异常
+    vi.advanceTimersByTime(10 * 60_000); // 重试 1
+    await vi.advanceTimersByTimeAsync(0);
+    expect(qqOff.sendProactive).toHaveBeenCalledTimes(2);
+    vi.advanceTimersByTime(10 * 60_000); // 重试 2（上限）
+    await vi.advanceTimersByTimeAsync(0);
+    expect(qqOff.sendProactive).toHaveBeenCalledTimes(3);
+    vi.advanceTimersByTime(10 * 60_000); // 不再循环
+    await vi.advanceTimersByTimeAsync(0);
+    expect(qqOff.sendProactive).toHaveBeenCalledTimes(3);
+    svc.stop();
+  });
+
+  it('P1 回归：stop() 后 fireGreeting 不再发送，也不 re-arm', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 7, 8, 9, 0, 5));
+    const { svc, qqOff } = makeService();
+    svc.stop();
+    await (svc as any).fireGreeting(9, 0);
+    expect(qqOff.sendProactive).not.toHaveBeenCalled();
+    expect((svc as any).greetingTimer).toBeNull();
+  });
+
+  it('P2 回归：in-flight 期间重试再入 → 不双发', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 7, 8, 9, 0, 5));
+    const { svc, qqOff } = makeService();
+    // sendProactive 挂起（永不 resolve 的 promise）
+    let resolveFn: (v: boolean) => void = () => {};
+    qqOff.sendProactive.mockImplementation(() => new Promise<boolean>(r => { resolveFn = r; }));
+    const p1 = (svc as any).fireGreeting(9, 0); // in-flight
+    await vi.advanceTimersByTimeAsync(0); // flush personalize 微任务 → sendProactive 已发起
+    // 重试 timer 再入（模拟 10min 后）
+    (svc as any).fireGreeting(9, 0);
+    expect(qqOff.sendProactive).toHaveBeenCalledTimes(1); // 第二次被 in-flight 拦截
+    resolveFn(true); // 放行第一次
+    await p1;
+    expect((svc as any).sentGreetings.has('2026-08-08-9')).toBe(true);
+    svc.stop();
+  });
+});
+
 describe('ProactiveService — 问候上下文注入 (contextSnippet)', () => {
   it('素材缺失时返回空串（不阻塞问候）', () => {
     const { svc } = makeService();
@@ -216,6 +308,8 @@ describe('ProactiveService — 去重状态持久化', () => {
 });
 
 describe('ProactiveService — getTodayActivity (LifeService 感知用)', () => {
+  // ★ CR 修复：afterEach 复位 fake timers——断言失败时冻结时间不泄漏给后续用例
+  afterEach(() => vi.useRealTimers());
   // ★ 动态 today key（测试用硬编码日期会在跨天后失效——2026-08-08 踩坑）
   const todayKey = () => {
     const n = new Date();

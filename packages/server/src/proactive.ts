@@ -127,6 +127,9 @@ export class ProactiveService {
   // ★ 问候独立调度器（8-08 优化：30min tick 导致 9:00 早安 09:29 才发 → 精确到点触发）
   private greetingTimer: ReturnType<typeof setTimeout> | null = null;
   private greetingRetries = new Map<string, number>(); // key → 已重试次数（仅内存，重启由补发兜底）
+  // ★ CR 修复（8-08）：停止标志防 stop 后 re-arm；in-flight 集合防并发双发（sendProactive 挂 >10min）
+  private stopped = false;
+  private greetingInFlight = new Set<string>();
 
   constructor(
     private qqOff: QQOfficialAgentAdapter,
@@ -198,6 +201,8 @@ export class ProactiveService {
   }
 
   stop(): void {
+    // ★ CR 修复：stopped 标志——in-flight fireGreeting 完成后不得 re-arm timer（否则停止的服务继续发问候）
+    this.stopped = true;
     if (this.timer) { clearInterval(this.timer); this.timer = null; }
     if (this.greetingTimer) { clearTimeout(this.greetingTimer); this.greetingTimer = null; }
     this.flushState();
@@ -210,84 +215,113 @@ export class ProactiveService {
     return `${localDateKey(now)}-${hour}`;
   }
 
-  /** 计算并安排下一次问候触发。当前处于某问候窗口期（hour 已到且未发）→ 立即补发（重启恢复）。 */
+  /** 计算并安排下一次问候触发。单遍扫描 DAILY_GREETINGS（时间升序）：
+   *  ① 窗口期（当前小时已到该问候且未发未放弃）→ 立即/短延迟补发（重启恢复，消除 5s 死区）；
+   *  ② 未来候选（升序第一个 delay > 0）→ 排到点；
+   *  ③ 已过时段（已发/放弃）→ 跳过；全过 → 明天最早时段。
+   *  ★ CR 修复：不再有"同小时未来候选被 bump 到明天"的误伤（旧版 12:00-12:29 重启丢午安）。 */
   private scheduleNextGreeting(): void {
+    if (this.stopped) return;
     if (this.greetingTimer) { clearTimeout(this.greetingTimer); this.greetingTimer = null; }
     const now = new Date();
 
-    // 重启补发：当前时刻已进入某问候窗口且今天未发 → 立即发送。
-    // ★ 重试已达上限（greetingRetries > 2）的 key 不补发——否则失败→补发→失败→补发死循环
     for (const g of DAILY_GREETINGS) {
+      const t = new Date(now);
+      t.setHours(g.hour, g.minute, 0, 0);
+      const delay = t.getTime() - now.getTime();
+
+      // ① 窗口期补发：当前小时已到该问候且今天未发、未到重试上限 → 立即发（delay<0）或到点发（delay≥0）
       if (now.getHours() === g.hour && now.getMinutes() >= g.minute) {
         const key = this.greetingKey(now, g.hour);
         const retries = this.greetingRetries.get(key) ?? 0;
         if (!this.sentGreetings.has(key) && retries <= 2) {
-          logger.info(`[Proactive] catch-up greeting ${g.hour}:${g.minute} (post-restart)`);
-          this.fireGreeting(g.hour, g.minute);
+          if (delay < -1_000) {
+            logger.info(`[Proactive] catch-up greeting ${g.hour}:${g.minute} (post-restart)`);
+          }
+          this.greetingTimer = setTimeout(() => this.fireGreeting(g.hour, g.minute), Math.max(0, delay));
           return;
         }
+        continue; // 已发 / 重试放弃 → 下一时段
       }
+
+      // ② 未来候选（升序第一个 delay > 0）→ 排到点
+      if (delay > 0) {
+        this.greetingTimer = setTimeout(() => this.fireGreeting(g.hour, g.minute), delay);
+        logger.debug(`[Proactive] next greeting scheduled: ${g.hour}:${String(g.minute).padStart(2, '0')} (+${Math.round(delay / 1000)}s)`);
+        return;
+      }
+      // ③ 已过时段（不在窗口期）→ 下一时段
     }
 
-    // 今天未来最近的问候时刻
-    let next: { hour: number; minute: number } | null = null;
-    let nextTs = 0;
-    for (const g of DAILY_GREETINGS) {
-      const t = new Date(now);
-      t.setHours(g.hour, g.minute, 0, 0);
-      if (t.getTime() > now.getTime() + 5_000) { // 5s 余量防边界抖动
-        if (!next || t.getTime() < nextTs) { next = g; nextTs = t.getTime(); }
-      }
-    }
-    if (!next) next = DAILY_GREETINGS[0]; // 今天全过 → 明天最早时段
-
-    const target = new Date(now);
-    if (next.hour <= now.getHours() || (next.hour === now.getHours() && next.minute <= now.getMinutes())) {
-      target.setDate(target.getDate() + 1);
-    }
-    target.setHours(next.hour, next.minute, 0, 0);
-    const delay = target.getTime() - now.getTime();
-    this.greetingTimer = setTimeout(() => {
-      this.fireGreeting(next!.hour, next!.minute);
-    }, delay);
-    logger.debug(`[Proactive] next greeting scheduled: ${next.hour}:${String(next.minute).padStart(2, '0')} (+${Math.round(delay / 1000)}s)`);
+    // 今天全过 → 明天最早时段
+    const tomorrow = new Date(now);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(DAILY_GREETINGS[0].hour, DAILY_GREETINGS[0].minute, 0, 0);
+    this.greetingTimer = setTimeout(
+      () => this.fireGreeting(DAILY_GREETINGS[0].hour, DAILY_GREETINGS[0].minute),
+      tomorrow.getTime() - now.getTime(),
+    );
+    logger.debug(`[Proactive] next greeting scheduled: tomorrow ${DAILY_GREETINGS[0].hour}:${String(DAILY_GREETINGS[0].minute).padStart(2, '0')}`);
   }
 
-  /** 到点发送问候（去重 → 上下文注入 → personalize → sendProactive）。发送完成后排下一次。 */
+  /** 到点发送问候（窗口守卫 → 去重/防并发 → 上下文注入 → personalize → sendProactive）。
+   *  ★ CR 修复：stopped 检查（stop 后不发送不 re-arm）、窗口守卫（sleep 跨天跳过）、
+   *    in-flight 防双发、异常路径走统一重试预算（不再无限热循环）。 */
   private async fireGreeting(hour: number, minute: number): Promise<void> {
+    if (this.stopped) return;
+    const now = new Date();
+    // ★ 窗口守卫：只查 hour——setTimeout 不提前触发保证到点，错过窗口必伴随小时变化
+    //   （sleep/时钟后移）；minute 检查会在 12:30:00.0 边界误伤。跨窗口 → 跳过本次重排
+    if (now.getHours() !== hour) {
+      logger.info(`[Proactive] greeting ${hour}:${minute} skipped (window passed, now ${now.getHours()}:${now.getMinutes()})`);
+      this.scheduleNextGreeting();
+      return;
+    }
+    const g = DAILY_GREETINGS.find(x => x.hour === hour && x.minute === minute);
+    if (!g) return;
+    const key = this.greetingKey(now, hour);
+    // ★ 去重 + in-flight 防并发双发（sendProactive 挂起 >10min 时重试 timer 再入）
+    if (this.sentGreetings.has(key) || this.greetingInFlight.has(key)) return;
+    this.greetingInFlight.add(key);
     try {
-      const g = DAILY_GREETINGS.find(x => x.hour === hour && x.minute === minute);
-      if (!g) return;
-      const now = new Date();
-      const key = this.greetingKey(now, hour);
-      if (!this.sentGreetings.has(key)) {
-        const text = await this.personalize(
-          g.text,
-          `现在是${hour < 12 ? '早上' : hour < 18 ? '中午' : '晚上'}，给用户发一条${hour < 12 ? '早安' : hour < 18 ? '午安' : '晚安'}问候${this.contextSnippet()}`,
-        );
-        const ok = await this.qqOff.sendProactive(this.opts.ownerOpenid, text);
-        if (ok) {
-          this.sentGreetings.add(key);
-          this.greetingRetries.delete(key);
-          this.scheduleSave();
-          logger.info(`[Proactive] greeting ${hour}:${minute}: sent`);
-        } else {
-          // 失败重试：最多重试 2 次（初始 + 2 重试 = 3 次尝试）、间隔 10min
-          // （防 API 抖动丢问候；计数仅内存，达上限保留计数——scheduleNextGreeting 补发会跳过，防失败→补发→失败循环）
-          const retries = (this.greetingRetries.get(key) ?? 0) + 1;
-          this.greetingRetries.set(key, retries);
-          if (retries <= 2) {
-            logger.info(`[Proactive] greeting ${hour}:${minute}: failed (retry ${retries}/2)`);
-            this.greetingTimer = setTimeout(() => this.fireGreeting(hour, minute), 10 * 60_000);
-            return; // 重试路径：排下一次由重试 timer 负责
-          }
-          logger.info(`[Proactive] greeting ${hour}:${minute}: gave up after ${retries} retries`);
-        }
+      const text = await this.personalize(
+        g.text,
+        `现在是${hour < 12 ? '早上' : hour < 18 ? '中午' : '晚上'}，给用户发一条${hour < 12 ? '早安' : hour < 18 ? '午安' : '晚安'}问候${this.contextSnippet()}`,
+      );
+      const ok = await this.qqOff.sendProactive(this.opts.ownerOpenid, text);
+      if (ok) {
+        this.sentGreetings.add(key);
+        this.greetingRetries.delete(key);
+        this.scheduleSave();
+        logger.info(`[Proactive] greeting ${hour}:${minute}: sent`);
+      } else {
+        this.scheduleRetry(hour, minute, key); // false 路径：重试预算
+        return;
       }
     } catch (err: any) {
       logger.warn(`[Proactive] greeting ${hour}:${minute} error: ${err.message}`);
+      this.scheduleRetry(hour, minute, key); // ★ CR 修复：异常路径同样走重试预算（不再无限热循环）
+      return;
+    } finally {
+      this.greetingInFlight.delete(key);
     }
-    this.scheduleNextGreeting(); // 成功 / 重试放弃 / 已去重 / 异常 → 排下一次
+    this.scheduleNextGreeting(); // 成功 / 已去重 → 排下一次
+  }
+
+  /** 失败重试预算：最多重试 2 次（初始 + 2 重试 = 3 次尝试）、间隔 10min。
+   *  ★ CR 修复：达上限保留计数（≥3）——scheduleNextGreeting 补发跳过，防"失败→补发→失败"循环；
+   *    次日新 key 自然重置。 */
+  private scheduleRetry(hour: number, minute: number, key: string): void {
+    if (this.stopped) return;
+    const retries = (this.greetingRetries.get(key) ?? 0) + 1;
+    this.greetingRetries.set(key, retries);
+    if (retries <= 2) {
+      logger.info(`[Proactive] greeting ${hour}:${minute}: failed (retry ${retries}/2)`);
+      this.greetingTimer = setTimeout(() => this.fireGreeting(hour, minute), 10 * 60_000);
+      return;
+    }
+    logger.info(`[Proactive] greeting ${hour}:${minute}: gave up after ${retries} retries`);
+    this.scheduleNextGreeting(); // 放弃 → 排下一次
   }
 
   /** ★ 问候上下文素材（8-08 优化）：用户近况 + 今天生活事件 + 亲密度。
