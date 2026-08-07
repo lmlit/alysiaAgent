@@ -301,22 +301,45 @@ export class LifeService {
 
   /** 互动数据推导 0-100：频率 + 时长 + 主动占比。
    *  数据来自 getRecentMessages（近 7 天最多 500 条，附 createdAt）。
-   *  ★ spec §11 衰减：近 3 天无互动每天 -2（作用于频率分），下限 10。 */
+   *  ★ spec §11 衰减 + 审查修复：全部接 persona.memory_config 旋钮（不再硬编码）。
+   *    旋钮语义见 core memory/types.ts MemoryConfig：
+   *    - decay_rate(0=不忘,1=秒忘) → 每日衰减幅度 = decay_rate*6（默认 0.3→1.8/天，原硬编码 2）
+   *    - importance_threshold(0=什么都记,1=只记大事) → 衰减阈值 = 2+(1-thr)*10 天
+   *      （只记大事→2 天就开始忘，什么都记→12 天；默认 0.4→8 天，原硬编码 3）
+   *    - recency_weight(0=念旧,1=只认最近) → 近 3 天消息加权 (1+w)，更早 ×(1-w*0.5)
+   *    - confirmation_bias(0=随风倒,1=固执) → 亲密度变化平滑：变化幅度 ×(1-c*0.7)
+   *    - retention_bias 不在此用（正负偏向属记忆筛选，不是亲密度） */
   updateIntimacy(): void {
     try {
       const since7d = new Date(Date.now() - 7 * 86_400_000);
       const msgs = this.memoryManager.getRecentMessages(this.sessionId(), 500, since7d);
 
-      // 频率：近 7 天活跃度（消息数近似，0 条 → 0，40 条 → 35 封顶）
-      let freqScore = Math.min(35, msgs.length / 4 * 5);
+      // ★ 旋钮读取（审查修复：memory_config 之前只有存/读/快照，从未参与决策）
+      const cfg = this.memoryManager.getPersonaSnapshot().memoryConfig ?? {};
+      const decayPerDay = (cfg.decay_rate ?? 0.3) * 6;
+      const decayThreshold = 2 + Math.round((1 - (cfg.importance_threshold ?? 0.4)) * 10);
+      const recencyW = cfg.recency_weight ?? 0.3;
+      const confirmW = cfg.confirmation_bias ?? 0.3;
 
-      // ★ 无互动衰减（spec §11）：取最后一条 user 消息时间；无 user 消息按窗口上限 7 天计
+      // ★ recency_weight 近期加权：近 3 天消息按 (1+w)，更早按 (1-w*0.5)（下限 0.1 防负）
+      const recent3dCutoff = Date.now() - 3 * 86_400_000;
+      let recentCount = 0, olderCount = 0;
+      for (const m of msgs) {
+        const t = m.createdAt ? new Date(m.createdAt).getTime() : 0;
+        if (t >= recent3dCutoff) recentCount++; else olderCount++;
+      }
+      const weightedCount = recentCount * (1 + recencyW) + olderCount * Math.max(0.1, 1 - recencyW * 0.5);
+
+      // 频率：近 7 天活跃度（加权消息数近似，0 条 → 0，40 条 → 35 封顶）
+      let freqScore = Math.min(35, weightedCount / 4 * 5);
+
+      // ★ 无互动衰减（旋钮驱动阈值与幅度）：取最后一条 user 消息时间；无 user 消息按窗口上限 7 天计
       const lastUserMsg = [...msgs].reverse().find((m: any) => m.role === 'user');
       const lastUserAt = lastUserMsg?.createdAt ? new Date(lastUserMsg.createdAt).getTime() : 0;
       const idleDays = lastUserAt ? Math.floor((Date.now() - lastUserAt) / 86_400_000) : 7;
-      if (idleDays >= 3) {
-        freqScore = Math.max(0, freqScore - 2 * idleDays);
-        logger.debug(`[Life] intimacy decay: ${idleDays}d idle, freqScore ${Math.min(35, msgs.length / 4 * 5)} → ${freqScore}`);
+      if (idleDays >= decayThreshold) {
+        freqScore = Math.max(0, freqScore - decayPerDay * (idleDays - decayThreshold + 1));
+        logger.debug(`[Life] intimacy decay: ${idleDays}d idle (threshold ${decayThreshold}d, ${decayPerDay.toFixed(1)}/d)`);
       }
 
       // 时长：>20 条视为有长会话（封顶 21；旧实现 (n>20?10:n/2)*2 最大只到 20，达不到上限）
@@ -327,9 +350,12 @@ export class LifeService {
       const activeScore = Math.min(14, userFirst * 3);
 
       const base = 30;
-      const intimacy = Math.max(10, Math.min(100, base + freqScore + longScore + activeScore));
+      const raw = Math.max(10, Math.min(100, base + freqScore + longScore + activeScore));
+      // ★ confirmation_bias 平滑：固执 → 贴近旧值；随风倒 → 全量跟随（防亲密度跳变）
+      const prev = this.memoryManager.getLifeSnapshot()?.intimacy ?? raw;
+      const intimacy = Math.max(10, Math.min(100, prev + (raw - prev) * (1 - confirmW * 0.7)));
       this.memoryManager.updateLifeState({ intimacy });
-      logger.debug(`[Life] intimacy = ${intimacy}`);
+      logger.debug(`[Life] intimacy ${prev} → ${intimacy} (raw ${raw}; knobs: decay ${decayPerDay.toFixed(1)}/d, thr ${decayThreshold}d, recency ${recencyW}, confirm ${confirmW})`);
     } catch (err: any) {
       logger.warn(`[Life] intimacy update failed: ${err.message}`);
     }
