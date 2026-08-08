@@ -61,6 +61,9 @@ cp config.example.yml packages/server/config.yml
 - **`bot.ownerId`**：这是"你"的身份标识——QQ 官方场景下填**用户的 openid**（不是 QQ 号！），
   用于主动消息（问候/生活事件/提醒推送）定位你。openid 在 QQ 官方回调事件里
   （`user_openid` 字段），或者先启动一次，看日志里消息事件携带的 openid。
+  ⚠️ **openid 与 AppID 绑定**：换了 QQ 应用后必须更新为对应维度下的 openid，
+  否则主动消息报 `500 code 11255 invalid request`。推荐写法 `ownerId: "${QQ_OWNER_ID}"`，
+  在 `.env` 里配置（多环境不漂移）。
 - 如果只用 QQ 官方，保留 `qq_official` 段；用 OneBot（NapCat/LLOneBot）则填 `qq` 段
   并指向你的 OneBot WebSocket 端口。
 

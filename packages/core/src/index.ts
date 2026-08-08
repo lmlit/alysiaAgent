@@ -262,8 +262,9 @@ export class AlysiaCore {
     this.toolRegistry.register(createWebSearchTool());
     this.toolRegistry.register(createWeatherTool());
     this.toolRegistry.register(createWorldbookTool(db));
-    this.toolRegistry.register(createReminderTool(async (text: string) => {
+    this.toolRegistry.register(createReminderTool(async (text: string): Promise<boolean> => {
       logger.info(`Reminder triggered: ${text}`);
+      return true; // 仅日志路径视为已处理（无推送通道）
     }));
     this.toolRegistry.register(createListRemindersTool());
     this.toolRegistry.register(createCancelReminderTool());

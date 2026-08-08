@@ -1,5 +1,5 @@
 ---
-status: frozen
+status: active
 source: docs/superpowers/specs/2026-08-02-server-hardening.md
 migrated: 2026-08-07
 ---
@@ -74,3 +74,20 @@ migrated: 2026-08-07
 - `npx vitest run`（core 199 + server 新增）
 - 重启服务 → 确认 `logs/alysia-2026-08-02.log` 生成
 - 连续两次启动 → 去重状态不重置（手动查 proactive-state.json）
+
+## 5. 运行时可靠性（2026-08-08，change: server-reliability-fixes / owner-id-env-injection）
+
+- **.env 加载**（bootstrap）：手写解析器 → dotenv（支持引号/转义；默认不覆盖已存在
+  变量——容器 compose environment 优先）。路径 `{cwd}/../../.env`（仓库根），文件
+  不存在静默跳过（Docker 场景走环境变量）
+- **cron 防重叠**（bootstrap）：6h 定时记忆压缩加 in-flight 锁——cron() 含 LLM 深度
+  画像重写，单次执行超 6h 时跳过本次触发，防并发重入
+- **ownerId 凭据化**（8-08 线上故障 11255 修复）：openid 与 QQ AppID **绑定**——换 bot
+  后旧 openid 失效，主动消息报 `500 code 11255 invalid request`。config.yml
+  `ownerId: "${QQ_OWNER_ID}"` 由 .env 注入（与 appid/secret 同机制，部署不漂移）；
+  **compose environment 必须透传 QQ_OWNER_ID**——缺失时插值空串 →
+  ProactiveService/LifeService 静默不启动（本次排查实证）。换 bot 三步：改 .env 的
+  QQ_APP_ID/QQ_APP_SECRET/QQ_OWNER_ID → 重建容器 → 验证问候
+- **healthcheck IPv4**（8-08）：compose healthcheck 必须用 `127.0.0.1` 而非
+  `localhost`——alpine busybox 将 localhost 解析为 IPv6 `::1`，服务只监听 IPv4
+  `0.0.0.0` → 恒 refused → 容器恒 unhealthy（实测 FailingStreak 1238）

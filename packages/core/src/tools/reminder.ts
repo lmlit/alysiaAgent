@@ -1,11 +1,57 @@
 import type { ToolDefinition } from './registry.js';
+import { logger } from '../utils/logger.js';
 
-// In-memory reminder store (重启丢失，MVP 够用)
-const reminders: Array<{ id: string; text: string; triggerAt: Date; timer: ReturnType<typeof setTimeout> | null; sessionId: string }> = [];
+// In-memory reminder store (重启丢失，MVP 够用；待办：SQLite 持久化)
+// ★ 8-08 修复：notifyFn 返回 boolean（true=已处理）；失败（throw 或返回 false）5min 后重试一次，
+//   再失败丢弃并 warn——推送失败不再静默丢提醒。
+interface Reminder {
+  id: string;
+  text: string;
+  triggerAt: Date;
+  timer: ReturnType<typeof setTimeout> | null;
+  sessionId: string;
+  retryCount: number;
+}
+const reminders: Reminder[] = [];
 let nextId = 1;
 
-/** notifyFn 第二参数：设置提醒时的会话 ID（用于主动推送给设置者） */
-export function createReminderTool(notifyFn: (text: string, sessionId?: string) => Promise<void>): ToolDefinition {
+/** Node setTimeout delay 上限：超过 2^31-1ms（≈24.8 天）会立即触发 */
+const MAX_TIMEOUT_MS = 2_147_483_647;
+/** 推送失败重试延迟 */
+const RETRY_DELAY_MS = 5 * 60_000;
+/** 推送失败重试上限（初始触发 + 1 次重试） */
+const MAX_RETRIES = 1;
+
+/** 触发一次提醒：从数组移除 → notifyFn → 失败按预算重试。
+ *  可重入（定时器回调与重试共用）。 */
+async function fire(notifyFn: (text: string, sessionId?: string) => Promise<boolean>, id: string): Promise<void> {
+  const idx = reminders.findIndex(r => r.id === id);
+  if (idx < 0) return; // 已被取消/已处理
+  const [removed] = reminders.splice(idx, 1);
+
+  let ok = false;
+  try {
+    ok = await notifyFn(removed.text, removed.sessionId);
+  } catch (err: any) {
+    logger.warn(`[Reminder] ${removed.id} notify threw: ${err?.message ?? err}`);
+  }
+
+  if (!ok && removed.retryCount < MAX_RETRIES) {
+    removed.retryCount += 1;
+    removed.triggerAt = new Date(Date.now() + RETRY_DELAY_MS);
+    removed.timer = setTimeout(() => { void fire(notifyFn, removed.id); }, RETRY_DELAY_MS);
+    reminders.push(removed);
+    logger.info(`[Reminder] ${removed.id} notify failed, retry ${removed.retryCount}/${MAX_RETRIES} in 5min`);
+    return;
+  }
+  if (!ok) {
+    logger.warn(`[Reminder] ${removed.id} dropped after ${removed.retryCount + 1} attempts`);
+  }
+}
+
+/** notifyFn 第二参数：设置提醒时的会话 ID（用于主动推送给设置者）。
+ *  返回 true = 已处理（含"非私聊只打日志"路径），false = 推送失败需重试。 */
+export function createReminderTool(notifyFn: (text: string, sessionId?: string) => Promise<boolean>): ToolDefinition {
   return {
     name: 'set_reminder',
     description: '设置定时提醒。time 格式如 "30min"、"1h"、"2026-07-21 14:00"',
@@ -42,14 +88,14 @@ export function createReminderTool(notifyFn: (text: string, sessionId?: string) 
       if (delay <= 0) {
         return 'Error: Reminder time must be in the future.';
       }
+      // ★ 8-08 修复：Node setTimeout 超 2^31-1ms 会立即触发——显式拒绝长提醒
+      if (delay > MAX_TIMEOUT_MS) {
+        return 'Error: Reminder too far in the future (max ~24 days).';
+      }
 
-      const timer = setTimeout(async () => {
-        await notifyFn(text, sessionId);
-        const idx = reminders.findIndex(r => r.id === id);
-        if (idx >= 0) reminders.splice(idx, 1);
-      }, delay);
+      const timer = setTimeout(() => { void fire(notifyFn, id); }, delay);
 
-      reminders.push({ id, text, triggerAt, timer, sessionId: sessionId || '' });
+      reminders.push({ id, text, triggerAt, timer, sessionId: sessionId || '', retryCount: 0 });
       return `Reminder set: "${text}" at ${triggerAt.toLocaleString()}.`;
     },
   };

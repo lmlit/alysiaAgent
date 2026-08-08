@@ -12,6 +12,8 @@ services:
       #   注意：QQ_APP_ID 值以 .env 为准，部署时不要改动 bot id
       - QQ_APP_ID=${QQ_APP_ID}
       - QQ_APP_SECRET=${QQ_APP_SECRET}
+      # ★ 8-08：ownerId 透传——openid 与 appid 绑定，值以服务器 .env 的 QQ_OWNER_ID 为准
+      - QQ_OWNER_ID=${QQ_OWNER_ID}
       - OPENAI_BASE_URL=https://api.deepseek.com/v1
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - CHAT_MODEL=deepseek-v4-flash
@@ -22,7 +24,9 @@ services:
       - ./data:/app/data        # 数据库、日志、LanceDB 持久化
       - ./config.yml:/app/config.yml:ro
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:6185/api/health || exit 1"]
+      # ★ 8-08 修复：用 127.0.0.1 而非 localhost——alpine busybox 把 localhost 解析成 ::1 (IPv6)，
+      #   服务只监听 0.0.0.0 (IPv4) → 永远 refused → 容器恒 unhealthy（实测 FailingStreak 1238）
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:6185/api/health || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3

@@ -37,7 +37,7 @@ ProactiveService (server/src/proactive.ts)
 │   └── contextSnippet() — 问候上下文素材（用户近况 + 今天生活事件 + 亲密度）
 ├── tick() — 每 30 分钟跑一次（启动时立即跑一次）
 │   ├── 1. 节日祝福（当天一次：公历 + 节气 + 农历映射）
-│   └── 2. 主动关怀（owner 私聊，≥3 条消息、≥24h 未聊、当天未关怀）
+│   └── 2. 主动关怀（owner 私聊，≥3 条消息、≥24h 未聊、当天未关怀；文案走 personalize）
 └── personalize(fallback, context) — LLM 个性化文案，失败回落写死文案
 ```
 
@@ -54,7 +54,8 @@ ProactiveService (server/src/proactive.ts)
 问候的 LLM 上下文（原只有时段描述）注入三样素材，全部静默容错（素材缺失不阻塞发送）：
 
 - 用户近况：`getUserActivitySummary()`（如"昨天聊到在玩老头环"）
-- 今天生活事件：`listLifeEvents()` 当天最新 3 条（AI 自己今天在做什么）
+- 今天生活事件：`listLifeEvents(1)` 过滤当天最新 3 条（AI 自己今天在做什么）
+  （8-08 修正：入参是天数——取最近 1 天即完整覆盖今天；旧 2 天窗口语义含糊）
 - 亲密度：`getLifeSnapshot().intimacy/100`
 
 prompt 注明"用于让问候更自然贴切，不要生硬引用"——防贴标签式文案。
@@ -80,6 +81,8 @@ prompt 注明"用于让问候更自然贴切，不要生硬引用"——防贴�
 - systemPrompt 固定：以昔涟身份生成 30-60 字问候/祝福，只输出内容
 - sessionId 固定 `'proactive'`（独立会话）
 - 失败/空 → 回退写死文案；发送日志只打 sent/failed 不打内容
+- **主动关怀同走 personalize**（8-08，原写死池子随机取、与问候/祝福不一致）：
+  prompt 强调"轻量、不追问、不制造回复压力"；失败回落 CARE_MESSAGES 池
 - 日志统一 `[Proactive]` 前缀：`[Proactive] greeting 9:0: sent` / `[Proactive] festival "立秋": sent` /
   `[Proactive] care → xxxx: sent`（2026-08-08 统一，原发送日志无前缀难 grep）
 

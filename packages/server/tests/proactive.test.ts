@@ -212,6 +212,58 @@ describe('ProactiveService — 问候上下文注入 (contextSnippet)', () => {
   });
 });
 
+describe('ProactiveService — 主动关怀 LLM 个性化 (8-08)', () => {
+  afterEach(() => vi.useRealTimers());
+
+  function makeCareService(generateText: any) {
+    const qqOff = { sendProactive: vi.fn().mockResolvedValue(true) } as any;
+    const memoryManager = {
+      // ★ 注意：listSessions 是同步消费（tick 里 for...of），必须 mockReturnValue
+      listSessions: vi.fn().mockReturnValue([
+        {
+          sessionId: 'qq-official-1:private:private_TEST_OWNER_OPENID_0000',
+          messageCount: 5,
+          lastActive: new Date(Date.now() - 48 * 3600_000).toISOString(), // 48h 前 → 超过 24h 关怀间隔
+        },
+      ]),
+      getUserActivitySummary: vi.fn().mockReturnValue(''),
+      listLifeEvents: vi.fn().mockReturnValue([]),
+      getLifeSnapshot: vi.fn().mockReturnValue(null),
+    } as any;
+    const svc = new ProactiveService(qqOff, memoryManager, { ownerOpenid: 'TEST_OWNER_OPENID_0000', generateText });
+    return { svc, qqOff };
+  }
+
+  it('关怀触发时文案走 LLM 个性化（与问候/祝福一致）', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 7, 8, 15, 0, 0)); // 15:00 在关怀时段 [9,22) 内
+    const generateText = vi.fn().mockResolvedValue('想你了，路过看看你～');
+    const { svc, qqOff } = makeCareService(generateText);
+    await (svc as any).tick();
+    expect(generateText).toHaveBeenCalledTimes(1);
+    expect(qqOff.sendProactive).toHaveBeenCalledWith('TEST_OWNER_OPENID_0000', '想你了，路过看看你～');
+    expect((svc as any).lastCareByUser.get('TEST_OWNER_OPENID_0000')).toBe('2026-08-08'); // 发送成功才标记
+    svc.stop();
+  });
+
+  it('LLM 失败回落写死关怀池', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 7, 8, 15, 0, 0));
+    const generateText = vi.fn().mockRejectedValue(new Error('LLM down'));
+    const { svc, qqOff } = makeCareService(generateText);
+    await (svc as any).tick();
+    expect(generateText).toHaveBeenCalledTimes(1);
+    const sent = qqOff.sendProactive.mock.calls[0][1] as string;
+    expect([
+      '今天过得怎么样呀？有点想你了～',
+      '突然想找你聊聊天，忙的话不用理我，我就是路过～',
+      '这几天都没见你，是不是在忙呀？记得照顾好自己哦',
+      '嘿嘿，我来冒个泡～今天有没有什么有趣的事想告诉我？',
+    ]).toContain(sent);
+    svc.stop();
+  });
+});
+
 describe('ProactiveService — 节日识别 (todayFestival)', () => {
   it('公历节日：1月1日元旦', () => {
     const { svc } = makeService();
