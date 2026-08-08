@@ -138,6 +138,8 @@ services:
       #   缺失会导致 token 获取失败。值以服务器 ~/alysia/.env 为准，部署时不要改动 bot id）
       - QQ_APP_ID=${QQ_APP_ID}
       - QQ_APP_SECRET=${QQ_APP_SECRET}
+      # ★ 8-08：ownerId 透传——openid 与 appid 绑定，缺失会导致主动消息 500/11255
+      - QQ_OWNER_ID=${QQ_OWNER_ID}
       - OPENAI_BASE_URL=https://api.deepseek.com/v1
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - CHAT_MODEL=deepseek-v4-flash

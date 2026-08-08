@@ -1,6 +1,9 @@
 bot:
   name: "昔涟"
-  ownerId: "YOUR_USER_ID"
+  # ★ openid 与 appid 绑定：用 ${QQ_OWNER_ID} 由 .env 注入（推荐，部署不漂移），
+  #   或直接填值。QQ 官方场景填用户 openid（消息事件 user_openid 字段，非 QQ 号）；
+  #   OneBot 场景填 QQ 号。换 bot 后必须更新为对应维度下的 openid。
+  ownerId: "${QQ_OWNER_ID}"
 
 llm:
   baseUrl: "https://api.deepseek.com/v1"

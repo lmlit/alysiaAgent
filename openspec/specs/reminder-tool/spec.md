@@ -17,26 +17,32 @@ migrated: 2026-08-07
 
 | 工具 | 参数 | 行为 |
 |------|------|------|
-| `set_reminder` | `time`: `"30min"` / `"1h"` / `"2026-07-21 14:00"`；`text`: 内容 | 解析时间 → setTimeout → 到点调 notifyFn；返回 `Reminder set: "<text>" at <time>.` |
+| `set_reminder` | `time`: `"30min"` / `"1h"` / `"2026-07-21 14:00"`；`text`: 内容 | 解析时间 → setTimeout → 到点调 notifyFn；返回 `Reminder set: "<text>" at <time>.`；delay > 24.8 天拒绝 |
 | `list_reminders` | 无 | 列出活跃提醒：`[id] 将在 <时间> 触发（内容仅到时可见）`——**不返回内容**（防 LLM 提前泄露） |
 | `cancel_reminder` | `id` | 取消提醒（clearTimeout + 移除） |
 
 **存储**：内存数组（**重启丢失**——MVP 够用，待办：SQLite 持久化）。
 
+**推送失败重试**（8-08）：`notifyFn` 返回 `boolean`（true=已处理）；失败（throw 或返回 false）
+→ 5min 后重试一次 → 再失败丢弃并 warn。非私聊/仅日志路径返回 true（视为已处理）。
+
 **错误处理**：
 - 非法时间格式 → `Error: Invalid time format. Use "30min", "2h", or "2026-07-21 14:00".`
 - 时间已过 → `Error: Reminder time must be in the future.`
 - 取消不存在 id → `Error: Reminder with ID <id> not found.`
+- 超长提醒（delay > 2^31-1ms ≈ 24.8 天——Node setTimeout 超限会立即触发）
+  → `Error: Reminder too far in the future (max ~24 days).`（8-08）
 
 ## 3. 推送链路（bootstrap 注册 notifyFn）
 
 ```
 set_reminder 设置时记录 sessionId
-  → 到点 notifyFn(text, sessionId)（bootstrap 注册）
+  → 到点 notifyFn(text, sessionId)（bootstrap 注册）→ 返回 boolean 给重试判定
      → sessionId 解析 openid（:private:private_(.+)$）
         → LLM 润色：以昔涟语气生成自然提醒文案（30-60字，失败回落 `⏰ ${text}`）
         → qqOff.sendProactive(openid, message)
         → 日志: Reminder push → <openid前8字>...: sent/failed
+        → 失败 → 5min 重试一次（reminder 层调度）
 ```
 
 非私聊会话提醒只打日志不推送。

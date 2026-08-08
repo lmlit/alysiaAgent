@@ -334,7 +334,9 @@ export class ProactiveService {
     } catch { /* ignore */ }
     try {
       const todayKey = localDateKey();
-      const today = this.memoryManager.listLifeEvents(2)
+      // ★ 8-08 修正：listLifeEvents 入参是天数——取最近 1 天即可完整覆盖今天（旧版 2 天
+      //   窗口多查一天、语义含糊，意图只是"我今天的日常"）
+      const today = this.memoryManager.listLifeEvents(1)
         .filter((e: any) => localDateKeyFromISO(e.createdAt) === todayKey)
         .slice(-3);
       if (today.length > 0) parts.push(`我今天的日常：${today.map((e: any) => e.content).join('；')}`);
@@ -388,7 +390,12 @@ export class ProactiveService {
       const hoursSince = (Date.now() - lastActiveDate.getTime()) / 3_600_000;
       if (hoursSince < (this.opts.careIntervalHours ?? 24)) continue;
 
-      const msg = CARE_MESSAGES[Math.floor(Math.random() * CARE_MESSAGES.length)];
+      // ★ 8-08 优化：关怀文案走 LLM 个性化（与问候/祝福一致），失败回落写死池子
+      const raw = CARE_MESSAGES[Math.floor(Math.random() * CARE_MESSAGES.length)];
+      const msg = await this.personalize(
+        raw,
+        `用户已经约 ${Math.round(hoursSince)} 小时没和你联系了，发一条轻量、低压力的关怀消息（像路过随口问候，不要追问近况、不要制造必须回复的压力）${this.contextSnippet()}`,
+      );
       const ok = await this.qqOff.sendProactive(openid, msg);
       // ★ 先发后标记
       if (ok) {

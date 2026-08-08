@@ -1,21 +1,14 @@
-// Load .env from project root
-import { readFileSync } from 'fs';
+// ★ 8-08 优化：dotenv 替换手写解析（支持引号/转义；默认不覆盖已存在变量——
+//   容器里 compose environment 优先，与旧 `if (!process.env[key])` 语义一致）
+import dotenv from 'dotenv';
 import { resolve } from 'path';
 const envPath = resolve(process.cwd(), '..', '..', '.env');
-try {
-  const envContent = readFileSync(envPath, 'utf-8');
-  for (const line of envContent.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-    const eqIdx = trimmed.indexOf('=');
-    if (eqIdx > 0) {
-      const key = trimmed.slice(0, eqIdx).trim();
-      const val = trimmed.slice(eqIdx + 1).trim();
-      if (!process.env[key]) process.env[key] = val;
-    }
-  }
+const envResult = dotenv.config({ path: envPath, quiet: true });
+if (envResult.error) {
+  logger.debug('.env file not found, using existing env vars');
+} else {
   logger.info(`.env loaded from ${envPath}`);
-} catch { logger.debug('.env file not found, using existing env vars'); }
+}
 
 import { AlysiaCore, logger } from '@alysia/core';
 import { createReminderTool } from '@alysia/core/tools';
@@ -143,8 +136,9 @@ async function main() {
   // ★ 提醒主动推送：到点时通过 QQ 官方主动消息发给设置者
   //   过 LLM 用昔涟语气生成自然提醒文案，失败回落原始文本
   if (qqOff) {
-    core.toolRegistry.register(createReminderTool(async (text, sessionId) => {
-      if (!sessionId) { logger.info(`Reminder (no session): ${text}`); return; }
+    // ★ 8-08 优化：notifyFn 返回 boolean——sendProactive 结果回传 reminder 判定失败重试
+    core.toolRegistry.register(createReminderTool(async (text, sessionId): Promise<boolean> => {
+      if (!sessionId) { logger.info(`Reminder (no session): ${text}`); return true; }
       const m = sessionId.match(/:private:private_(.+)$/);
       if (m) {
         let message = `⏰ ${text}`;
@@ -160,17 +154,24 @@ async function main() {
         } catch { /* LLM 失败用原始文案 */ }
         const ok = await qqOff.sendProactive(m[1], message);
         logger.info(`Reminder push → ${m[1].slice(0, 8)}...: ${ok ? 'sent' : 'failed'}`);
+        return ok;
       } else {
         logger.info(`Reminder (non-private): ${text}`);
+        return true;
       }
     }));
   }
 
   // 定时记忆压缩：每 6 小时跑一次 cron
+  // ★ 8-08 优化：in-flight 锁——cron() 含 LLM 深度画像重写，单次执行超 6h 时防重叠重入
+  let cronRunning = false;
   const cronInterval = setInterval(() => {
     // Guard against running on a stopped core
-    if (!core.eventBus) return;
-    core.memoryManager.cron().catch(err => logger.error('Cron:', err));
+    if (!core.eventBus || cronRunning) return;
+    cronRunning = true;
+    core.memoryManager.cron()
+      .catch(err => logger.error('Cron:', err))
+      .finally(() => { cronRunning = false; });
   }, 6 * 3600_000);
 
   // Graceful shutdown — clear timer and stop subsystems
