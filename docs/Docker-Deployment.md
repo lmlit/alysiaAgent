@@ -54,8 +54,8 @@ cd packages/server
 # 打包镜像（~124MB）
 docker save server-alysia:latest -o alysia-image.tar
 
-# 打包配置
-tar czf alysia-deploy.tar.gz compose.yml config.yml ../../.env
+# 打包配置（★ 不含 .env！bot 凭据以服务器 ~/alysia/.env 为准，本地 .env 覆盖会导致 bot id 漂移）
+tar czf alysia-deploy.tar.gz compose.yml config.yml
 
 # 上传
 scp alysia-image.tar alysia-deploy.tar.gz hexi@121.41.111.120:~/
@@ -96,6 +96,7 @@ git config --global --unset https.proxy
 
 ```bash
 cd alysiaAgent/packages/server
+# 注意：alysia-deploy.tar.gz 打包时不含 .env（见 Step 3）
 scp alysia-image.tar alysia-deploy.tar.gz hexi@121.41.111.120:~/ && \
 ssh hexi@121.41.111.120 "
 echo 'yuanshenniubi' | sudo -S docker load -i ~/alysia-image.tar && \
@@ -133,6 +134,10 @@ services:
     environment:
       - TZ=Asia/Shanghai
       - ALYSIA_CONFIG=/app/config.yml
+      # ★ 新增透传：QQ 官方 Agent 凭据（config.yml ${QQ_APP_ID}/${QQ_APP_SECRET} 插值需要；
+      #   缺失会导致 token 获取失败。值以服务器 ~/alysia/.env 为准，部署时不要改动 bot id）
+      - QQ_APP_ID=${QQ_APP_ID}
+      - QQ_APP_SECRET=${QQ_APP_SECRET}
       - OPENAI_BASE_URL=https://api.deepseek.com/v1
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - CHAT_MODEL=deepseek-v4-flash
