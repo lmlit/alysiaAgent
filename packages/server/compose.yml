@@ -1,19 +1,25 @@
 services:
   alysia:
-    build:
-      context: ../..
-      dockerfile: packages/server/Dockerfile
+    image: server-alysia:latest
     container_name: alysia-server
     restart: always
     ports:
-      - "6185:6185"
-    env_file:
-      - ../../.env
+      - '6186:6185'            # 宿主机 6186 → 容器 6185
     environment:
       - TZ=Asia/Shanghai
       - ALYSIA_CONFIG=/app/config.yml
+      # ★ 新增透传：QQ 官方 Agent 凭据（config.yml ${QQ_APP_ID}/${QQ_APP_SECRET} 插值需要）
+      #   注意：QQ_APP_ID 值以 .env 为准，部署时不要改动 bot id
+      - QQ_APP_ID=${QQ_APP_ID}
+      - QQ_APP_SECRET=${QQ_APP_SECRET}
+      - OPENAI_BASE_URL=https://api.deepseek.com/v1
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - CHAT_MODEL=deepseek-v4-flash
+      - EMBED_BASE_URL=https://open.bigmodel.cn/api/paas/v4
+      - EMBED_API_KEY=${EMBED_API_KEY}
+      - EMBED_MODEL=embedding-2
     volumes:
-      - ./data:/app/data
+      - ./data:/app/data        # 数据库、日志、LanceDB 持久化
       - ./config.yml:/app/config.yml:ro
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:6185/api/health || exit 1"]
