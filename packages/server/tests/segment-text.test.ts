@@ -43,4 +43,9 @@ describe('segmentText — 长文案分段（8-09）', () => {
     expect(segmentText('')).toEqual([]);
     expect(segmentText('。。。')).toEqual([]);
   });
+
+  it('换行符分段（LLM 输出的自然段）', () => {
+    expect(segmentText('第一段的话。\n第二段的话。')).toEqual(['第一段的话。', '第二段的话。']);
+    expect(segmentText('没有句号的第一行\n没有句号的第二行')).toHaveLength(2);
+  });
 });

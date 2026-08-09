@@ -68,11 +68,21 @@ interface QQTokenData {
 }
 
 /** ★ 8-09 长文案分段（模拟实时打字节奏）。
- *  切分规则：强停顿（。！？….\n）切句 → 贪心合段 ≤maxLen → 超长句按弱停顿（，；、）拆
- *  → 字符硬切兜底；尾部碎段（<8 字）并入上一段。
+ *  换行符 = **强制段边界**（LLM 输出的自然段，8-09 用户建议）；行内按标点切句 →
+ *  贪心合段 ≤maxLen → 超长句按弱停顿（，；、）拆 → 字符硬切兜底；尾部碎段（<8 字）并入。
  *  导出供测试。 */
 export function segmentText(text: string, maxLen = 40): string[] {
-  const sentences = text.match(/[^。！？….\n]+[。！？….\n]?/g)?.map(s => s.trim()).filter(Boolean) ?? [];
+  // ① 先按换行强制分段（\n 是自然段边界，合段时不得跨行合并）
+  const lines = text.split(/\n+/).map(l => l.trim()).filter(Boolean);
+  if (lines.length > 1) {
+    return lines.flatMap(l => (l.length <= maxLen ? [l] : segmentByPunct(l, maxLen)));
+  }
+  return segmentByPunct(lines[0] ?? text, maxLen);
+}
+
+/** 行内标点切分：强停顿（。！？…）切句 → 贪心合段 → 弱停顿拆超长句 → 字符硬切兜底 */
+function segmentByPunct(text: string, maxLen: number): string[] {
+  const sentences = text.match(/[^。！？….]+[。！？….]?/g)?.map(s => s.trim()).filter(Boolean) ?? [];
   const segments: string[] = [];
   let buf = '';
   for (let s of sentences) {
@@ -671,10 +681,10 @@ export class QQOfficialAgentAdapter implements Platform {
     const { text: cleanText, marks } = parseStickerMarks(text);
     const maxSegments = opts?.maxSegments ?? 3;
 
-    // 先发文本（长文案分段）
+    // 先发文本（长文案分段：>60字 或含换行符）
     let sentAny = false;
     if (cleanText.trim()) {
-      let segments = cleanText.trim().length > 60 ? segmentText(cleanText) : [cleanText.trim()];
+      let segments = (cleanText.trim().length > 60 || cleanText.includes('\n')) ? segmentText(cleanText) : [cleanText.trim()];
       // 段数克制：超出上限 → 尾部合并进最后一段（不丢内容）
       if (segments.length > maxSegments) {
         segments[maxSegments - 1] += segments.slice(maxSegments).join('');
@@ -743,9 +753,9 @@ export class QQOfficialAgentAdapter implements Platform {
     const isGroup = session.messageType === MessageType.GROUP;
     const id = session.sessionId.replace(/^(private_|group_)/, '');
 
-    // ★ 8-09 对话回复分段：私聊长文案（>60字）走分段（同 sendProactive 节奏）；
-    //   群聊保持单条——群聊分段会刷屏，且群聊无"实时陪伴"诉求
-    let segments = (!isGroup && text.trim().length > 60) ? segmentText(text) : [text.trim()];
+    // ★ 8-09 对话回复分段：私聊长文案（>60字 **或含换行符**——LLM 输出按 \n 分自然段）
+    //   走分段（同 sendProactive 节奏）；群聊保持单条——群聊分段会刷屏
+    let segments = (!isGroup && (text.trim().length > 60 || text.includes('\n'))) ? segmentText(text) : [text.trim()];
     if (segments.length > 3) { segments[2] += segments.slice(3).join(''); segments.length = 3; }
 
     try {
