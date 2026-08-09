@@ -566,12 +566,11 @@ export class QQOfficialAgentAdapter implements Platform {
       : `${QQ_API_HOST}/v2/users/${data.author?.user_openid || data.author?.id}/messages`;
 
     try {
-      // 1. 文本回复（msg_seq 为被动回复必需的自增序号）
+      // 1. 文本回复（★ 8-09 统一分段发送；msg_seq 为被动回复必需的自增序号，逐段递增）
       if (text) {
-        await fetch(endpoint, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `QQBot ${this.accessToken}` },
-          body: JSON.stringify({ content: text, msg_type: 0, msg_id: data.id, msg_seq: ++this.msgSeq }),
+        await this.sendSegmented(endpoint, text, {
+          segmented: chatType !== 'group', // 群聊单条（防刷屏）
+          extra: () => ({ msg_id: data.id, msg_seq: ++this.msgSeq }),
         });
       }
 
@@ -745,6 +744,45 @@ export class QQOfficialAgentAdapter implements Platform {
     }, delay);
   }
 
+  /** ★ 8-09 统一分段发送（对话回复 sendReply / 平台接口 send 共用，根治"改漏路径"）。
+   *  私聊长文案（>60字 或含换行——LLM 输出按 \n 分自然段）逐段发送，段间 500-900ms；
+   *  任一段失败（非 2xx）→ 打印状态码+响应体并中断后续段。
+   *  @param extra 每段请求额外字段（如被动回复的 msg_id/msg_seq 逐段递增）
+   *  @returns 是否至少发成一段 */
+  private async sendSegmented(endpoint: string, text: string, opts: {
+    segmented?: boolean;
+    extra?: (segIndex: number) => Record<string, unknown>;
+    maxSegments?: number;
+  } = {}): Promise<boolean> {
+    const segmented = opts.segmented ?? true;
+    const maxSegments = opts.maxSegments ?? 3;
+    let segments = (!segmented || (text.trim().length <= 60 && !text.includes('\n')))
+      ? [text.trim()]
+      : segmentText(text);
+    if (segments.length > maxSegments) {
+      segments[maxSegments - 1] += segments.slice(maxSegments).join('');
+      segments.length = maxSegments;
+    }
+    let sentAny = false;
+    for (let i = 0; i < segments.length; i++) {
+      const seg = segments[i].trim();
+      if (!seg) continue;
+      const resp = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `QQBot ${this.accessToken}` },
+        body: JSON.stringify({ content: seg, msg_type: 0, ...(opts.extra?.(i) ?? {}) }),
+      });
+      if (!resp.ok) {
+        const body = await resp.text().catch(() => '');
+        logger.warn(`[QQ Official] Send failed (${resp.status}): ${body.slice(0, 200)} — stop remaining segments`);
+        return sentAny;
+      }
+      sentAny = true;
+      if (i < segments.length - 1) await sleep(500 + Math.random() * 400);
+    }
+    return sentAny;
+  }
+
   async send(session: MessageSession, chain: MessageChain): Promise<void> {
     await this.ensureToken();
     const text = [...chain].filter(c => c.type === 'plain').map(c => (c as any).text).join('\n');
@@ -752,30 +790,11 @@ export class QQOfficialAgentAdapter implements Platform {
 
     const isGroup = session.messageType === MessageType.GROUP;
     const id = session.sessionId.replace(/^(private_|group_)/, '');
-
-    // ★ 8-09 对话回复分段：私聊长文案（>60字 **或含换行符**——LLM 输出按 \n 分自然段）
-    //   走分段（同 sendProactive 节奏）；群聊保持单条——群聊分段会刷屏
-    let segments = (!isGroup && (text.trim().length > 60 || text.includes('\n'))) ? segmentText(text) : [text.trim()];
-    if (segments.length > 3) { segments[2] += segments.slice(3).join(''); segments.length = 3; }
+    const endpoint = `${QQ_API_HOST}/v2/${isGroup ? 'groups' : 'users'}/${id}/messages`;
 
     try {
-      for (let i = 0; i < segments.length; i++) {
-        const seg = segments[i].trim();
-        if (!seg) continue;
-        const resp = await fetch(`${QQ_API_HOST}/v2/${isGroup ? 'groups' : 'users'}/${id}/messages`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `QQBot ${this.accessToken}`,
-          },
-          body: JSON.stringify({ content: seg, msg_type: 0 }),
-        });
-        if (!resp.ok) {
-          logger.warn(`[QQ Official] Send failed (${resp.status}), stop remaining segments`);
-          return; // 失败中断——不再发后续段
-        }
-        if (i < segments.length - 1) await sleep(500 + Math.random() * 400);
-      }
+      // ★ 8-09 统一分段（sendSegmented）：私聊分段，群聊单条（防刷屏）
+      await this.sendSegmented(endpoint, text, { segmented: !isGroup });
     } catch (err: any) {
       logger.error('[QQ Official] Send error:', err.message);
     }
