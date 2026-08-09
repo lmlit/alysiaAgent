@@ -47,12 +47,13 @@ export class MemoryRetrievalStage implements Stage {
       event.unifiedMsgOrigin, // ★ 8-09 会话隔离：会话摘要按类型过滤
     );
 
-    // 短期记忆：EventLog 最近消息（24 小时窗口 + 最多 20 条，覆盖"今天+昨天"，
-    // 注入带时间标记让 AI 区分天数；limit 20 防 token 膨胀）
+    // 短期记忆：EventLog 最近消息（24 小时窗口 + 最多 40 条，覆盖"今天+昨天"，
+    // 注入带时间标记让 AI 区分天数；★ 8-09 20→40：输出回写后消息条数翻倍，
+    //   40 条 ≈ 回写前 20 条的覆盖时长；被挤出的部分由 8000 tokens 阈值归档 + 定期归档承接）
     let recentContext = '';
     try {
       const recent = this.memoryManager.getRecentMessages(
-        event.unifiedMsgOrigin, 20, new Date(Date.now() - 24 * 3600 * 1000),
+        event.unifiedMsgOrigin, 40, new Date(Date.now() - 24 * 3600 * 1000),
       );
       if (recent.length > 0) {
         // ★ 8-09 角色短标签（你/昔涟）：EventLog 读取不再带 sender 前缀（openid 不入 prompt）
