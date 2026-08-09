@@ -188,7 +188,19 @@ tick() {
 
 **世界书采样**：激活角色 worldbook 条目中采样 N=5 条（priority 加权 + cooldown 过滤），作为「人设背景」。被事件引用的条目 `hit_count+1` 并记录 `wb_entry_id`。
 
-**失败回落**：LLM 失败 → 从通用模板池随机取一条（`data/life-templates.json`），`type=internal`。
+**失败回落**：LLM 失败 → 从通用模板池随机取一条（`data/life-templates.json`），`type=internal`
+（8-09 修复：原实现回落 `t.type` 可能为 chat 导致模板推送、剧情链断裂——模板强制 internal 只入库不推送）。
+
+**裸文本容错**（8-09，change: life-bare-text-event-tolerance）：LLM 偶发输出无 JSON 外壳的
+自然语言（8-09 07:16 实测：高质量剧情文本被 JSON.parse 丢弃 → fallback 模板推送）。
+JSON 解析失败但文本非空 → 直接作为事件 content，type 与 JSON 路径同规则
+（`deepNight ? internal : chat`）——不丢高质量输出。空响应/抛异常仍走模板回落。
+
+**json mode 治本**（8-09，change: life-event-json-response-format）：generateEvent 调用
+带 `responseFormat: 'json'` → 请求体注入 `response_format: {"type": "json_object"}`
+（DeepSeek json mode）——模型层面强制输出合法 JSON（根治裸文本）。约束：
+systemPrompt 必须含 "json" 字样；json mode 与 funcTool 互斥；仅非流式调用生效。
+应用层容错（fence 剥离 + 裸文本兜底）保留作双保险。
 
 ---
 

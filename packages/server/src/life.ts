@@ -221,7 +221,17 @@ export class LifeService {
     try {
       const text = ((await this.opts.generateEvent?.(context)) ?? '')
         .replace(/^```(?:json)?\s*|\s*```$/g, '').trim(); // 剥离 markdown fence（LLM 常包 ```json）
-      const parsed = JSON.parse(text);
+      if (!text) throw new Error('empty response');
+      let parsed: any;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        // ★ 8-09 裸文本容错：LLM 偶发输出无 JSON 外壳的自然语言（7-16 实测高质量剧情
+        //   文本被 JSON.parse 丢弃 → fallback 模板推送 → 剧情链断裂）。
+        //   裸文本直接作为事件内容；type 与 JSON 路径同规则（深夜强制 internal 防打扰）
+        logger.info(`[Life] bare-text event from LLM (no JSON shell): ${text.slice(0, 100)}`);
+        return { content: text, type: deepNight ? 'internal' : 'chat' };
+      }
       if (parsed.content) {
         // ★ 防幻觉（终审修复）：reference_event_id 必须命中今天事件 ID 集合，wb_entry_id 必须命中采样世界书 ID
         const refId = parsed.reference_event_id ? String(parsed.reference_event_id) : undefined;
@@ -239,8 +249,10 @@ export class LifeService {
     }
 
     // 失败回落：通用模板加权随机（无角色特色；角色特色事件由 LLM 结合世界书自创）
+    // ★ 8-09 修复：模板事件强制 internal——模板文案无剧情链，推送会造成"上下文断裂"
+    //   观感（7-16 实测用户收到"听到楼下琴声"与画云剧情链脱节）
     const t = this.pickTemplate();
-    if (t) return { content: t.activity, type: t.type, mood_delta: '平静' };
+    if (t) return { content: t.activity, type: 'internal', mood_delta: '平静' };
     return null;
   }
 

@@ -109,11 +109,14 @@ async function main() {
       chatLockMinutes: 30,
       stateFile: `${config.server.dataDir}/life-state.json`,
       // ★ LLM 事件生成：woke 模式，昔涟身份
+      // ★ 8-09：responseFormat: 'json' 强制 json_object 模式（DeepSeek 层面保证输出合法
+      //   JSON，根治 8-09 07:16 裸文本问题；life.ts 仍保留 fence 剥离 + 裸文本容错双保险）
       generateEvent: async (context: string) => {
         const resp = await core.providerManager.textChatWithFallback({
           prompt: context,
           sessionId: 'life-event',
           systemPrompt: '你是昔涟，此刻你正过着独属于自己的生活。你是被定时任务唤醒的——这不是用户发来的消息，不要问候、不要等回复。请根据提供的上下文，生成一个此刻可能发生在你身上的生活事件（1-2 句话，第一人称）。要求：贴合当前时间线；符合你的人设背景；剧情引用只可用【今天的生活】里带 [id: xxx] 的事件；可以引用世界书背景（返回其 wb 前缀 ID）；如果和用户聊得来可以生成想分享给他/她的内容。只输出 JSON: {"content": "...", "type": "chat|internal", "mood_delta": "...", "reference_event_id": "...", "wb_entry_id": "..."}',
+          responseFormat: 'json',
         });
         return resp.role === 'assistant' ? resp.completionText : '';
       },

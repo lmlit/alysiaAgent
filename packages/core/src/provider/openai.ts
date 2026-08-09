@@ -13,6 +13,12 @@ export class OpenAIProvider {
       stream: false,
     };
 
+    // ★ 8-09：强制 JSON 输出（DeepSeek json_object 模式）——要求 prompt 含 "json" 字样；
+    //   与 funcTool 互斥（json mode 与 function calling 共用有兼容风险）
+    if (req.responseFormat === 'json' && !req.funcTool) {
+      body.response_format = { type: 'json_object' };
+    }
+
     if (req.funcTool && req.funcTool.tools.length > 0) {
       body.tools = req.funcTool.toOpenAI();
       body.tool_choice = 'auto';

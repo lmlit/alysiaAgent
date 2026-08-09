@@ -114,22 +114,53 @@ describe('LifeService', () => {
     expect(memoryManager.ingest).not.toHaveBeenCalled();
   });
 
-  it('LLM returns invalid JSON → falls back to weighted template (pickTemplate)', async () => {
+  it('LLM 裸文本（无 JSON 外壳）→ 宽容解析直接作为事件内容并推送（8-09）', async () => {
     freezeTime(14); // 白天，非深夜
-    // Math.random 同时用于概率门（0.1 ≤ 0.3 通过）与模板加权选择（r = 0.1 * total < 首条权重 5 → 选中首条）
     vi.spyOn(Math, 'random').mockReturnValue(0.1);
     const { memoryManager, qqOff } = makeMocks();
     const svc = new LifeService(memoryManager as any, qqOff as any, {
       ownerOpenid: 'openid-1',
       probability: 0.3,
-      generateEvent: async () => 'not json', // LLM 返回非法 JSON → 解析失败 → 回落模板
+      generateEvent: async () => '那夜为云描的月光，已随风陪我过了第三日。', // 07:16 实测案例
     });
     await svc.tick();
-    // 模板库首条（权重最大）: 给自己倒了杯水（internal）
+    // 裸文本不再被丢弃（原行为：fallback 模板）——直接作为 chat 事件
     expect(memoryManager.recordLifeEvent).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'internal', content: '给自己倒了杯水', moodDelta: '平静' })
+      expect.objectContaining({ type: 'chat', content: '那夜为云描的月光，已随风陪我过了第三日。' })
     );
-    // 模板事件都是 internal → 不推送、不回写
+    expect(qqOff.sendProactive).toHaveBeenCalledWith('openid-1', '那夜为云描的月光，已随风陪我过了第三日。');
+  });
+
+  it('裸文本 + 深夜 → 强制 internal，不推送（8-09）', async () => {
+    freezeTime(2); // 本地 02:00（深夜 [0,7)）
+    vi.spyOn(Math, 'random').mockReturnValue(0.1);
+    const { memoryManager, qqOff } = makeMocks();
+    const svc = new LifeService(memoryManager as any, qqOff as any, {
+      ownerOpenid: 'openid-1',
+      generateEvent: async () => '深夜的独白。',
+      deepNightHours: [0, 7],
+    });
+    await svc.tick();
+    expect(memoryManager.recordLifeEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'internal', content: '深夜的独白。' })
+    );
+    expect(qqOff.sendProactive).not.toHaveBeenCalled();
+  });
+
+  it('generateEvent 抛异常 → 模板 fallback 强制 internal，不推送（8-09）', async () => {
+    freezeTime(14); // 白天
+    vi.spyOn(Math, 'random').mockReturnValue(0.1);
+    const { memoryManager, qqOff } = makeMocks();
+    const svc = new LifeService(memoryManager as any, qqOff as any, {
+      ownerOpenid: 'openid-1',
+      probability: 0.3,
+      generateEvent: async () => { throw new Error('LLM down'); },
+    });
+    await svc.tick();
+    // 模板事件强制 internal（原 t.type 可能为 chat 会推送——模板无剧情链，不再打扰用户）
+    expect(memoryManager.recordLifeEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'internal', moodDelta: '平静' })
+    );
     expect(qqOff.sendProactive).not.toHaveBeenCalled();
     expect(memoryManager.ingest).not.toHaveBeenCalled();
   });

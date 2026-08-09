@@ -30,6 +30,10 @@ export interface ProviderRequest {
   imageUrls?: string[];
   funcTool?: ToolSet;
   model?: string;
+  /** ★ 8-09：强制 JSON 输出（OpenAI/DeepSeek response_format: json_object）。
+   *  仅用于要求结构化输出的非流式调用（如 Life 事件生成）；要求 prompt 含 "json" 字样，
+   *  不与 funcTool 共用。 */
+  responseFormat?: 'json';
 }
 
 import type { ToolSet } from '../tools/registry.js';
