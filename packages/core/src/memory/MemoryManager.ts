@@ -83,7 +83,7 @@ export class MemoryManager {
     private embedService: IEmbedService,
     private llmService: ILLMService,
   ) {
-    this.eventStore = new EventStore(db);
+    this.eventStore = new EventStore(db, vectorStore);
     this.profileStore = new ProfileStore(db);
     this.personaStore = new PersonaStore(db);
     this.conversationStore = new ConversationStore(db, vectorStore);
@@ -359,11 +359,13 @@ export class MemoryManager {
     let retrieved: SearchResult[] = [];
     try {
       const vector = await this.embedService.embed(req.query);
-      const [convResults, knowledgeResults] = await Promise.all([
+      // ★ 8-09 事件向量纳入检索：[相关记忆] 可捞回超 24h 的对话细节（含回写后的 AI 发言）
+      const [convResults, knowledgeResults, eventResults] = await Promise.all([
         this.conversationStore.searchByVector(vector, req.limit),
         this.knowledgeStore.searchByVector(vector, Math.min(3, req.limit)),
+        this.eventStore.searchByVector(vector, Math.min(3, req.limit)),
       ]);
-      retrieved = [...convResults, ...knowledgeResults]
+      retrieved = [...convResults, ...knowledgeResults, ...eventResults]
         .sort((a, b) => b.score - a.score)
         .slice(0, req.limit);
     } catch {
@@ -414,6 +416,31 @@ export class MemoryManager {
     }
     // 会话结束自动恢复隐私模式
     this.privacyMode = 'off';
+  }
+
+  /** ★ 8-09 定期归档（修"短对话永不归档"）：24h 内有消息的活跃 session → 摘要归档。
+   *  since 锚点 = 该 session 最新摘要的 ended_at（无摘要 → 24h 前起点）——防重复摘要。
+   *  cron 每 6h 调用。返回归档 session 数。 */
+  async archiveStaleSessions(): Promise<number> {
+    let archived = 0;
+    try {
+      const since = new Date(Date.now() - 24 * 3600 * 1000);
+      const active = this.eventStore.getActiveSessions(since);
+      for (const sid of active) {
+        try {
+          const last = this.conversationStore.getLatestBySession(sid);
+          const anchor = last?.ended_at ? new Date(last.ended_at) : since;
+          await this.sessionEndProcessor.process(sid, anchor);
+          archived++;
+        } catch (err: any) {
+          logger.error(`[Memory] archive failed for ${sid.slice(-24)}: ${err.message}`);
+        }
+      }
+      if (archived > 0) logger.info(`[Memory] archived ${archived}/${active.length} sessions`);
+    } catch (err: any) {
+      logger.error(`[Memory] archiveStaleSessions failed: ${err.message}`);
+    }
+    return archived;
   }
 
   /** ★ 手动调整人格参数（Web 端滑条/按钮）。

@@ -1,9 +1,26 @@
 // src/memory/stores/EventStore.ts
 import type Database from 'better-sqlite3';
-import type { MemoryEvent } from '../types.js';
+import type { MemoryEvent, SearchResult } from '../types.js';
+import type { IVectorStore } from '../interfaces/IVectorStore.js';
 
 export class EventStore {
-  constructor(private db: Database.Database) {}
+  constructor(private db: Database.Database, private vectorStore: IVectorStore | null = null) {}
+
+  /** ★ 8-09：事件向量检索（[相关记忆] 捞回超 24h 的对话细节，含回写后的 AI 发言）。
+   *  source='chat'——聊天事件（RealtimeProcessor 写入时 source=event.source），
+   *  code 模式事件不混入聊天检索 */
+  async searchByVector(vector: number[], topK: number): Promise<SearchResult[]> {
+    if (!this.vectorStore) return [];
+    return this.vectorStore.search(vector, topK, { source: 'chat' });
+  }
+
+  /** ★ 8-09：活跃会话列表（since 之后有消息的 session，定期归档用） */
+  getActiveSessions(since: Date): string[] {
+    const rows = this.db.prepare(
+      "SELECT DISTINCT session_id FROM events WHERE type = 'message' AND created_at >= ? ORDER BY session_id"
+    ).all(since.toISOString()) as Array<{ session_id: string }>;
+    return rows.map(r => r.session_id);
+  }
 
   insert(event: MemoryEvent): void {
     this.db.prepare(`

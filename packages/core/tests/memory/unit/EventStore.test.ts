@@ -125,3 +125,40 @@ describe('EventStore', () => {
     expect(recent.map(r => r.content)).toEqual(['m2', 'm3']); // 最新 2 条（时间升序）
   });
 });
+
+describe('EventStore — 8-09 归档/检索支持', () => {
+  let db: Database.Database;
+  let store: EventStore;
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    initializeDatabase(db);
+    store = new EventStore(db);
+  });
+
+  afterEach(() => db.close());
+
+  it('getActiveSessions：since 之后有消息的 session 去重返回', () => {
+    const mk = (id: string, sid: string, at: string) => ({
+      id, session_id: sid, source: 'chat', type: 'message', payload: { role: 'user', content: 'x' },
+      importance: 0.5, created_at: at, processed: 0,
+    });
+    store.insert(mk('e1', 'sess-a', '2026-08-09T08:00:00.000Z'));
+    store.insert(mk('e2', 'sess-a', '2026-08-09T09:00:00.000Z'));
+    store.insert(mk('e3', 'sess-b', '2026-08-08T00:00:00.000Z'));
+    const active = store.getActiveSessions(new Date('2026-08-09T00:00:00.000Z'));
+    expect(active).toEqual(['sess-a']); // sess-b 在 since 前，sess-a 去重
+  });
+
+  it('searchByVector：委托 vectorStore 且按 source=chat 过滤', async () => {
+    const vectorStore = { search: vi.fn().mockResolvedValue([{ id: 'x', text: 't', score: 0.9 }]) };
+    const s = new EventStore(db, vectorStore as any);
+    const r = await s.searchByVector([0.1], 3);
+    expect(vectorStore.search).toHaveBeenCalledWith([0.1], 3, { source: 'chat' });
+    expect(r).toHaveLength(1);
+  });
+
+  it('无 vectorStore → 空结果（不炸）', async () => {
+    expect(await store.searchByVector([0.1], 3)).toEqual([]);
+  });
+});

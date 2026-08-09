@@ -413,6 +413,22 @@ memory_config: {
    role 用显式 `payload.role`（memory-ingest 已写），旧数据 `sender_id` 推断兜底；
    senderName 独立字段。下游 memory-retrieval 组装 `[时间] 你/昔涟: 内容` 短角色标签
 
+### 5.4 记忆完整性三件套（2026-08-09，change: memory-completeness-triple）
+
+修 24h 记忆黑洞（短对话永不归档 + 对话回复不入库 + 事件向量死数据）：
+
+1. **Bot 输出回写**（llm-agent POST 段）：assistant 最终回复 ingest 进 EventLog
+   （role=assistant, source=chat, importance=0.3）——[最近对话] 输入输出成对，
+   bot 记得自己说过什么
+2. **定期归档**（cron 每 6h 调 MemoryManager.archiveStaleSessions）：24h 内有消息的
+   活跃 session → SessionEndProcessor.process(sessionId, since?) 摘要归档；
+   since = 该 session 最新摘要 ended_at（ConversationStore.getLatestBySession），
+   防重复摘要；摘要输入含 assistant（[用户]/[昔涟] 角色标记）
+3. **事件向量检索**（EventStore.searchByVector + read() 纳入查询，source='chat'）：
+   [相关记忆] 可捞回超 24h 的对话细节（含回写后的 AI 发言）
+
+EventStore 新增 getActiveSessions(since)；构造签名加 vectorStore 参数。
+
 ## 6. 完整数据流
 
 ### 读路径

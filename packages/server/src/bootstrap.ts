@@ -174,7 +174,11 @@ async function main() {
     // Guard against running on a stopped core
     if (!core.eventBus || cronRunning) return;
     cronRunning = true;
-    core.memoryManager.cron()
+    Promise.all([
+      core.memoryManager.cron(),
+      // ★ 8-09 定期归档活跃会话（修"短对话永不归档"的空洞）
+      core.memoryManager.archiveStaleSessions(),
+    ])
       .catch(err => logger.error('Cron:', err))
       .finally(() => { cronRunning = false; });
   }, 6 * 3600_000);

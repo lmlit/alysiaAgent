@@ -34,6 +34,14 @@ export class ConversationStore {
     return rows.map(r => this.rowToConv(r));
   }
 
+  /** ★ 8-09：session 最新摘要（定期归档的 since 锚点） */
+  getLatestBySession(sessionId: string): Conversation | null {
+    const row = this.db.prepare(
+      'SELECT * FROM conversations WHERE session_id = ? ORDER BY ended_at DESC LIMIT 1'
+    ).get(sessionId) as Record<string, unknown> | undefined;
+    return row ? this.rowToConv(row) : null;
+  }
+
   /** ★ 8-09 会话隔离：sessionId 可选——private 会话只取 private 摘要，group 只取同群。
    *  不传则保持旧行为（全库最近）。 */
   getRecent(limit: number, sessionId?: string): Conversation[] {

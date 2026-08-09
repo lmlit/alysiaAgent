@@ -35,7 +35,8 @@ export class SessionEndProcessor {
     private vectorStore: IVectorStore | null,
   ) {}
 
-  async process(sessionId: string): Promise<void> {
+  /** ★ 8-09：since 可选——定时归档只摘要 since 之后的消息（防对同一批消息重复摘要） */
+  async process(sessionId: string, since?: Date): Promise<void> {
     // 1. Get all events for session
     // We use countBySession logic: we need all events, so we fetch from the DB.
     // Since EventStore doesn't have getBySession, we'll retrieve a large batch
@@ -43,15 +44,22 @@ export class SessionEndProcessor {
     const events = this.getSessionEvents(sessionId);
     if (events.length === 0) return;
 
-    const messageEvents = events.filter(e => e.type === 'message');
-    // 兼容两种 payload：新消息有 role 字段；旧消息可凭 sender_id 判断用户消息
-    const userMessages = messageEvents
-      .filter(e => e.payload?.role === 'user' || !!e.payload?.sender_id)
-      .map(e => e.payload?.content)
+    const messageEvents = events.filter(e => e.type === 'message' && (!since || new Date(e.created_at) >= since));
+    if (messageEvents.length === 0) return;
+
+    // ★ 8-09 摘要含 assistant：带角色标记的完整对话（回写后 AI 发言也进摘要）
+    const dialogue = messageEvents
+      .map(e => {
+        const p = e.payload;
+        if (!p?.content) return '';
+        // 兼容两种 payload：新消息有 role 字段；旧消息可凭 sender_id 判断用户消息
+        const isUser = p.role === 'user' || !!p.sender_id;
+        return `[${isUser ? '用户' : '昔涟'}] ${p.content}`;
+      })
       .filter(Boolean) as string[];
 
     // 2. Generate conversation summary via LLM
-    const conversationSummary = await this.generateSummary(userMessages, sessionId);
+    const conversationSummary = await this.generateSummary(dialogue, sessionId);
 
     // 3. Insert Conversation + embed vector
     const now = new Date().toISOString();
@@ -101,7 +109,7 @@ export class SessionEndProcessor {
   }
 
   private async generateSummary(
-    userMessages: string[],
+    dialogue: string[],
     sessionId: string,
   ): Promise<{ summary: string; participants: string[]; topics: string[]; key_decisions: string[] }> {
     const defaultSummary = {
@@ -111,12 +119,12 @@ export class SessionEndProcessor {
       key_decisions: [] as string[],
     };
 
-    if (userMessages.length === 0) return defaultSummary;
+    if (dialogue.length === 0) return defaultSummary;
 
     try {
-      const conversationText = userMessages.join('\n');
+      const conversationText = dialogue.join('\n');
       const response = await this.llmService.complete(
-        '你是一个会话总结器。请总结以下用户消息，提取关键主题和决定。返回JSON格式: {"summary": "...", "participants": ["user", "assistant"], "topics": [...], "key_decisions": [...]}',
+        '你是一个会话总结器。请总结以下对话（[用户]/[昔涟] 标记发言者），提取关键主题和决定。返回JSON格式: {"summary": "...", "participants": ["user", "assistant"], "topics": [...], "key_decisions": [...]}',
         conversationText,
       );
 

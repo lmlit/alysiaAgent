@@ -453,3 +453,69 @@ describe('CronProcessor', () => {
     await expect(processor.process()).resolves.toBeUndefined();
   });
 });
+
+describe('SessionEndProcessor — 8-09 定期归档支持', () => {
+  let db: Database.Database;
+  let eventStore: EventStore;
+  let conversationStore: ConversationStore;
+  let profileStore: ProfileStore;
+  let personaStore: PersonaStore;
+  let processor: SessionEndProcessor;
+
+  const spyComplete = vi.fn();
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    initializeDatabase(db);
+    const now = new Date().toISOString();
+    db.prepare(`INSERT OR IGNORE INTO persona (id, name, tone, speech_style, emotional_range, adaptation_hints, updated_at)
+      VALUES (1, '昔涟', '{"formality":0,"warmth":0.2,"humor":0.1,"directness":0}',
+      '{"sentence_length":0,"emoji_usage":0,"code_heavy":0}',
+      '{"expressiveness":0.1,"empathy":0.3,"playfulness":0.1}', '[]', ?)`).run(now);
+    db.prepare(`INSERT OR IGNORE INTO user_profile (id, basics, preferences, facts, updated_at)
+      VALUES (1, '{}', '{}', '[]', ?)`).run(now);
+    eventStore = new EventStore(db);
+    conversationStore = new ConversationStore(db, null);
+    profileStore = new ProfileStore(db);
+    personaStore = new PersonaStore(db);
+    const worldbookStore = new WorldbookStore(db);
+    const profileExtractor = new ProfileExtractor(mockLLM);
+    const personaAdapter = new PersonaAdapter(personaStore, mockLLM);
+    const vectorStore = { insert: async () => {}, search: async () => [], delete: async () => {}, count: async () => 0 };
+    spyComplete.mockReset();
+    spyComplete.mockResolvedValue(JSON.stringify({ summary: '摘要', participants: ['user', 'assistant'], topics: [], key_decisions: [] }));
+    processor = new SessionEndProcessor(
+      eventStore, conversationStore, profileStore, personaStore, worldbookStore,
+      profileExtractor, personaAdapter, { complete: spyComplete } as any, mockEmbed, vectorStore as any,
+    );
+  });
+
+  afterEach(() => db.close());
+
+  it('since 过滤：只摘要 since 之后的消息（定期归档防重复）', async () => {
+    const sid = 'sess-archive-1';
+    eventStore.insert(makeEvent({ id: 'old1', session_id: sid, created_at: '2026-08-08T00:00:00.000Z', payload: { role: 'user', content: '旧消息' } }));
+    eventStore.insert(makeEvent({ id: 'new1', session_id: sid, created_at: '2026-08-09T08:00:00.000Z', payload: { role: 'user', content: '新消息' } }));
+    await processor.process(sid, new Date('2026-08-09T00:00:00.000Z'));
+    expect(spyComplete).toHaveBeenCalledWith(expect.any(String), expect.stringContaining('新消息'));
+    expect(spyComplete.mock.calls[0][1]).not.toContain('旧消息');
+  });
+
+  it('摘要输入含 assistant 发言（回写后 AI 说过的话进摘要）', async () => {
+    const sid = 'sess-archive-2';
+    eventStore.insert(makeEvent({ id: 'u1', session_id: sid, payload: { role: 'user', content: '你在长沙吗' } }));
+    eventStore.insert(makeEvent({ id: 'a1', session_id: sid, payload: { role: 'assistant', content: '我在长沙呀' } }));
+    await processor.process(sid);
+    const dialogue = spyComplete.mock.calls[0][1] as string;
+    expect(dialogue).toContain('[用户] 你在长沙吗');
+    expect(dialogue).toContain('[昔涟] 我在长沙呀');
+  });
+
+  it('since 之后无新消息 → 不生成摘要', async () => {
+    const sid = 'sess-archive-3';
+    eventStore.insert(makeEvent({ id: 'old1', session_id: sid, created_at: '2026-08-08T00:00:00.000Z', payload: { role: 'user', content: '旧消息' } }));
+    await processor.process(sid, new Date('2026-08-09T00:00:00.000Z'));
+    expect(spyComplete).not.toHaveBeenCalled();
+    expect(conversationStore.getBySession(sid)).toHaveLength(0);
+  });
+});

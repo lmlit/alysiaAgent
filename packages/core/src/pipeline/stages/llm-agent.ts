@@ -138,5 +138,20 @@ export class LLMAgentStage implements Stage {
         );
       }
     }
+
+    // ★ 8-09 输出回写：assistant 回复 ingest 进 EventLog——bot 记得自己说过什么，
+    //   [最近对话] 输入输出成对（复用 Life writeback 模式；失败不阻塞主流程）
+    if (replyText.trim()) {
+      this.ctx.memoryManager.ingest({
+        id: `agent-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        session_id: event.unifiedMsgOrigin,
+        source: 'chat',
+        type: 'message',
+        payload: { content: replyText.trim(), role: 'assistant' },
+        importance: 0.3,
+        created_at: new Date().toISOString(),
+        processed: 0,
+      }).catch(err => logger.error('LLMAgent writeback failed:', err));
+    }
   }
 }

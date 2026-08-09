@@ -68,6 +68,8 @@ function makeMockContext(): PipelineContext {
     memoryManager: {
       getActiveSystemPrompt: vi.fn().mockReturnValue('测试人格提示词'),
       onSessionEnd: vi.fn().mockResolvedValue(undefined),
+      // ★ 8-09 输出回写 mock
+      ingest: vi.fn().mockResolvedValue(undefined),
       listStickers: vi.fn().mockReturnValue([{ name: '睡觉', path: '/data/stickers/睡觉.png' }]),
       findSticker: vi.fn().mockReturnValue({ content: '/data/stickers/睡觉.png' }),
       recordTokenUsage: vi.fn().mockImplementation(
@@ -436,5 +438,27 @@ describe('LLMAgentStage', () => {
       const stats = ctx.memoryManager.getTokenStats('t-1:private:known-session') as any;
       expect(stats.recordCount >= 1).toBe(true);
     });
+  });
+});
+
+describe('LLMAgentStage — 8-09 输出回写', () => {
+  it('回复完成后 ingest assistant 消息进记忆', async () => {
+    const ctx = makeMockContext();
+    ctx.commandRegistry.execute = vi.fn().mockResolvedValue(null);
+    mockRun.mockResolvedValue({
+      chain: new MessageChain().message('这是回复内容'),
+      tokenUsage: { input: 100, output: 20, total: 120 },
+    });
+    const stage = new LLMAgentStage();
+    await stage.initialize(ctx);
+    const event = makeEvent('你好');
+    await consumeGenerator(stage.process(event));
+    expect(ctx.memoryManager.ingest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: 'chat',
+        type: 'message',
+        payload: { content: '这是回复内容', role: 'assistant' },
+      })
+    );
   });
 });
