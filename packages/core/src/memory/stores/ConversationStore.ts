@@ -34,10 +34,19 @@ export class ConversationStore {
     return rows.map(r => this.rowToConv(r));
   }
 
-  getRecent(limit: number): Conversation[] {
-    const rows = this.db.prepare(
-      'SELECT * FROM conversations ORDER BY started_at DESC LIMIT ?'
-    ).all(limit) as Record<string, unknown>[];
+  /** ★ 8-09 会话隔离：sessionId 可选——private 会话只取 private 摘要，group 只取同群。
+   *  不传则保持旧行为（全库最近）。 */
+  getRecent(limit: number, sessionId?: string): Conversation[] {
+    let rows: Record<string, unknown>[];
+    if (!sessionId) {
+      rows = this.db.prepare('SELECT * FROM conversations ORDER BY started_at DESC LIMIT ?').all(limit) as Record<string, unknown>[];
+    } else if (sessionId.includes(':group:')) {
+      rows = this.db.prepare('SELECT * FROM conversations WHERE session_id LIKE ? ORDER BY started_at DESC LIMIT ?')
+        .all(`${sessionId.split(':group:')[0]}:group:%`, limit) as Record<string, unknown>[];
+    } else {
+      rows = this.db.prepare("SELECT * FROM conversations WHERE session_id LIKE '%:private:%' ORDER BY started_at DESC LIMIT ?")
+        .all(limit) as Record<string, unknown>[];
+    }
     return rows.map(r => this.rowToConv(r));
   }
 

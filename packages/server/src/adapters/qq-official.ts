@@ -743,15 +743,29 @@ export class QQOfficialAgentAdapter implements Platform {
     const isGroup = session.messageType === MessageType.GROUP;
     const id = session.sessionId.replace(/^(private_|group_)/, '');
 
+    // ★ 8-09 对话回复分段：私聊长文案（>60字）走分段（同 sendProactive 节奏）；
+    //   群聊保持单条——群聊分段会刷屏，且群聊无"实时陪伴"诉求
+    let segments = (!isGroup && text.trim().length > 60) ? segmentText(text) : [text.trim()];
+    if (segments.length > 3) { segments[2] += segments.slice(3).join(''); segments.length = 3; }
+
     try {
-      await fetch(`${QQ_API_HOST}/v2/${isGroup ? 'groups' : 'users'}/${id}/messages`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `QQBot ${this.accessToken}`,
-        },
-        body: JSON.stringify({ content: text, msg_type: 0 }),
-      });
+      for (let i = 0; i < segments.length; i++) {
+        const seg = segments[i].trim();
+        if (!seg) continue;
+        const resp = await fetch(`${QQ_API_HOST}/v2/${isGroup ? 'groups' : 'users'}/${id}/messages`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `QQBot ${this.accessToken}`,
+          },
+          body: JSON.stringify({ content: seg, msg_type: 0 }),
+        });
+        if (!resp.ok) {
+          logger.warn(`[QQ Official] Send failed (${resp.status}), stop remaining segments`);
+          return; // 失败中断——不再发后续段
+        }
+        if (i < segments.length - 1) await sleep(500 + Math.random() * 400);
+      }
     } catch (err: any) {
       logger.error('[QQ Official] Send error:', err.message);
     }

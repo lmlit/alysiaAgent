@@ -24,6 +24,10 @@ export class OpenAIProvider {
       body.tool_choice = 'auto';
     }
 
+    // ★ 8-09 输入日志（debug 级，ALYSIA_DEBUG=1 时打印）——排查 prompt 组装/注入问题用。
+    //   不截断：prompt 排障需要看完整组装（含工具定义/最近对话），日志文件侧已有轮转
+    logger.debug(`[LLM] request: ${JSON.stringify(messages)}`);
+
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 60_000);
     const start = Date.now();

@@ -389,7 +389,7 @@ export class MemoryManager {
   }
 
   /** 带 Worldbook 匹配的 assemble — 供 MemoryRetrievalStage 使用 */
-  async assembleWithWorldbook(mode: 'chat' | 'code', triggers: WorldbookEntry[], retrieved: SearchResult[]): Promise<string> {
+  async assembleWithWorldbook(mode: 'chat' | 'code', triggers: WorldbookEntry[], retrieved: SearchResult[], sessionId?: string): Promise<string> {
     // 隐私模式 readonly/full: 不注入 Profile/Worldbook/Life
     if (this.privacyMode !== 'off') {
       return this.promptAssembler.assembleMinimal(mode);
@@ -398,7 +398,8 @@ export class MemoryManager {
     if (lifeInjection) {
       logger.debug(`[Memory] life injection: ${lifeInjection.length} chars into ${mode} prompt`);
     }
-    return this.promptAssembler.assemble(mode, retrieved, triggers, lifeInjection);
+    // ★ 8-09 会话隔离：sessionId 透传给会话摘要过滤（防群聊摘要混入私聊）
+    return this.promptAssembler.assemble(mode, retrieved, triggers, lifeInjection, sessionId);
   }
 
   async onSessionEnd(sessionId: string): Promise<void> {

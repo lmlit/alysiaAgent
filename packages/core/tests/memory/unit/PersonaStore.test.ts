@@ -106,3 +106,26 @@ describe('PersonaStore', () => {
     expect(store.get().name).toBe('小明');
   });
 });
+
+describe('PersonaStore — 8-09 空值修复', () => {
+  let db: Database.Database;
+  let store: PersonaStore;
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    initializeDatabase(db);
+    store = new PersonaStore(db);
+  });
+
+  afterEach(() => { db.close(); });
+
+  it('已有行 tone={}（历史遗留）→ get() 时自动补默认参数', () => {
+    store.get(); // 触发 ensureRow 建行
+    db.prepare('UPDATE persona SET tone = ? WHERE is_active = 1').run('{}');
+    const persona = store.get(); // 再读 → ensureRow 修复
+    expect(JSON.parse(persona.tone).formality).toBe(0);
+    expect(JSON.parse(persona.tone)).toHaveProperty('warmth');
+    expect(JSON.parse(persona.speech_style)).toHaveProperty('sentence_length');
+    expect(JSON.parse(persona.emotional_range)).toHaveProperty('empathy');
+  });
+});

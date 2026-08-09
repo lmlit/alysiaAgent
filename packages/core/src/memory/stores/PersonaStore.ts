@@ -3,6 +3,9 @@ import type Database from 'better-sqlite3';
 import type { Persona, MemoryConfig } from '../types.js';
 
 export const DEFAULT_MEMORY_CONFIG_JSON = '{"retention_bias":0.2,"decay_rate":0.3,"importance_threshold":0.4,"recency_weight":0.3,"confirmation_bias":0.3}';
+export const DEFAULT_TONE_JSON = '{"formality":0,"warmth":0.2,"humor":0.1,"directness":0}';
+export const DEFAULT_SPEECH_STYLE_JSON = '{"sentence_length":0,"emoji_usage":0,"code_heavy":0}';
+export const DEFAULT_EMOTIONAL_RANGE_JSON = '{"expressiveness":0.1,"empathy":0.3,"playfulness":0.1}';
 
 export class PersonaStore {
   constructor(private db: Database.Database) {}
@@ -11,8 +14,18 @@ export class PersonaStore {
     const now = new Date().toISOString();
     this.db.prepare(`
       INSERT OR IGNORE INTO persona (id, name, tone, speech_style, emotional_range, memory_config, adaptation_hints, updated_at, role, is_active)
-      VALUES (1, '昔涟', '{"formality":0,"warmth":0.2,"humor":0.1,"directness":0}', '{"sentence_length":0,"emoji_usage":0,"code_heavy":0}', '{"expressiveness":0.1,"empathy":0.3,"playfulness":0.1}', '${DEFAULT_MEMORY_CONFIG_JSON}', '[]', ?, 'alysia', 1)
+      VALUES (1, '昔涟', '${DEFAULT_TONE_JSON}', '${DEFAULT_SPEECH_STYLE_JSON}', '${DEFAULT_EMOTIONAL_RANGE_JSON}', '${DEFAULT_MEMORY_CONFIG_JSON}', '[]', ?, 'alysia', 1)
     `).run(now);
+    // ★ 8-09 修复：已有行人格参数为空/{}（历史遗留，如 8-09 云端实测 tone='{}'）→ 补默认值。
+    //   INSERT OR IGNORE 不更新已有行，旧数据空值导致 PromptAssembler 输出 undefined
+    const row = this.db.prepare('SELECT tone, speech_style, emotional_range FROM persona WHERE is_active = 1').get() as
+      { tone?: string; speech_style?: string; emotional_range?: string } | undefined;
+    if (row) {
+      const isEmpty = (v?: string) => !v || v === '{}' || v === '[]' || v === 'null';
+      if (isEmpty(row.tone)) this.db.prepare('UPDATE persona SET tone = ? WHERE is_active = 1').run(DEFAULT_TONE_JSON);
+      if (isEmpty(row.speech_style)) this.db.prepare('UPDATE persona SET speech_style = ? WHERE is_active = 1').run(DEFAULT_SPEECH_STYLE_JSON);
+      if (isEmpty(row.emotional_range)) this.db.prepare('UPDATE persona SET emotional_range = ? WHERE is_active = 1').run(DEFAULT_EMOTIONAL_RANGE_JSON);
+    }
   }
 
   /** 向后兼容：旧数据库可能没有 memory_config 列 */

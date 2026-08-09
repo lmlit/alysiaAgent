@@ -392,6 +392,27 @@ memory_config: {
 
 ---
 
+### 5.3 Prompt 上下文修复（2026-08-09，change: prompt-context-fixes）
+
+8-09 全量输入日志抓包（`[LLM] request`）发现并修复 4 缺陷：
+
+1. **人格参数空值兜底**：persona 表 tone/speech_style/emotional_range 历史遗留 `{}`
+   （ensureRow 只 INSERT OR IGNORE 不修已有行）→ PromptAssembler 输出 `undefined`。
+   修复：PromptAssembler 空对象/缺失字段 fallback 默认参数；PersonaStore.ensureRow
+   对已有空值行自动补默认 JSON（`{"formality":0,"warmth":0.2,...}`）
+2. **画像事实去重增强**：入库层（ProfileStore.normalizeKey + addFact/addFacts 冲突检测）
+   与组装层（PromptAssembler）统一"归一化 + 子串包含合并"——停用字扩表
+   （的得了吗呢是个了在于是和也呀啊哦吧）、去"用户/你"主语前缀、去标点；
+   包含判定：长侧 ≥5 字且短侧 ≥2 字（"长沙" ⊆ "目前所在城市长沙" 合并；
+   "铁道" ⊆ "星穹铁道" 不误合并）
+3. **会话摘要隔离**：ConversationStore.getRecent(limit, sessionId?)——private 会话只取
+   private 摘要、group 只取同群；PromptAssembler/MemoryManager.assembleWithWorldbook/
+   MemoryRetrievalStage 透传 sessionId（防群聊 summary 混入私聊 prompt）
+4. **EventLog 读取契约**：getRecentBySession 的 content **不再拼 `${sender_name}: ` 前缀**
+   （openid/默认"用户"不再泄露 prompt；Life assistant 回写不再显示"用户:"）；
+   role 用显式 `payload.role`（memory-ingest 已写），旧数据 `sender_id` 推断兜底；
+   senderName 独立字段。下游 memory-retrieval 组装 `[时间] 你/昔涟: 内容` 短角色标签
+
 ## 6. 完整数据流
 
 ### 读路径

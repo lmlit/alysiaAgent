@@ -6,11 +6,22 @@ const NOW = () => new Date().toISOString();
 
 function normalizeKey(fact: string): string {
   return fact
-    .replace(/[的得了吗呢是个了]/g, '')
+    // ★ 8-09 去重增强：停用字扩表（+在于是和也呀啊哦吧）、去"用户/你"主语前缀、去标点
+    .replace(/[的得了吗呢是个了在于是和也呀啊哦吧]/g, '')
     .replace(/[职业开发工程师前端后端架构设计运营产品]/g, '')
-    .replace(/[\s，,。！？]/g, '')
+    .replace(/^(用户|你)/, '')
+    .replace(/[\s，,。！？；;：:、()（）"“”']/g, '')
     .slice(0, 20)
     .toLowerCase();
+}
+
+/** ★ 8-09：归一化后包含匹配——"长沙" ⊆ "目前所在城市长沙" 视为同事实。
+ *  保护规则：长侧 ≥5 字且短侧 ≥2 字才判定（"长沙"这类 2 字实体是事实核心；
+ *  "铁道" ⊆ "星穹铁道" 这种 2字/4字 组合不误合并）。 */
+function normContains(a: string, b: string): boolean {
+  const [longer, shorter] = a.length >= b.length ? [a, b] : [b, a];
+  if (longer.length < 5 || shorter.length < 2) return false;
+  return longer.includes(shorter);
 }
 
 /** 向后兼容：给旧 facts 补上新字段的默认值 */
@@ -84,9 +95,9 @@ export class ProfileStore {
     const all = this.getAllFacts();
     const key = normalizeKey(fact.fact);
 
-    // 检查是否有同 key 的 active fact
+    // ★ 8-09：同 key **或归一化包含**（"用户在长沙" vs "用户目前所在城市是长沙"）视为冲突
     const existingIdx = all.findIndex(
-      f => normalizeKey(f.fact) === key && f.status === 'active'
+      f => f.status === 'active' && (normalizeKey(f.fact) === key || normContains(normalizeKey(f.fact), key))
     );
 
     if (existingIdx >= 0) {
@@ -124,8 +135,9 @@ export class ProfileStore {
 
     for (const fact of newFacts) {
       const key = normalizeKey(fact.fact);
+      // ★ 8-09：同 key 或归一化包含视为冲突（与 addFact 一致）
       const existingIdx = all.findIndex(
-        f => normalizeKey(f.fact) === key && f.status === 'active'
+        f => f.status === 'active' && (normalizeKey(f.fact) === key || normContains(normalizeKey(f.fact), key))
       );
 
       if (existingIdx >= 0) {

@@ -72,3 +72,32 @@ describe('ProfileStore', () => {
     vi.useRealTimers();
   });
 });
+
+describe('ProfileStore — 8-09 包含去重', () => {
+  let db: Database.Database;
+  let store: ProfileStore;
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    initializeDatabase(db);
+    store = new ProfileStore(db);
+    db.prepare(`INSERT OR IGNORE INTO user_profile (id, basics, preferences, facts, updated_at) VALUES (1, '{}', '{}', '[]', ?)`).run(new Date().toISOString());
+  });
+
+  afterEach(() => { db.close(); });
+
+  it('短事实（用户在长沙）是长事实（用户目前所在城市是长沙）子串 → 视为冲突并 supersede', () => {
+    store.addFacts([{ fact: '用户目前所在城市是长沙', confidence: 0.8, evidence: 'e', source_event: 'e1', updated_at: new Date().toISOString() }]);
+    const added = store.addFacts([{ fact: '用户在长沙', confidence: 0.6, evidence: 'e', source_event: 'e2', updated_at: new Date().toISOString() }]);
+    expect(added).toHaveLength(1);
+    const all = store.getAllFacts();
+    expect(all.filter(f => f.status === 'active')).toHaveLength(1); // 只有一条 active
+    expect(all.find(f => f.status === 'superseded')?.fact).toBe('用户目前所在城市是长沙');
+  });
+
+  it('短词（<3 字归一化）不误合并', () => {
+    store.addFacts([{ fact: '长沙', confidence: 0.5, evidence: 'e', source_event: 'e1', updated_at: new Date().toISOString() }]);
+    store.addFacts([{ fact: '用户玩星穹铁道', confidence: 0.7, evidence: 'e', source_event: 'e2', updated_at: new Date().toISOString() }]);
+    expect(store.getFacts()).toHaveLength(2); // 互不包含，都保留
+  });
+});

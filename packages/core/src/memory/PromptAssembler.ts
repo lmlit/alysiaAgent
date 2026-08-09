@@ -19,31 +19,37 @@ export class PromptAssembler {
     private codeContextStore: CodeContextStore,
   ) {}
 
-  async assemble(mode: 'chat' | 'code', extraRetrieved: SearchResult[] = [], worldbookTriggers: WorldbookEntry[] = [], lifeInjection: string = ''): Promise<string> {
+  async assemble(mode: 'chat' | 'code', extraRetrieved: SearchResult[] = [], worldbookTriggers: WorldbookEntry[] = [], lifeInjection: string = '', sessionId?: string): Promise<string> {
     if (mode === 'chat') {
-      return this.assembleChat(extraRetrieved, worldbookTriggers, lifeInjection);
+      return this.assembleChat(extraRetrieved, worldbookTriggers, lifeInjection, sessionId);
     } else {
       return this.assembleCode(extraRetrieved, worldbookTriggers, lifeInjection);
     }
   }
 
-  private async assembleChat(retrieved: SearchResult[], triggers: WorldbookEntry[], lifeInjection: string = ''): Promise<string> {
+  private async assembleChat(retrieved: SearchResult[], triggers: WorldbookEntry[], lifeInjection: string = '', sessionId?: string): Promise<string> {
     const persona = this.personaStore.get();
     const profile = this.profileStore.get();
-    const recentConvs = this.conversationStore.getRecent(3);
+    // ★ 8-09 会话隔离：只取当前会话类型（private/同群）的摘要，防群聊摘要混入私聊
+    const recentConvs = this.conversationStore.getRecent(3, sessionId);
     const budget = new TokenBudget(3200);
 
     const blocks: string[] = [];
 
     // Persona block (always included — most essential)
+    // ★ 8-09 防御：tone 空对象/缺失字段 → 默认参数（云端历史遗留 tone='{}' 导致 undefined）
     const tone = safeParseJSON<Record<string, number>>(persona.tone, {});
     const speechStyle = safeParseJSON<Record<string, number>>(persona.speech_style, {});
     const emotionalRange = safeParseJSON<Record<string, number>>(persona.emotional_range, {});
+    const t = (v: number | undefined, def: number) => (typeof v === 'number' && isFinite(v) ? v : def);
+    const toneText = `语气: 形式度=${t(tone.formality, 0)}, 温暖度=${t(tone.warmth, 0.2)}, 幽默感=${t(tone.humor, 0.1)}, 直接程度=${t(tone.directness, 0)}`;
+    const styleText = `说话风格: 句子长度=${t(speechStyle.sentence_length, 0)}, 表情使用=${t(speechStyle.emoji_usage, 0)}, 代码倾向=${t(speechStyle.code_heavy, 0)}`;
+    const rangeText = `情感表达: 表现力=${t(emotionalRange.expressiveness, 0.1)}, 共情=${t(emotionalRange.empathy, 0.3)}, playful=${t(emotionalRange.playfulness, 0.1)}`;
     const personaBlock = `[角色设定]
 你是${persona.name}。
-语气: 形式度=${tone.formality}, 温暖度=${tone.warmth}, 幽默感=${tone.humor}, 直接程度=${tone.directness}
-说话风格: 句子长度=${speechStyle.sentence_length}, 表情使用=${speechStyle.emoji_usage}, 代码倾向=${speechStyle.code_heavy}
-情感表达: 表现力=${emotionalRange.expressiveness}, 共情=${emotionalRange.empathy}, playful=${emotionalRange.playfulness}`;
+${toneText}
+${styleText}
+${rangeText}`;
     budget.reserve(personaBlock);
     blocks.push(personaBlock);
 
@@ -70,21 +76,28 @@ export class PromptAssembler {
     }
 
     // Active profile facts (v2: 只显示活跃事实，标注来源)
+    // ★ 8-09 去重增强：归一化（去停用字/主语/标点）+ 子串包含合并——历史重复数据
+    //   （"用户在长沙" ×4）在组装层兜底消除，不显示即不烧 token
     const activeFacts = this.profileStore.getActiveFacts();
     if (activeFacts.length > 0) {
-      // 按置信度降序，同 key 去重
-      const seen = new Set<string>();
-      const factsText = activeFacts
-        .sort((a, b) => b.confidence - a.confidence)
+      const norm = (s: string) => s.replace(/[的得了吗呢是个了在于是和也呀啊哦吧]/g, '').replace(/^(用户|你)/, '').replace(/[\s，,。！？；;：:、()（）"“”']/g, '').toLowerCase();
+      const normContains = (a: string, b: string) => {
+        const [longer, shorter] = a.length >= b.length ? [a, b] : [b, a];
+        return longer.length >= 5 && shorter.length >= 2 && longer.includes(shorter);
+      };
+      const kept: typeof activeFacts = [];
+      for (const f of activeFacts.sort((a, b) => b.confidence - a.confidence)) {
+        const key = norm(f.fact);
+        const dup = kept.find(k => norm(k.fact) === key || normContains(norm(k.fact), key));
+        if (dup) continue; // 已有同义事实（保留置信度更高的第一条）
+        kept.push(f);
+      }
+      const factsText = kept
         .map(f => {
-          const key = f.fact.replace(/[的得了吗呢是个了]/g, '').slice(0, 15);
-          if (seen.has(key)) return null;
-          seen.add(key);
           const marker = f.source === 'inferred' ? '(待确认)' : '';
           const sourceNote = f.source === 'user' ? ' [你说过]' : '';
           return `- ${f.fact}${marker}${sourceNote}`;
         })
-        .filter(Boolean)
         .join('\n');
       if (factsText) {
         const factsBlock = `[关于你的事实]\n${factsText}`;
@@ -224,14 +237,16 @@ ${persona.name} 编程助手模式。语气: ${tone.formality < 0 ? '随意' : '
   async assembleMinimal(mode: 'chat' | 'code'): Promise<string> {
     const persona = this.personaStore.get();
     if (mode === 'chat') {
+      // ★ 8-09：与 assembleChat 同款空值兜底（tone='{}' 历史数据不再输出 undefined）
       const tone = safeParseJSON<Record<string, number>>(persona.tone, {});
       const speechStyle = safeParseJSON<Record<string, number>>(persona.speech_style, {});
       const emotionalRange = safeParseJSON<Record<string, number>>(persona.emotional_range, {});
+      const t = (v: number | undefined, def: number) => (typeof v === 'number' && isFinite(v) ? v : def);
       return `[角色设定]
 你是${persona.name}。
-语气: 形式度=${tone.formality}, 温暖度=${tone.warmth}, 幽默感=${tone.humor}, 直接程度=${tone.directness}
-说话风格: 句子长度=${speechStyle.sentence_length}, 表情使用=${speechStyle.emoji_usage}, 代码倾向=${speechStyle.code_heavy}
-情感表达: 表现力=${emotionalRange.expressiveness}, 共情=${emotionalRange.empathy}, playful=${emotionalRange.playfulness}
+语气: 形式度=${t(tone.formality, 0)}, 温暖度=${t(tone.warmth, 0.2)}, 幽默感=${t(tone.humor, 0.1)}, 直接程度=${t(tone.directness, 0)}
+说话风格: 句子长度=${t(speechStyle.sentence_length, 0)}, 表情使用=${t(speechStyle.emoji_usage, 0)}, 代码倾向=${t(speechStyle.code_heavy, 0)}
+情感表达: 表现力=${t(emotionalRange.expressiveness, 0.1)}, 共情=${t(emotionalRange.empathy, 0.3)}, playful=${t(emotionalRange.playfulness, 0.1)}
 
 (隐私模式 — 未加载用户画像和记忆)`;
     } else {

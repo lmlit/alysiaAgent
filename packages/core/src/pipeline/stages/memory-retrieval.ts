@@ -44,6 +44,7 @@ export class MemoryRetrievalStage implements Stage {
       mode,
       readResult.worldbook_triggers,
       readResult.retrieved,
+      event.unifiedMsgOrigin, // ★ 8-09 会话隔离：会话摘要按类型过滤
     );
 
     // 短期记忆：EventLog 最近消息（24 小时窗口 + 最多 20 条，覆盖"今天+昨天"，
@@ -54,7 +55,8 @@ export class MemoryRetrievalStage implements Stage {
         event.unifiedMsgOrigin, 20, new Date(Date.now() - 24 * 3600 * 1000),
       );
       if (recent.length > 0) {
-        recentContext = recent.map(r => `${fmtMsgTime(r.createdAt)} ${r.content}`).join('\n');
+        // ★ 8-09 角色短标签（你/昔涟）：EventLog 读取不再带 sender 前缀（openid 不入 prompt）
+        recentContext = recent.map(r => `${fmtMsgTime(r.createdAt)} ${r.role === 'user' ? '你' : '昔涟'}: ${r.content}`).join('\n');
       }
     } catch (err) {
       logger.warn('Failed to read recent messages from EventLog:', err);

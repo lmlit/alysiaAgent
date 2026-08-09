@@ -91,7 +91,7 @@ describe('MemoryRetrievalStage', () => {
     const event = makeEvent('hello');
     await stage.process(event);
     expect(mockMemory.read).toHaveBeenCalledWith({ query: 'hello', mode: 'chat', limit: 5 });
-    expect(mockMemory.assembleWithWorldbook).toHaveBeenCalledWith('chat', [], []);
+    expect(mockMemory.assembleWithWorldbook).toHaveBeenCalledWith('chat', [], [], expect.any(String)); // ★ 8-09 sessionId 透传
     expect(event.getExtra('search_results')).toEqual([]);
     expect(event.getExtra('worldbook_triggers')).toEqual([]);
     expect(event.getExtra('memory_context')).toContain('SYSTEM PROMPT:昔涟');

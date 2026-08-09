@@ -101,7 +101,7 @@ describe('EventStore', () => {
 
     const since = new Date('2026-08-02T07:00:00.000Z');
     const recent = store.getRecentBySession('sess-001', 20, since);
-    expect(recent.map(r => r.content)).toEqual(['用户: 新消息1', '用户: 新消息2']);
+    expect(recent.map(r => r.content)).toEqual(['新消息1', '新消息2']);
   });
 
   it('getRecentBySession: 时间窗口 + limit 上限', () => {
@@ -112,7 +112,7 @@ describe('EventStore', () => {
     const since = new Date('2026-08-02T07:00:00.000Z');
     const recent = store.getRecentBySession('sess-001', 2, since);
     expect(recent).toHaveLength(2);
-    expect(recent[recent.length - 1].content).toBe('用户: m3'); // 时间升序
+    expect(recent[recent.length - 1].content).toBe('m3'); // 时间升序
   });
 
   it('getRecentBySession: 无 since 时保持纯数量限制（向后兼容）', () => {
@@ -122,6 +122,6 @@ describe('EventStore', () => {
 
     const recent = store.getRecentBySession('sess-001', 2);
     expect(recent).toHaveLength(2);
-    expect(recent.map(r => r.content)).toEqual(['用户: m2', '用户: m3']); // 最新 2 条（时间升序）
+    expect(recent.map(r => r.content)).toEqual(['m2', 'm3']); // 最新 2 条（时间升序）
   });
 });

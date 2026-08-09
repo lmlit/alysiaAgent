@@ -88,11 +88,14 @@ export class EventStore {
 
     return rows.reverse().map(r => {
       const p = JSON.parse(r.payload);
-      const senderName = p.sender_name || '用户';
-      const content = p.content || '';
+      // ★ 8-09 修复：content 纯文本（不再拼 `${sender_name}: ` 前缀——openid/默认"用户"
+      //   不再泄露进 prompt，Life assistant 回写不再显示成"用户: "）；角色标签由下游组装
+      //   （memory-retrieval 用"你/昔涟"短标签）
+      const role = p.role ?? (p.sender_id ? 'user' : 'assistant');
       return {
-        role: p.sender_id ? 'user' : 'assistant',
-        content: `${senderName}: ${content}`,
+        role,
+        content: p.content || '',
+        senderName: p.sender_name || (role === 'user' ? '用户' : '昔涟'),
         createdAt: r.created_at,
       };
     });
