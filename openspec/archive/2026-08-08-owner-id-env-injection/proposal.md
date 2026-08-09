@@ -15,7 +15,7 @@
 **根因**（云端日志 + 数据库取证）：
 - openid 与 QQ AppID **绑定**。8-08 早 .env 覆盖事故修复后云端 bot 从本地套
   （<LOCAL_APP_ID>）切回云端套（<CLOUD_APP_ID>），但 config.yml 的 `ownerId` 仍是
-  **本地 bot 维度**的 openid（<OPENID_PREFIX>…）→ 云端维度下无效 → 主动消息被 QQ API 拒绝
+  **本地 bot 维度**的 openid（<LOCAL_BOT_OPENID_PREFIX>）→ 云端维度下无效 → 主动消息被 QQ API 拒绝
 - 佐证：`proactive-state.json` 显示 9:00 早安成功（旧容器/本地 bot 维度）vs 12:30 失败
   （新容器/云端 bot 维度）；conversations 表 sessionId 确认用户真实 openid
 

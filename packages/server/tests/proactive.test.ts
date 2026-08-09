@@ -299,7 +299,7 @@ describe('ProactiveService — 节日识别 (todayFestival)', () => {
 describe('ProactiveService — sessionId 解析 openid (extractOpenid)', () => {
   it('解析私聊会话 ID', () => {
     const { svc } = makeService();
-    expect((svc as any).extractOpenid('qq-official-1:private:private_DD71D797')).toBe('DD71D797');
+    expect((svc as any).extractOpenid('qq-official-1:private:private_TEST_OPENID')).toBe('TEST_OPENID');
   });
 
   it('群聊/异常格式返回 null', () => {
@@ -318,7 +318,7 @@ describe('ProactiveService — 去重状态持久化', () => {
       const { svc } = makeService(stateFile);
       (svc as any).sentGreetings.add('2026-08-02-9');
       (svc as any).sentFestivals.add('2026-08-02');
-      (svc as any).lastCareByUser.set('DD71D797', '2026-08-02');
+      (svc as any).lastCareByUser.set('TEST_OPENID', '2026-08-02');
       svc.stop();
 
       // 文件已写入且结构正确
@@ -326,13 +326,13 @@ describe('ProactiveService — 去重状态持久化', () => {
       const saved = JSON.parse(readFileSync(stateFile, 'utf-8'));
       expect(saved.sentGreetings).toContain('2026-08-02-9');
       expect(saved.sentFestivals).toContain('2026-08-02');
-      expect(saved.lastCare['DD71D797']).toBe('2026-08-02');
+      expect(saved.lastCare['TEST_OPENID']).toBe('2026-08-02');
 
       // 实例 2：加载恢复（模拟重启）
       const { svc: svc2 } = makeService(stateFile);
       expect((svc2 as any).sentGreetings.has('2026-08-02-9')).toBe(true);
       expect((svc2 as any).sentFestivals.has('2026-08-02')).toBe(true);
-      expect((svc2 as any).lastCareByUser.get('DD71D797')).toBe('2026-08-02');
+      expect((svc2 as any).lastCareByUser.get('TEST_OPENID')).toBe('2026-08-02');
       svc2.stop();
     } finally {
       rmSync(dir, { recursive: true, force: true });
