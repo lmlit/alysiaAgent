@@ -194,3 +194,30 @@ describe('MemoryManager', () => {
     // Should not throw — verifies session end pipeline is wired up
   });
 });
+
+describe('MemoryManager — 8-09 getRecentDialogueBlock', () => {
+  let db: Database.Database;
+  let mm: MemoryManager;
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    initializeDatabase(db);
+    mm = new MemoryManager(db as any, null as any, null as any, null as any);
+    const now = new Date().toISOString();
+    mm.ingest({ id: 'u1', session_id: 'sess-d', source: 'chat', type: 'message', payload: { role: 'user', content: '你好呀' }, importance: 0.5, created_at: now, processed: 0 });
+    mm.ingest({ id: 'a1', session_id: 'sess-d', source: 'chat', type: 'message', payload: { role: 'assistant', content: '你好呀，昔涟在呢' }, importance: 0.3, created_at: now, processed: 0 });
+  });
+
+  afterEach(() => db.close());
+
+  it('返回 你/昔涟 标签的对话块', () => {
+    const block = mm.getRecentDialogueBlock('sess-d');
+    expect(block).toContain('【最近对话】');
+    expect(block).toContain('你: 你好呀');
+    expect(block).toContain('昔涟: 你好呀，昔涟在呢');
+  });
+
+  it('无消息返回空串', () => {
+    expect(mm.getRecentDialogueBlock('sess-empty')).toBe('');
+  });
+});

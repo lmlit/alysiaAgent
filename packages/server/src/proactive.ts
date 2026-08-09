@@ -293,6 +293,7 @@ export class ProactiveService {
         this.sentGreetings.add(key);
         this.greetingRetries.delete(key);
         this.scheduleSave();
+        this.writeback(text); // ★ 8-09：问候回写记忆
         logger.info(`[Proactive] greeting ${hour}:${minute}: sent`);
       } else {
         this.scheduleRetry(hour, minute, key); // false 路径：重试预算
@@ -401,8 +402,28 @@ export class ProactiveService {
       if (ok) {
         this.lastCareByUser.set(openid, today);
         this.scheduleSave();
+        this.writeback(msg); // ★ 8-09：关怀回写记忆
       }
       logger.info(`[Proactive] care → ${openid.slice(0, 8)}...: ${ok ? 'sent' : 'failed'}`);
+    }
+  }
+
+  /** ★ 8-09 回写：主动消息 ingest 进 EventLog（assistant 角色）——bot 记得自己发过问候/关怀。
+   *  复用 Life writeback 模式；失败不阻塞主流程。 */
+  private writeback(content: string): void {
+    try {
+      this.memoryManager.ingest({
+        id: `proactive-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        session_id: `qq-official-1:private:private_${this.opts.ownerOpenid}`,
+        source: 'chat',
+        type: 'message',
+        payload: { content, role: 'assistant' },
+        importance: 0.3,
+        created_at: new Date().toISOString(),
+        processed: 0,
+      }).catch(err => logger.warn(`[Proactive] writeback failed: ${err.message}`));
+    } catch (err: any) {
+      logger.warn(`[Proactive] writeback failed: ${err.message}`);
     }
   }
 

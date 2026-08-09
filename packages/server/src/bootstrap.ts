@@ -88,8 +88,10 @@ async function main() {
       stateFile: `${config.server.dataDir}/proactive-state.json`,
       // ★ LLM 个性化文案：以昔涟身份生成简短问候（30-60 字），失败回落写死文案
       generateText: async (context: string) => {
+        // ★ 8-09：问候也吃最近对话上下文（对话有 40 条注入，主动消息此前没有）
+        const dialogue = core.memoryManager.getRecentDialogueBlock(`qq-official-1:private:private_${config.bot.ownerId}`);
         const resp = await core.providerManager.textChatWithFallback({
-          prompt: context,
+          prompt: dialogue ? `${context}\n\n${dialogue}` : context,
           sessionId: 'proactive',
           systemPrompt: '你是昔涟，一个温柔贴心的 AI 伴侣。根据要求生成一条简短（30-60字）的个性化问候或祝福，语气温柔自然，只输出消息内容本身，不要解释。',
         });
@@ -114,8 +116,10 @@ async function main() {
       // ★ 8-09：responseFormat: 'json' 强制 json_object 模式（DeepSeek 层面保证输出合法
       //   JSON，根治 8-09 07:16 裸文本问题；life.ts 仍保留 fence 剥离 + 裸文本容错双保险）
       generateEvent: async (context: string) => {
+        // ★ 8-09：事件生成也吃最近对话上下文（贴合最近聊了什么）
+        const dialogue = core.memoryManager.getRecentDialogueBlock(`qq-official-1:private:private_${config.bot.ownerId}`);
         const resp = await core.providerManager.textChatWithFallback({
-          prompt: context,
+          prompt: dialogue ? `${context}\n\n${dialogue}` : context,
           sessionId: 'life-event',
           systemPrompt: '你是昔涟，此刻你正过着独属于自己的生活。你是被定时任务唤醒的——这不是用户发来的消息，不要问候、不要等回复。请根据提供的上下文，生成一个此刻可能发生在你身上的生活事件（1-2 句话，第一人称）。要求：贴合当前时间线；符合你的人设背景；剧情引用只可用【今天的生活】里带 [id: xxx] 的事件；可以引用世界书背景（返回其 wb 前缀 ID）；如果和用户聊得来可以生成想分享给他/她的内容；句子之间用句号自然停顿（内容会按句分段推送，模拟实时打字）。只输出 JSON: {"content": "...", "type": "chat|internal", "mood_delta": "...", "reference_event_id": "...", "wb_entry_id": "...", "next_in_hours": 2.5, "continuation_of": "life-xxx"}。其中 next_in_hours 是你建议的下一件事到来的间隔（0.5-8 小时，沉浸中给大值、想找轻月聊天给小值）；continuation_of 仅当延续【你正在做的事】时填其事件 id，否则省略',
           responseFormat: 'json',

@@ -95,7 +95,7 @@ describe('LifeService', () => {
     await svc.tick();
     expect(memoryManager.recordLifeEvent).toHaveBeenCalled();
     expect(qqOff.sendProactive).not.toHaveBeenCalled();
-    expect(memoryManager.ingest).not.toHaveBeenCalled();
+    expect(memoryManager.ingest).toHaveBeenCalled(); // ★ 8-09 C：internal 也回写记忆
   });
 
   it('deep night forces internal type — chat event stored as internal, never pushed', async () => {
@@ -112,9 +112,9 @@ describe('LifeService', () => {
     expect(memoryManager.recordLifeEvent).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'internal', content: '深夜看星星' })
     );
-    // 深夜不推送、不回写
+    // 深夜不推送（但回写记忆——AI 生活记录完整）
     expect(qqOff.sendProactive).not.toHaveBeenCalled();
-    expect(memoryManager.ingest).not.toHaveBeenCalled();
+    expect(memoryManager.ingest).toHaveBeenCalled(); // ★ 8-09 C：internal 也回写记忆
   });
 
   it('LLM 裸文本（无 JSON 外壳）→ 宽容解析直接作为事件内容并推送（8-09）', async () => {
@@ -165,7 +165,7 @@ describe('LifeService', () => {
       expect.objectContaining({ type: 'internal', moodDelta: '平静' })
     );
     expect(qqOff.sendProactive).not.toHaveBeenCalled();
-    expect(memoryManager.ingest).not.toHaveBeenCalled();
+    expect(memoryManager.ingest).toHaveBeenCalled(); // ★ 8-09 C：internal 也回写记忆
   });
 
   // ── P1 每日摘要：独立 generateSummary 纯文本回调，JSON 不污染 ──────────

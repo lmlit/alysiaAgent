@@ -13,3 +13,4 @@ data/
 *.tsbuildinfo
 tmp-trigger-profile.ts
 *.tsbuildinfo
+docs/Docker-Deployment.md

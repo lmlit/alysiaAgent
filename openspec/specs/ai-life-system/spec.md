@@ -206,6 +206,13 @@ LLM 可选 `continuation_of`（防幻觉：须命中今天事件 ID 集合）。
 **失败回落**：LLM 失败 → 从通用模板池随机取一条（`data/life-templates.json`），`type=internal`
 （8-09 修复：原实现回落 `t.type` 可能为 chat 导致模板推送、剧情链断裂——模板强制 internal 只入库不推送）。
 
+**事件回写**（8-09 C，change: proactive-memory-closure）：所有事件（chat 推送成功的 +
+internal）都回写 EventLog（assistant 角色）——bot 记得自己在做什么；internal 不进推送
+但进记忆。
+
+**事件生成上下文**（8-09 B）：generateEvent prompt 注入【最近对话】块
+（getRecentDialogueBlock，24h/40 条）——事件生成贴合最近聊了什么。
+
 **裸文本容错**（8-09，change: life-bare-text-event-tolerance）：LLM 偶发输出无 JSON 外壳的
 自然语言（8-09 07:16 实测：高质量剧情文本被 JSON.parse 丢弃 → fallback 模板推送）。
 JSON 解析失败但文本非空 → 直接作为事件 content，type 与 JSON 路径同规则

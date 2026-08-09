@@ -220,6 +220,28 @@ export class MemoryManager {
     return this.eventStore.getRecentBySession(sessionId, limit, since);
   }
 
+  /** ★ 8-09：最近对话注入块（主动消息生成器用——问候/Life 事件也吃对话上下文）。
+   *  格式与 memory-retrieval 的 [最近对话] 一致："[HH:MM] 你/昔涟: 内容"，24h 窗口 + limit 条。
+   *  无消息返回 ''。 */
+  getRecentDialogueBlock(sessionId: string, limit: number = 40): string {
+    try {
+      const recent = this.getRecentMessages(sessionId, limit, new Date(Date.now() - 24 * 3600 * 1000));
+      if (recent.length === 0) return '';
+      const p = (n: number) => String(n).padStart(2, '0');
+      const lines = recent.map(r => {
+        const d = r.createdAt ? new Date(r.createdAt) : null;
+        const time = d && !isNaN(d.getTime())
+          ? `[${p(d.getHours())}:${p(d.getMinutes())}]`
+          : '';
+        return `${time} ${r.role === 'user' ? '你' : '昔涟'}: ${r.content}`;
+      });
+      return `【最近对话】\n${lines.join('\n')}`;
+    } catch (err: any) {
+      logger.warn(`[Memory] getRecentDialogueBlock failed: ${err.message}`);
+      return '';
+    }
+  }
+
   // ===== AI 主动生活系统（v4）=====
 
   /** ★ 生活状态快照（Web 展示） */

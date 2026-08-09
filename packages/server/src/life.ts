@@ -183,8 +183,6 @@ export class LifeService {
         this.saveState();
         // ★ delivered=1（spec §5）：推送成功标记，Web 端可区分已推送/未推送
         if (evtId) this.memoryManager.markLifeEventDelivered(evtId);
-        // 回写记忆（assistant 角色）——用户回复时 AI 记得自己说过
-        await this.writebackToMemory(evt.content);
         logger.info(`[Life] pushed: ${evt.content.slice(0, 50)}`);
       } else {
         logger.info(`[Life] chat event degraded to internal (${inCooldown ? 'cooldown' : overDaily ? 'daily cap' : 'push failed'}): ${evt.content.slice(0, 50)}`);
@@ -192,6 +190,9 @@ export class LifeService {
     } else {
       logger.debug(`[Life] internal event (${deepNight ? 'deep night' : 'internal'}): ${evt.content.slice(0, 50)}`);
     }
+
+    // ★ 8-09 C：所有事件回写记忆（chat 推送成功的 + internal）——bot 记得自己在做什么
+    await this.writebackToMemory(evt.content);
 
     // ⑤ 事件驱动调度：nextEventAt = now + next_in_hours（LLM 建议，钳制 30min-8h；
     //    未给 → 默认 2h ± 抖动由 scheduleNextEvent 兜底）
