@@ -104,8 +104,10 @@ async function main() {
     const { LifeService } = await import('./life.js');
     const life = new LifeService(core.memoryManager, qqOff, {
       ownerOpenid: config.bot.ownerId,
-      probability: 0.3,
-      cooldownHours: 2,
+      // ★ 8-09 事件驱动调度：概率门已移除（life.ts 内部不再消费 probability）；
+      //   chat 推送冷却 2h → 1h；每日 chat 软上限 5 条（超限降级 internal）
+      cooldownHours: 1,
+      maxChatPushesPerDay: 5,
       chatLockMinutes: 30,
       stateFile: `${config.server.dataDir}/life-state.json`,
       // ★ LLM 事件生成：woke 模式，昔涟身份
@@ -115,7 +117,7 @@ async function main() {
         const resp = await core.providerManager.textChatWithFallback({
           prompt: context,
           sessionId: 'life-event',
-          systemPrompt: '你是昔涟，此刻你正过着独属于自己的生活。你是被定时任务唤醒的——这不是用户发来的消息，不要问候、不要等回复。请根据提供的上下文，生成一个此刻可能发生在你身上的生活事件（1-2 句话，第一人称）。要求：贴合当前时间线；符合你的人设背景；剧情引用只可用【今天的生活】里带 [id: xxx] 的事件；可以引用世界书背景（返回其 wb 前缀 ID）；如果和用户聊得来可以生成想分享给他/她的内容。只输出 JSON: {"content": "...", "type": "chat|internal", "mood_delta": "...", "reference_event_id": "...", "wb_entry_id": "..."}',
+          systemPrompt: '你是昔涟，此刻你正过着独属于自己的生活。你是被定时任务唤醒的——这不是用户发来的消息，不要问候、不要等回复。请根据提供的上下文，生成一个此刻可能发生在你身上的生活事件（1-2 句话，第一人称）。要求：贴合当前时间线；符合你的人设背景；剧情引用只可用【今天的生活】里带 [id: xxx] 的事件；可以引用世界书背景（返回其 wb 前缀 ID）；如果和用户聊得来可以生成想分享给他/她的内容；句子之间用句号自然停顿（内容会按句分段推送，模拟实时打字）。只输出 JSON: {"content": "...", "type": "chat|internal", "mood_delta": "...", "reference_event_id": "...", "wb_entry_id": "...", "next_in_hours": 2.5, "continuation_of": "life-xxx"}。其中 next_in_hours 是你建议的下一件事到来的间隔（0.5-8 小时，沉浸中给大值、想找轻月聊天给小值）；continuation_of 仅当延续【你正在做的事】时填其事件 id，否则省略',
           responseFormat: 'json',
         });
         return resp.role === 'assistant' ? resp.completionText : '';

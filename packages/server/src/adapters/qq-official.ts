@@ -67,6 +67,41 @@ interface QQTokenData {
   expires_in: number;
 }
 
+/** ★ 8-09 长文案分段（模拟实时打字节奏）。
+ *  切分规则：强停顿（。！？….\n）切句 → 贪心合段 ≤maxLen → 超长句按弱停顿（，；、）拆
+ *  → 字符硬切兜底；尾部碎段（<8 字）并入上一段。
+ *  导出供测试。 */
+export function segmentText(text: string, maxLen = 40): string[] {
+  const sentences = text.match(/[^。！？….\n]+[。！？….\n]?/g)?.map(s => s.trim()).filter(Boolean) ?? [];
+  const segments: string[] = [];
+  let buf = '';
+  for (let s of sentences) {
+    if (s.length > maxLen) {
+      // 超长句：弱停顿拆 → 字符硬切兜底
+      if (buf.trim()) segments.push(buf.trim());
+      buf = '';
+      const pieces = s.match(/[^，；、]+[，；、]?/g) ?? [s];
+      for (let p of pieces) {
+        while (p.length > maxLen) { segments.push(p.slice(0, maxLen)); p = p.slice(maxLen); }
+        if ((buf + p).length > maxLen) { if (buf.trim()) segments.push(buf.trim()); buf = p; }
+        else buf += p;
+      }
+      continue;
+    }
+    if ((buf + s).length > maxLen) { if (buf.trim()) segments.push(buf.trim()); buf = s; }
+    else buf += s;
+  }
+  if (buf.trim()) segments.push(buf.trim());
+  // 尾部碎段并入上一段（避免单独一段"好。"）
+  if (segments.length > 1 && segments[segments.length - 1].length < 8) {
+    const tail = segments.pop()!;
+    segments[segments.length - 1] = (segments[segments.length - 1] + tail).trim();
+  }
+  return segments;
+}
+
+const sleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms));
+
 export class QQOfficialAgentAdapter implements Platform {
   meta: PlatformMetadata;
   private eventBus!: EventBus;
@@ -628,15 +663,31 @@ export class QQOfficialAgentAdapter implements Platform {
   }
 
   /** ★ 主动消息发送（不带 msg_id，bot 主动发起）。
-   *  私聊互动窗口（48h）内可用；支持 [表情包:名字] 标记（文本+图片分开发）。 */
-  async sendProactive(openid: string, text: string): Promise<boolean> {
+   *  私聊互动窗口（48h）内可用；支持 [表情包:名字] 标记（文本+图片分开发）。
+   *  ★ 8-09 长文案自动分段（>60 字）：逐段发送模拟实时打字节奏——段间 500-900ms，
+   *    任一段失败立即中断；≤3 段，超出回退合并（配额克制）。 */
+  async sendProactive(openid: string, text: string, opts?: { maxSegments?: number }): Promise<boolean> {
     await this.ensureToken();
     const { text: cleanText, marks } = parseStickerMarks(text);
+    const maxSegments = opts?.maxSegments ?? 3;
 
-    // 先发文本
+    // 先发文本（长文案分段）
+    let sentAny = false;
     if (cleanText.trim()) {
-      const ok = await this.postMessage(openid, cleanText.trim());
-      if (!ok) return false;
+      let segments = cleanText.trim().length > 60 ? segmentText(cleanText) : [cleanText.trim()];
+      // 段数克制：超出上限 → 尾部合并进最后一段（不丢内容）
+      if (segments.length > maxSegments) {
+        segments[maxSegments - 1] += segments.slice(maxSegments).join('');
+        segments.length = maxSegments;
+      }
+      for (let i = 0; i < segments.length; i++) {
+        const seg = segments[i].trim();
+        if (!seg) continue;
+        const ok = await this.postMessage(openid, seg);
+        if (!ok) return false; // ★ 任一段失败立即中断（窗口关/限流），不再发后续段
+        sentAny = true;
+        if (i < segments.length - 1) await sleep(500 + Math.random() * 400); // 模拟打字停顿
+      }
     }
 
     // 再发表情包图片（私聊直发 srv_send_msg=true，uploadImage 内部完成发送）
@@ -650,7 +701,7 @@ export class QQOfficialAgentAdapter implements Platform {
     }
 
     // 文本和图片都为空 → 失败
-    if (!cleanText.trim() && marks.length === 0) return false;
+    if (!sentAny && marks.length === 0) return false;
     return true;
   }
 

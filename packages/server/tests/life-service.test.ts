@@ -45,11 +45,14 @@ describe('LifeService', () => {
     vi.restoreAllMocks();
   });
 
-  it('tick does nothing when probability gate fails (random > 0.3)', async () => {
-    vi.spyOn(Math, 'random').mockReturnValue(0.9);
-    const { memoryManager, qqOff } = makeMocks();
+  it('聊天锁：用户互动窗口内 → 跳过事件生成（8-09 概率门移除后由锁承担）', async () => {
+    freezeTime(14);
+    const { memoryManager, qqOff } = makeMocks({
+      getRecentMessages: vi.fn().mockReturnValue([{ role: 'user', content: 'hi' }]),
+    });
     const svc = new LifeService(memoryManager as any, qqOff as any, {
-      ownerOpenid: 'openid-1', probability: 0.3,
+      ownerOpenid: 'openid-1',
+      generateEvent: async () => '{"content":"x","type":"chat"}',
     });
     await svc.tick();
     expect(memoryManager.recordLifeEvent).not.toHaveBeenCalled();
@@ -413,6 +416,158 @@ describe('LifeService', () => {
     // longScore=5.25；activeScore=3；raw=46.375 → 平滑 30+(46.375-30)×0.79=42.936
     const call = memoryManager.updateLifeState.mock.calls[0][0] as { intimacy: number };
     expect(call.intimacy).toBeCloseTo(42.936, 2);
+  });
+});
+
+describe('LifeService — 事件驱动调度（8-09）', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('next_in_hours 决定下一次事件时间', async () => {
+    freezeTime(14);
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const { memoryManager } = makeMocks();
+    const svc = new LifeService(memoryManager as any, { sendProactive: vi.fn().mockResolvedValue(true) } as any, {
+      ownerOpenid: 'openid-1',
+      generateEvent: async () => '{"content":"在玩游戏","type":"internal","next_in_hours":3}',
+    });
+    await svc.tick();
+    const next = (svc as any).state.nextEventAt;
+    expect(next - Date.now()).toBeCloseTo(3 * 3_600_000, -2); // ≈3h（容差 ~10s）
+  });
+
+  it('next_in_hours 钳制：99 → 8h，0.1 → 0.5h', async () => {
+    freezeTime(14);
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    // 99 → 钳到 8h
+    const a = new LifeService(makeMocks().memoryManager as any, {} as any, {
+      ownerOpenid: 'openid-1',
+      generateEvent: async () => '{"content":"x","type":"internal","next_in_hours":99}',
+    });
+    await a.tick();
+    expect((a as any).state.nextEventAt - Date.now()).toBeCloseTo(8 * 3_600_000, -2);
+    // 0.1 → 钳到 0.5h
+    const b = new LifeService(makeMocks().memoryManager as any, {} as any, {
+      ownerOpenid: 'openid-1',
+      generateEvent: async () => '{"content":"x","type":"internal","next_in_hours":0.1}',
+    });
+    await b.tick();
+    expect((b as any).state.nextEventAt - Date.now()).toBeCloseTo(0.5 * 3_600_000, -2);
+  });
+
+  it('LLM 未给 next_in_hours → 默认间隔兜底（scheduleNextEvent 重排）', async () => {
+    freezeTime(14);
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const { memoryManager } = makeMocks();
+    const svc = new LifeService(memoryManager as any, {} as any, {
+      ownerOpenid: 'openid-1',
+      defaultIntervalHours: 2,
+      generateEvent: async () => '{"content":"x","type":"internal"}', // 无 next_in_hours
+    });
+    await svc.tick();
+    const next = (svc as any).state.nextEventAt;
+    expect(next - Date.now()).toBeCloseTo(2 * 3_600_000, -2); // clampIntervalHours(undefined)=0 → scheduleNextEvent 默认 2h
+  });
+
+  it('重启重排：nextEventAt 已过 → 排未来默认间隔，不补发', () => {
+    freezeTime(14);
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const { memoryManager } = makeMocks();
+    const svc = new LifeService(memoryManager as any, {} as any, { ownerOpenid: 'openid-1' });
+    (svc as any).state.nextEventAt = Date.now() - 60_000; // 错过的事件
+    svc.start();
+    expect((svc as any).eventTimer).not.toBeNull();
+    expect((svc as any).state.nextEventAt).toBeGreaterThan(Date.now() + 30 * 60_000);
+    svc.stop();
+  });
+});
+
+describe('LifeService — 剧情延续与推送节奏（8-09）', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('延续注入：8h 内 internal 事件 → prompt 含【你正在做的事】，continuation_of 透传', async () => {
+    freezeTime(14);
+    const ctx: string[] = [];
+    const { memoryManager } = makeMocks({
+      listLifeEvents: vi.fn().mockReturnValue([
+        { id: 'life-1', content: '在阳台看书', type: 'internal', createdAt: new Date(Date.now() - 2 * 3_600_000).toISOString() },
+      ]),
+    });
+    const svc = new LifeService(memoryManager as any, {} as any, {
+      ownerOpenid: 'openid-1',
+      generateEvent: async (c: string) => { ctx.push(c); return '{"content":"继续看书","type":"internal","continuation_of":"life-1"}'; },
+    });
+    await svc.tick();
+    expect(ctx[0]).toContain('【你正在做的事】');
+    expect(ctx[0]).toContain('在阳台看书');
+    expect(memoryManager.recordLifeEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ continuationOf: 'life-1' })
+    );
+  });
+
+  it('用户互动后重置沉浸：聊天锁命中 → 不生成事件（延续上下文不注入）', async () => {
+    freezeTime(14);
+    const gen = vi.fn().mockResolvedValue('{"content":"x","type":"internal"}');
+    const { memoryManager } = makeMocks({
+      getRecentMessages: vi.fn().mockReturnValue([{ role: 'user', content: 'hi' }]),
+      listLifeEvents: vi.fn().mockReturnValue([
+        { id: 'life-1', content: '在玩游戏', type: 'internal', createdAt: new Date(Date.now() - 1 * 3_600_000).toISOString() },
+      ]),
+    });
+    const svc = new LifeService(memoryManager as any, {} as any, { ownerOpenid: 'openid-1', generateEvent: gen });
+    await svc.tick();
+    expect(gen).not.toHaveBeenCalled();
+  });
+
+  it('chat 推送软上限：当日已满 → chat 事件降级入库不推送', async () => {
+    freezeTime(14);
+    const { memoryManager, qqOff } = makeMocks();
+    const svc = new LifeService(memoryManager as any, qqOff as any, {
+      ownerOpenid: 'openid-1',
+      maxChatPushesPerDay: 1,
+      cooldownHours: 0,
+      generateEvent: async () => '{"content":"想分享的事","type":"chat"}',
+    });
+    // ★ lastSummaryDate 置今天：防止 tick 开头的跨天检测把计数重置为 0
+    (svc as any).state.lastSummaryDate = '2026-08-06';
+    (svc as any).state.chatPushesToday = 1; // 当日已满
+    await svc.tick();
+    expect(qqOff.sendProactive).not.toHaveBeenCalled();
+    expect(memoryManager.recordLifeEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'chat' }));
+    expect(memoryManager.markLifeEventDelivered).not.toHaveBeenCalled();
+  });
+
+  it('chat 冷却：lastProactiveAt 1h 内 → 不推送（降级入库）', async () => {
+    freezeTime(14);
+    const { memoryManager, qqOff } = makeMocks();
+    const svc = new LifeService(memoryManager as any, qqOff as any, {
+      ownerOpenid: 'openid-1',
+      cooldownHours: 1,
+      generateEvent: async () => '{"content":"想分享的事","type":"chat"}',
+    });
+    (svc as any).state.lastProactiveAt = Date.now() - 30 * 60_000; // 30min 前推过
+    await svc.tick();
+    expect(qqOff.sendProactive).not.toHaveBeenCalled();
+    expect(memoryManager.recordLifeEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'chat' }));
+  });
+
+  it('跨天重置：chat 推送计数归零', async () => {
+    freezeTime(23); // 今天
+    const { memoryManager, qqOff } = makeMocks({ listLifeEvents: vi.fn().mockReturnValue([]) });
+    const svc = new LifeService(memoryManager as any, qqOff as any, {
+      ownerOpenid: 'openid-1', stateFile: undefined,
+      generateEvent: async () => '{"content":"x","type":"chat"}',
+    });
+    (svc as any).state.chatPushesToday = 4;
+    (svc as any).state.lastSummaryDate = '2026-08-05'; // 非今天 → 触发跨天逻辑
+    // 直接验证 maybeGenerateDailySummary 的重置副作用
+    await (svc as any).maybeGenerateDailySummary(new Date('2026-08-06T23:30:00'));
+    expect((svc as any).state.chatPushesToday).toBe(0);
   });
 });
 

@@ -30,9 +30,9 @@ migrated: 2026-08-07
 | 决策点 | 结论 |
 |--------|------|
 | 事件库 | 世界书人设背景（采样注入）+ 通用模板 + LLM 自创 |
-| 每小时触发概率 | 30%（约每天 5-7 个事件，可调） |
-| 主动聊天冷却 | ≥2 小时 |
-| 聊天锁 | 30 分钟内有用户互动 → 跳过本轮，下小时再试 |
+| 事件驱动调度（8-09） | 概率门移除；LLM `next_in_hours` 建议间隔（0.5-8h 钳制，沉浸/想聊可变） |
+| 主动聊天冷却 | ≥1 小时（8-09 从 2h 缩短）+ 每日 chat 软上限 5 条 |
+| 聊天锁 | 30 分钟内有用户互动 → 跳过本轮并顺延重排 |
 | 窗口外事件 | 照常生成（生活积累），窗口内尝试推送 |
 | 事件时间感知 | 生成器/事件流注入/判定器全部注入当前本地时间 |
 | 事件连续性 | 事件可引用历史事件（剧情链），每日摘要生成 |
@@ -119,32 +119,47 @@ CREATE TABLE ai_life_daily_summaries (
 
 ---
 
-## 5. 事件判定器（每小时 tick）
+## 5. 事件判定器（8-09 起：事件驱动调度，替代每小时 tick + 概率门）
 
 ```
+启动 → scheduleNextEvent(): 用持久化 nextEventAt；已过/缺失 → 重排 now + 默认2h(±30min抖动)
+      ↓ 到点
 tick() {
-  if (随机() > 0.3) return;                    // 概率门 30%
-  if (now - lastProactive < 2h) return;        // 冷却门
-  if (最近30分钟有用户互动) return;            // 聊天锁
+  if (最近30分钟有用户互动) return;            // 聊天锁（顺延重排下一次）
   const deepNight = now.hour 在 0-7;
 
-  const event = await 事件生成器(deepNight);    // LLM
+  const event = await 事件生成器(deepNight);    // LLM，带回 next_in_hours / continuation_of
   存入 ai_life_events;
 
-  if (event.type === 'chat' && !deepNight && 窗口内) {
-    const ok = await sendProactive(ownerOpenid, event.content);
-    if (ok) {
-      delivered = 1;
-      await 回写EventStore(event);             // assistant 角色
-    }
+  if (event.type === 'chat' && !deepNight && 冷却通过 && 未超日上限) {
+    const ok = await sendProactive(ownerOpenid, event.content);  // 长文案自动分段
+    if (ok) { delivered = 1; 回写EventStore; }
   }
+  // 冷却中 / 超日上限 → chat 降级 internal（照常入库不推送）
   // 窗口外/deepNight：积累，等补叙（二期）
+
+  nextEventAt = now + clamp(LLM 建议 next_in_hours, 0.5h, 8h);  // 未建议 → 默认2h抖动
+  持久化 state.json; scheduleNextEvent();
 }
 ```
+
+**8-09 变更**（change: ai-life-event-driven-scheduling）：
+- 概率门（30%）**移除**——触发时机的不确定性由 LLM `next_in_hours` 建议承担（事件内容
+  决定时间："玩游戏"→ 沉浸 3h 后再来）
+- `next_in_hours`（0.5-8h 钳制）与 `continuation_of`（延续【你正在做的事】）进事件 schema
+- 重启**重排不补发**（nextEventAt 已过 → 默认间隔重排，错过即错过）
+- chat 推送冷却 2h → **1h**；新增**每日 chat 软上限**（默认 5 条，超限降级 internal）
+- 聊天锁命中 → 重置沉浸（不注入延续块）+ 顺延重排
 
 **聊天锁实现**：`EventStore.getRecentBySession(umo, 1, new Date(Date.now()-30min))` 有记录 → 跳过。
 
 **深夜抑制**：0-7 点事件仍生成但 `type` 强制 `internal`（生活积累不打扰）。
+
+**延续机制**：最近 8h 内 internal 事件 + 30min 无用户互动 → 注入【你正在做的事】块，
+LLM 可选 `continuation_of`（防幻觉：须命中今天事件 ID 集合）。
+
+**长文案分段发送**（sendProactive）：>60 字自动按标点分段（≤40 字/段、段间 500-900ms、
+任一段失败立即中断、≤3 段超出合并）——模拟实时打字节奏；prompt 约束句号自然断句。
 
 ---
 
