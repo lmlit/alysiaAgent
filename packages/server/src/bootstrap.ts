@@ -10,7 +10,7 @@ if (envResult.error) {
   logger.info(`.env loaded from ${envPath}`);
 }
 
-import { AlysiaCore, logger, DEFAULT_SAMPLING } from '@alysia/core';
+import { AlysiaCore, logger, startDailyLogCleanup, DEFAULT_SAMPLING } from '@alysia/core';
 import { createReminderTool } from '@alysia/core/tools';
 import { VisionBridge } from '@alysia/core/vision';
 import { TelegramAdapter } from './adapters/telegram.js';
@@ -25,6 +25,9 @@ async function main() {
   // ★ 日志文件持久化：data/logs/alysia-YYYY-MM-DD.log（控制台 + 文件双写，保留 7 天）
   logger.configure({ logDir: `${config.server.dataDir}/logs` });
   logger.info(`Log file: ${config.server.dataDir}/logs/alysia-${new Date().toISOString().slice(0, 10)}.log`);
+  // ★ 8-10 长跑容器内每日清理（启动时 configure 已清一次；保留 7 天——用户要求
+  //   保留足够日志供异常分析，清理太频繁会丢失信息）
+  startDailyLogCleanup();
 
   const core = new AlysiaCore({
     dbPath: `${config.server.dataDir}/alysia.db`,

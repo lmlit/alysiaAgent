@@ -1,4 +1,4 @@
-export { logger } from './utils/logger.js';
+export { logger, startDailyLogCleanup } from './utils/logger.js';
 // ★ 8-10 采样参数统一配置（sampling-config-unify）：类型 + 默认 floor 导出，
 //   server 侧 config.yml 覆盖时从主入口导入
 export { DEFAULT_SAMPLING, mergeSampling, slotToBody } from './provider/sampling.js';

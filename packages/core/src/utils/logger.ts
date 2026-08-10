@@ -47,6 +47,17 @@ function cleanupOldLogs(): void {
   } catch { /* cleanup failure is non-fatal */ }
 }
 
+/** 每日定时清理（保留 7 天日志，用户拍板：清理太频繁会丢失分析信息）。
+ *  configure 时已清理一次（启动），此处补长跑容器内的定期清理。
+ *  logDir 未配置（测试/CLI）返回 null，不启动定时器。 */
+export function startDailyLogCleanup(
+  intervalMs: number = 24 * 60 * 60 * 1000,
+): NodeJS.Timeout | null {
+  if (!logDir) return null;
+  cleanupOldLogs(); // 立即执行一次（幂等）
+  return setInterval(cleanupOldLogs, intervalMs);
+}
+
 function fmt(level: string, msg: string, ...args: unknown[]): void {
   const line = `[${ts()}] [${level}] ${msg}`;
   const full = args.length > 0 ? `${line} ${args.map(a => formatArg(a)).join(' ')}` : line;

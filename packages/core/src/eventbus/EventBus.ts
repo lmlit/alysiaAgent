@@ -24,14 +24,19 @@ export class EventBus {
     this.schedulerMap.delete(umo);
   }
 
-  put(event: MessageEvent): void {
+  /**
+   * @param opts.priority 插队（unshift 到队首）——Coalescer flush 的合并事件用，
+   *   优先于排队中的其他消息处理（不乱序、不延迟）
+   */
+  put(event: MessageEvent, opts?: { priority?: boolean }): void {
     // Rate limit: drop oldest event if queue is full
     if (this.queue.length >= EventBus.MAX_QUEUE) {
       logger.warn(`EventBus queue full (${EventBus.MAX_QUEUE}), dropping oldest event`);
       this.queue.shift();
     }
-    logger.debug(`EventBus put: ${event.unifiedMsgOrigin} queue=${this.queue.length + 1}`);
-    this.queue.push(event);
+    logger.debug(`EventBus put: ${event.unifiedMsgOrigin} queue=${this.queue.length + 1}${opts?.priority ? ' (priority)' : ''}`);
+    if (opts?.priority) this.queue.unshift(event);
+    else this.queue.push(event);
     // Wake up dispatch loop. JS single-threaded → no race on resolveWaiters.
     const waiters = this.resolveWaiters;
     this.resolveWaiters = [];
@@ -75,7 +80,15 @@ export class EventBus {
         }
         try {
           logger.info(`EventBus dispatch → ${umo} (pipeline ${event.pipelineMode ?? 'chat'})`);
-          await scheduler.execute(event);
+          // ★ 8-10 私聊并发（eventbus-concurrent-private-dispatch）：不 await——
+          //   每条私聊消息立即进 pipeline，A 在飞时 B 到达 → Coalescer isInFlight
+          //   判定成立 → abort + 合并（串行下 B 排队等 A 完成，合并永不触发）。
+          //   群聊保持 await 串行（用户拍板"群聊逐条回复"）。
+          if (event.isPrivateChat()) {
+            scheduler.execute(event).catch(err => logger.error('Pipeline error:', err));
+          } else {
+            await scheduler.execute(event);
+          }
         } catch (err) {
           logger.error('Pipeline error:', err);
         }

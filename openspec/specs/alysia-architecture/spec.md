@@ -258,7 +258,9 @@ class EventBus {
 > 2026-08-10 修订（change: coalescer-immediate-flush，已归档）——窗口行为改为
 > "即时生成 + 打断累计"，取消固定 debounce 延迟；
 > 2026-08-10 修复（change: coalescer-abort-race-fix，已归档）——打断竞态：
-> fetch 已 resolve 但返回前被打断 → 结果必须丢弃（防双重回复）。
+> fetch 已 resolve 但返回前被打断 → 结果必须丢弃（防双重回复）；
+> 2026-08-10 修复（change: eventbus-concurrent-private-dispatch，已归档）——
+> 根因修复：EventBus 串行调度导致打断合并永不触发 → 私聊并发 + 群聊串行。
 
 **背景**：每条入站消息触发一次 LLM 请求，用户连续分条发会并行触发多条回复，体验混乱。
 
@@ -281,6 +283,14 @@ class CoalescerStage {
 **核心时序**：消息1 立即生成 → 消息2 到达（回复未出）→ 打断 + 累计 → 消息1 生成
 被 abort 结束 → 即时 flush 合并事件 [消息1+消息2] 重发 → 消息3 到达（合并生成中）
 → 再打断 → 合并事件 [消息1+消息2+消息3]……"没有回复就能累计"，直到回复真正出来。
+
+**EventBus 调度契约（MUST，eventbus-concurrent-private-dispatch）**：打断合并的
+前提是"消息 B 到达时 A 仍在生成"——EventBus 对**私聊事件必须并发 dispatch**
+（`scheduler.execute` 不 await，fire-and-forget）；**群聊事件保持串行**
+（await，逐条回复）。串行调度下 B 排队等 A 完成、isInFlight 恒 false → 合并
+空转（线上实测踩坑）。合并事件 flush 时 `put(event, {priority})` **插队到队首**
+（优先于排队中的其他消息，不乱序）。并发安全：各 stage 均无共享可变状态或
+better-sqlite3 同步写（WAL），无需锁。
 
 **接缝约束（MUST）**：
 - **按 session 分桶**：`Map<sessionId, {events}>`，key = sessionId，禁止全局合并

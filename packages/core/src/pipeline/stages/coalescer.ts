@@ -177,7 +177,8 @@ export class CoalescerStage implements Stage {
       logger.error('[Coalescer] eventBus not wired, merged messages dropped');
       return;
     }
-    this.eventBus.put(mergedEvent);
+    // ★ 8-10 priority 插队：合并事件优先于排队中的其他消息（EventBus unshift 队首）
+    this.eventBus.put(mergedEvent, { priority: true });
     logger.info(`[Coalescer] merged ${1 + bucket.events.length} msg(s) as one → ${mergedStr.slice(0, 60).replace(/\n/g, ' ')}`);
   }
 }
