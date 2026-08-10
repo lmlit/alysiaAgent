@@ -254,7 +254,9 @@ class EventBus {
 
 ### 3.5 输入合并 + 打断（input-coalescing-and-abort, 8-10）
 
-> 变更日志：2026-08-10 新增（change: input-coalescing-and-abort，已归档）。
+> 变更日志：2026-08-10 新增（change: input-coalescing-and-abort，已归档）；
+> 2026-08-10 修订（change: coalescer-immediate-flush，已归档）——窗口行为改为
+> "即时生成 + 打断累计"，取消固定 debounce 延迟。
 
 **背景**：每条入站消息触发一次 LLM 请求，用户连续分条发会并行触发多条回复，体验混乱。
 
@@ -264,28 +266,39 @@ class EventBus {
 
 ```typescript
 class CoalescerStage {
-  // 桶: Map<sessionId, { events, timer, capTimer }>  （按 session 分桶，禁止全局合并）
-  // 私聊: 首条消息入桶 → debounce 10s（新消息重置）+ 上限 10s（强制 flush，防涓流）
-  // flush: 换行拼接消息 → 合并 MessageEvent（coalesced 标记）→ 重入 EventBus（串行）
+  // 桶: Map<sessionId, { events, capTimer }>  （按 session 分桶，禁止全局合并）
+  // 私聊: 首条消息【立即放行】触发生成（无窗口延迟，不等任何时间）
+  //       新消息到达时若在飞生成（回复未出）→ abort 打断 + 消息入桶累计
+  //       被打断生成结束（onGenerationAborted 回调）→ 立即 flush 合并事件重发
+  //       回复已出（无在飞）→ 新消息即独立首条，立即放行
+  // 兜底: capTimer 10s——仅防 onGenerationAborted 回调丢失时桶悬挂（正常路径不等待）
   // 群聊: 不合并不打断（保持现状逐条回复）
 }
 ```
 
+**核心时序**：消息1 立即生成 → 消息2 到达（回复未出）→ 打断 + 累计 → 消息1 生成
+被 abort 结束 → 即时 flush 合并事件 [消息1+消息2] 重发 → 消息3 到达（合并生成中）
+→ 再打断 → 合并事件 [消息1+消息2+消息3]……"没有回复就能累计"，直到回复真正出来。
+
 **接缝约束（MUST）**：
-- **按 session 分桶**：`Map<sessionId, {events, timer}>`，key = sessionId，禁止全局合并
+- **按 session 分桶**：`Map<sessionId, {events}>`，key = sessionId，禁止全局合并
+- **首条立即放行**：无固定窗口延迟——窗口时长 = 大模型回复时间（回复出了新消息即独立请求；
+  回复没出就打断累计），10s 上限仅兜底
 - **EventLog 忠实**：每条原始消息照常走 pii-filter → memory-ingest（独立 ingest）；
   合并事件带 `coalesced` 标记，pii-filter/memory-ingest 跳过（不双计合并文本）
-- **打断必须传到 fetch**：`AbortRegistry`（Map<sessionId, AbortController>）——任何新消息
-  到达即 `abort()` 旧 controller；llm-agent 取当前 signal → runner 每步检查 →
-  `ProviderRequest.signal` → openai.ts 组合进 fetch（addEventListener + 60s timeout）。
-  只调 `.abort()` 而 signal 没到 fetch = 假打断（后端继续烧 token），禁止
+- **打断必须传到 fetch**：`AbortRegistry`（Map<sessionId, AbortController> +
+  `isInFlight`）——任何新消息到达即 `abort()` 旧 controller；llm-agent 取当前 signal →
+  runner 每步检查 → `ProviderRequest.signal` → openai.ts 组合进 fetch
+  （addEventListener + 60s timeout）。只调 `.abort()` 而 signal 没到 fetch = 假打断
+  （后端继续烧 token），禁止
+- **即时 flush 触发**：llm-agent 被打断分支必须回调 `onGenerationAborted(sessionId,
+  abortedEvent)`（携带被打断事件文本作合并基底），Coalescer 立即 flush 累计消息
 - **fallback 保护**：signal 已 abort 时 ProviderManager 不再切换 fallback provider
 - **非流式打断干净**：生成完成才发送；打断发生在 gen 阶段 = 未发任何内容，丢弃即可
   （runner 返回 `aborted` 标记，llm-agent 不设 response_chain、不回写 EventLog）
 - **图片预热**：适配器图片描述 fire-and-forget 挂 `pending_image_descs` extra；
   flush 时 await 全部再拼 `[图片内容: <描述>]` 前置文本；合并事件不带图片组件
   （DeepSeek 只看文字 + 描述，图文不阻塞）
-- **窗口时长**：debounce 10s / 上限 10s（用户拍板）
 
 ---
 

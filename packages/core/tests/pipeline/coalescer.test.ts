@@ -1,4 +1,5 @@
 // tests/pipeline/coalescer.test.ts — ★ 8-10 输入合并 + 打断（input-coalescing-and-abort）
+// 8-10 修订行为：首条立即放行（无窗口延迟），新消息打断在飞 + 累计合并，回复已出则独立放行
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { MessageEvent } from '../../src/platform/event';
 import { MessageType } from '../../src/platform/types';
@@ -7,6 +8,8 @@ import { CoalescerStage } from '../../src/pipeline/stages/coalescer';
 import { AbortRegistry } from '../../src/pipeline/abort-registry';
 import { AgentRunner } from '../../src/agent/runner';
 import type { PipelineContext } from '../../src/pipeline/types';
+
+const SESSION = 't-1:private:private_owner';
 
 function makeEvent(text: string, type: MessageType = MessageType.PRIVATE): MessageEvent {
   const message: Message = {
@@ -37,75 +40,112 @@ function makeCtx(): PipelineContext {
 }
 
 describe('CoalescerStage', () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  it('私聊首条消息缓冲不 yield（后续 stage 不执行），debounce 后 flush 单条', async () => {
-    const stage = new CoalescerStage(undefined, { debounceMs: 1000, maxWaitMs: 5000 });
+  it('首条消息立即放行（yield，不等窗口），回复未出时新消息打断在飞并累计', async () => {
+    const stage = new CoalescerStage(undefined, { maxWaitMs: 10_000 });
     await stage.initialize(makeCtx());
     const put = vi.fn();
     stage.setEventBus({ put } as any);
 
-    const ev = makeEvent('你好');
-    const gen = stage.process(ev);
-    const r = await gen.next();
-    expect(r.done).toBe(true); // 不 yield → scheduler 不再跑后续 stage
+    // 首条：无在飞 → yield（后续 stage 立即跑，LLM 请求即刻发出）
+    const gen1 = stage.process(makeEvent('第一条'));
+    const r1 = await gen1.next();
+    expect(r1.done).toBe(false); // yield = 立即放行
     expect(put).not.toHaveBeenCalled();
 
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(put).toHaveBeenCalledTimes(1);
-    const merged = put.mock.calls[0][0] as MessageEvent;
-    expect(merged.messageStr).toBe('你好');
-    expect(merged.getExtra('coalesced')).toBe(true);
+    // 模拟 llm-agent 已在飞（取 controller）
+    const registry = stage.getAbortRegistry();
+    const ctrl = registry.getOrCreate(SESSION);
+    expect(registry.isInFlight(SESSION)).toBe(true);
+
+    // 第二条：回复未出 → 打断 + 缓冲（不 yield），不立即 put
+    const gen2 = stage.process(makeEvent('第二条'));
+    const r2 = await gen2.next();
+    expect(r2.done).toBe(true); // 不 yield（等合并）
+    expect(ctrl.signal.aborted).toBe(true);
+    expect(put).not.toHaveBeenCalled();
+    expect(registry.isInFlight(SESSION)).toBe(false);
   });
 
-  it('连发 3 条 → 只 flush 1 次合并（换行拼接），EventBus 只收到 1 个合并事件', async () => {
-    const stage = new CoalescerStage(undefined, { debounceMs: 1000, maxWaitMs: 5000 });
+  it('被打断的生成结束（onGenerationAborted）→ 即时 flush 合并事件（含被打断文本）', async () => {
+    const stage = new CoalescerStage(undefined, { maxWaitMs: 10_000 });
     await stage.initialize(makeCtx());
     const put = vi.fn();
     stage.setEventBus({ put } as any);
 
-    for (const text of ['第一条', '第二条', '第三条']) {
-      const gen = stage.process(makeEvent(text));
-      expect((await gen.next()).done).toBe(true);
-    }
-    expect(put).not.toHaveBeenCalled();
+    const gen1 = stage.process(makeEvent('第一条'));
+    await gen1.next();
+    const registry = stage.getAbortRegistry();
+    registry.getOrCreate(SESSION);
 
-    await vi.advanceTimersByTimeAsync(1000);
+    const gen2 = stage.process(makeEvent('第二条'));
+    await gen2.next();
+
+    // 模拟 llm-agent：第一条生成被打断 → 回调 onGenerationAborted
+    const abortedEvent = makeEvent('第一条'); // 被打断事件（llm-agent 传入）
+    await stage.onGenerationAborted(SESSION, abortedEvent);
+
     expect(put).toHaveBeenCalledTimes(1);
     const merged = put.mock.calls[0][0] as MessageEvent;
-    expect(merged.messageStr).toBe('第一条\n第二条\n第三条');
+    expect(merged.messageStr).toBe('第一条\n第二条'); // 被打断文本 + 累计消息
     expect(merged.getExtra('coalesced')).toBe(true);
-    // 合并事件无图片组件（纯文本，DeepSeek 只看描述）
-    expect(merged.getMessages()).toHaveLength(1);
     expect(merged.getMessages()[0].type).toBe('plain');
   });
 
-  it('涓流上限：新消息不断重置 debounce，maxWait 到点强制 flush', async () => {
-    const stage = new CoalescerStage(undefined, { debounceMs: 1000, maxWaitMs: 2000 });
+  it('回复已出（无在飞）→ 新消息独立放行（不合并）', async () => {
+    const stage = new CoalescerStage(undefined, { maxWaitMs: 10_000 });
     await stage.initialize(makeCtx());
     const put = vi.fn();
     stage.setEventBus({ put } as any);
 
-    const texts = ['a', 'b', 'c'];
-    for (let i = 0; i < texts.length; i++) {
-      const gen = stage.process(makeEvent(texts[i]));
-      await gen.next();
-      await vi.advanceTimersByTimeAsync(500); // 每条间隔 500ms < debounce，窗口内持续重置
-    }
-    expect(put).not.toHaveBeenCalled(); // 600ms + 1100ms + 1600ms 均未到 debounce 终点
+    const gen1 = stage.process(makeEvent('第一条'));
+    await gen1.next();
+    // 第一条请求正常完成（release）→ 无在飞
+    stage.getAbortRegistry().release(SESSION);
 
-    await vi.advanceTimersByTimeAsync(500); // 2100ms > maxWait 2000ms → 强制 flush
-    expect(put).toHaveBeenCalledTimes(1);
-    expect((put.mock.calls[0][0] as MessageEvent).messageStr).toBe('a\nb\nc');
+    const gen2 = stage.process(makeEvent('第二条'));
+    const r2 = await gen2.next();
+    expect(r2.done).toBe(false); // 直接放行，独立请求
+    expect(put).not.toHaveBeenCalled();
+  });
+
+  it('打断累计：多次打断后合并文本包含全部消息（没有回复就能累计）', async () => {
+    const stage = new CoalescerStage(undefined, { maxWaitMs: 10_000 });
+    await stage.initialize(makeCtx());
+    const put = vi.fn();
+    stage.setEventBus({ put } as any);
+
+    // 首条放行 → 在飞
+    const gen1 = stage.process(makeEvent('m1'));
+    await gen1.next();
+    stage.getAbortRegistry().getOrCreate(SESSION);
+
+    // m2 打断 → 累计
+    const gen2 = stage.process(makeEvent('m2'));
+    await gen2.next();
+    await stage.onGenerationAborted(SESSION, makeEvent('m1'));
+    const merged1 = put.mock.calls[0][0] as MessageEvent;
+    expect(merged1.messageStr).toBe('m1\nm2');
+
+    // 合并事件重入 → 放行（coalesced）→ 在飞
+    const gen3 = stage.process(merged1);
+    await gen3.next();
+    const ctrl2 = stage.getAbortRegistry().getOrCreate(SESSION);
+
+    // m3 再打断 → 累计 → 合并 = 前次合并文本 + m3
+    const gen4 = stage.process(makeEvent('m3'));
+    await gen4.next();
+    expect(ctrl2.signal.aborted).toBe(true);
+    await stage.onGenerationAborted(SESSION, merged1);
+    const merged2 = put.mock.calls[1][0] as MessageEvent;
+    expect(merged2.messageStr).toBe('m1\nm2\nm3');
   });
 
   it('群聊消息直接 yield（不合并不打断，逐条处理）', async () => {
-    const stage = new CoalescerStage(undefined, { debounceMs: 1000, maxWaitMs: 5000 });
+    const stage = new CoalescerStage(undefined, { maxWaitMs: 10_000 });
     await stage.initialize(makeCtx());
     const put = vi.fn();
     stage.setEventBus({ put } as any);
@@ -119,7 +159,7 @@ describe('CoalescerStage', () => {
   });
 
   it('合并事件（coalesced 标记）直接放行不再次缓冲', async () => {
-    const stage = new CoalescerStage(undefined, { debounceMs: 1000, maxWaitMs: 5000 });
+    const stage = new CoalescerStage(undefined, { maxWaitMs: 10_000 });
     await stage.initialize(makeCtx());
     const put = vi.fn();
     stage.setEventBus({ put } as any);
@@ -132,49 +172,77 @@ describe('CoalescerStage', () => {
     expect(put).not.toHaveBeenCalled();
   });
 
-  it('图片预热：flush 时 await pending 描述并拼入合并文本（描述前置）', async () => {
-    const stage = new CoalescerStage(undefined, { debounceMs: 1000, maxWaitMs: 5000 });
+  it('图片预热：flush 时 await 被打断事件 + 累计消息的 pending 描述并前置拼接', async () => {
+    const stage = new CoalescerStage(undefined, { maxWaitMs: 10_000 });
     await stage.initialize(makeCtx());
     const put = vi.fn();
     stage.setEventBus({ put } as any);
 
-    const ev = makeEvent('看看这张图');
-    ev.setExtra('pending_image_descs', [
-      Promise.resolve('一只橘猫在沙发上睡觉'),
-    ]);
-    const gen = stage.process(ev);
-    await gen.next();
+    const gen1 = stage.process(makeEvent('看看这张图'));
+    await gen1.next();
+    stage.getAbortRegistry().getOrCreate(SESSION);
 
-    await vi.advanceTimersByTimeAsync(1000);
+    const ev2 = makeEvent('还有这张');
+    ev2.setExtra('pending_image_descs', [Promise.resolve('一只橘猫在沙发上睡觉')]);
+    const gen2 = stage.process(ev2);
+    await gen2.next();
+
+    const aborted = makeEvent('看看这张图');
+    aborted.setExtra('pending_image_descs', [Promise.resolve('一张夕阳照片')]);
+    await stage.onGenerationAborted(SESSION, aborted);
+
     const merged = put.mock.calls[0][0] as MessageEvent;
-    expect(merged.messageStr).toBe('[图片内容: 一只橘猫在沙发上睡觉]\n看看这张图');
+    expect(merged.messageStr).toBe(
+      '[图片内容: 一张夕阳照片]\n[图片内容: 一只橘猫在沙发上睡觉]\n看看这张图\n还有这张',
+    );
   });
 
-  it('新消息到达即 abort 在飞 controller（打断注册表）', async () => {
-    const registry = new AbortRegistry();
-    const stage = new CoalescerStage(registry, { debounceMs: 1000, maxWaitMs: 5000 });
+  it('兜底上限：onGenerationAborted 未触发时 maxWait 到点强制 flush（用 in-flight 基底）', async () => {
+    vi.useFakeTimers();
+    const stage = new CoalescerStage(undefined, { maxWaitMs: 1000 });
     await stage.initialize(makeCtx());
     const put = vi.fn();
     stage.setEventBus({ put } as any);
 
-    // 第一条消息入桶 → 模拟 llm-agent 取 controller（在飞请求）
     const gen1 = stage.process(makeEvent('第一条'));
     await gen1.next();
-    const ctrl1 = registry.getOrCreate('t-1:private:private_owner');
+    stage.getAbortRegistry().getOrCreate(SESSION);
 
-    // 第二条消息到达 → 打断在飞
     const gen2 = stage.process(makeEvent('第二条'));
     await gen2.next();
-    expect(ctrl1.signal.aborted).toBe(true);
+    expect(put).not.toHaveBeenCalled();
 
-    // 新 controller 可用（合并请求用）
-    const ctrl2 = registry.getOrCreate('t-1:private:private_owner');
-    expect(ctrl2.signal.aborted).toBe(false);
-    expect(ctrl2).not.toBe(ctrl1);
+    await vi.advanceTimersByTimeAsync(1100); // capTimer 到点
+    expect(put).toHaveBeenCalledTimes(1);
+    expect((put.mock.calls[0][0] as MessageEvent).messageStr).toBe('第一条\n第二条');
+  });
+
+  it('无累计消息时 onGenerationAborted 不产生合并事件', async () => {
+    const stage = new CoalescerStage(undefined, { maxWaitMs: 10_000 });
+    await stage.initialize(makeCtx());
+    const put = vi.fn();
+    stage.setEventBus({ put } as any);
+
+    const gen1 = stage.process(makeEvent('第一条'));
+    await gen1.next();
+    stage.getAbortRegistry().getOrCreate(SESSION);
+
+    // 被打断但没有新消息累计 → 无桶 → 不 flush
+    await stage.onGenerationAborted(SESSION, makeEvent('第一条'));
+    expect(put).not.toHaveBeenCalled();
   });
 });
 
 describe('AbortRegistry', () => {
+  it('isInFlight：controller 存在且未 abort 才为 true', () => {
+    const r = new AbortRegistry();
+    expect(r.isInFlight('s1')).toBe(false);
+    const ctrl = r.getOrCreate('s1');
+    expect(r.isInFlight('s1')).toBe(true);
+    r.abort('s1');
+    expect(r.isInFlight('s1')).toBe(false);
+  });
+
   it('release 不 abort 只清理', () => {
     const r = new AbortRegistry();
     const ctrl = r.getOrCreate('s1');

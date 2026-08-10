@@ -22,9 +22,13 @@ export class AbortRegistry {
     if (ctrl) {
       ctrl.abort();
       this.controllers.delete(sessionId);
-      return;
     }
-    // 没有在飞请求也预占一个已中止的？不——直接无操作，下次 getOrCreate 新建即可
+  }
+
+  /** 该 session 是否有在飞（未完成、未中止）请求——Coalescer 判定"打断合并" vs "直接放行" */
+  isInFlight(sessionId: string): boolean {
+    const ctrl = this.controllers.get(sessionId);
+    return !!ctrl && !ctrl.signal.aborted;
   }
 
   /** 请求正常完成后调用（清理防泄漏；不 abort） */

@@ -115,9 +115,11 @@ export class LLMAgentStage implements Stage {
       abortCtrl?.signal,
     );
 
-    // ★ 8-10 打断：生成被新消息中断 → 丢弃（未发任何内容），不设置回复、不回写记忆
+    // ★ 8-10 打断：生成被新消息中断 → 丢弃（未发任何内容），不设置回复、不回写记忆；
+    //   通知 Coalescer 即时 flush 累计消息（合并重发）
     if (result.aborted) {
       logger.info(`[LLMAgent] generation aborted (${event.unifiedMsgOrigin.slice(-16)}), response discarded`);
+      this.ctx.coalescer?.onGenerationAborted(event.unifiedMsgOrigin, event);
       return;
     }
 
