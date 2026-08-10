@@ -256,7 +256,9 @@ class EventBus {
 
 > 变更日志：2026-08-10 新增（change: input-coalescing-and-abort，已归档）；
 > 2026-08-10 修订（change: coalescer-immediate-flush，已归档）——窗口行为改为
-> "即时生成 + 打断累计"，取消固定 debounce 延迟。
+> "即时生成 + 打断累计"，取消固定 debounce 延迟；
+> 2026-08-10 修复（change: coalescer-abort-race-fix，已归档）——打断竞态：
+> fetch 已 resolve 但返回前被打断 → 结果必须丢弃（防双重回复）。
 
 **背景**：每条入站消息触发一次 LLM 请求，用户连续分条发会并行触发多条回复，体验混乱。
 
@@ -296,6 +298,13 @@ class CoalescerStage {
 - **fallback 保护**：signal 已 abort 时 ProviderManager 不再切换 fallback provider
 - **非流式打断干净**：生成完成才发送；打断发生在 gen 阶段 = 未发任何内容，丢弃即可
   （runner 返回 `aborted` 标记，llm-agent 不设 response_chain、不回写 EventLog）
+- **被打断就丢弃（MUST，coalescer-abort-race-fix）**：合并只合并输入请求，不合并
+  返回结果——被 abort 的生成结果【永不发送】。竞态兜底：fetch 已 resolve（响应完整
+  返回）但返回前才 abort 的场景，runner 组装 chain 前终检 `signal.aborted` → 同样
+  返回 aborted 丢弃文本；llm-agent 正常完成路径设 `response_chain` 前复查
+  controller.signal（双保险），命中则丢弃 + 触发合并。不变量：同一输入序列至多
+  产生一条回复（首条回复先发出则新消息独立放行；未发出则丢弃合并重发），
+  杜绝"回复 + 合并回复"双重发送
 - **图片预热**：适配器图片描述 fire-and-forget 挂 `pending_image_descs` extra；
   flush 时 await 全部再拼 `[图片内容: <描述>]` 前置文本；合并事件不带图片组件
   （DeepSeek 只看文字 + 描述，图文不阻塞）
@@ -499,6 +508,11 @@ class TelegramAdapter implements Platform {
 组合进同一 AbortController）。被打断时返回 `aborted: true` 标记，不产回复
 （调用方丢弃，不回写记忆）。验证锚点：被打断请求日志 `aborted by signal` 且 token usage ≈ 0
 （usage 高 = signal 没到 fetch = 假打断）。
+
+**返回前终检（coalescer-abort-race-fix）**：循环开头/err 分支的检查点在 fetch 之前，
+捕获不到"fetch 已 resolve（回复已产出）后才 abort"的竞态——runner 在组装 chain
+返回前加终检 `signal.aborted`，命中则丢弃已产出文本、返回 aborted。所有返回路径
+（开头 / err 分支 / 终检）统一 aborted 语义：**被打断的生成结果永不发送**。
 
 ### 6.2 内置工具
 

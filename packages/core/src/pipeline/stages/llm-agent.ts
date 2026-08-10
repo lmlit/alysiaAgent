@@ -123,6 +123,15 @@ export class LLMAgentStage implements Stage {
       return;
     }
 
+    // ★ 8-10 竞态双保险（coalescer-abort-race-fix）：runner 返回正常（fetch 已 resolve）
+    //   但 controller 已被新消息 abort → 结果同样丢弃，触发合并重发。
+    //   语义：被打断就丢弃，合并只合并请求（输入），不合并返回结果——杜绝双重回复。
+    if (abortCtrl?.signal.aborted) {
+      logger.info(`[LLMAgent] aborted after completion (${event.unifiedMsgOrigin.slice(-16)}), response discarded`);
+      this.ctx.coalescer?.onGenerationAborted(event.unifiedMsgOrigin, event);
+      return;
+    }
+
     // ★ 回复完成日志：能看到 bot 实际回了什么（含表情包标记）
     const replyText = result.chain.getComponents()
       .filter(c => c.type === 'plain')

@@ -315,6 +315,32 @@ describe('LLMAgentStage', () => {
       expect(chain?.getComponents()).toHaveLength(1);
     });
 
+    // ★ 8-10 竞态双保险（coalescer-abort-race-fix）：runner 返回正常结果（fetch 已
+    //   resolve）但 controller 已被新消息 abort → 回复必须丢弃 + 触发合并重发，
+    //   否则与合并重发的回复形成双重回复
+    it('runner 返回正常但 controller 已被 abort → 丢弃回复 + 触发合并（双保险）', async () => {
+      const ctx = makeMockContext();
+      ctx.commandRegistry.execute = vi.fn().mockResolvedValue(null);
+      const onGenAborted = vi.fn();
+      ctx.coalescer = {
+        getAbortRegistry: () => ({
+          getOrCreate: () => ({ signal: { aborted: true } }), // 已 abort 的 controller
+        }),
+        onGenerationAborted: onGenAborted,
+      } as any;
+
+      const stage = new LLMAgentStage();
+      await stage.initialize(ctx);
+
+      const event = makeEvent('hi');
+      const gen = stage.process(event);
+      const r1 = await gen.next();
+
+      expect(r1.done).toBe(true); // 直接 return（aborted 分支），不 yield 发送
+      expect(event.getExtra('response_chain')).toBeUndefined(); // 回复被丢弃
+      expect(onGenAborted).toHaveBeenCalledTimes(1); // 触发合并 flush
+    });
+
     it('should store _token_usage in extras before yield', async () => {
       const ctx = makeMockContext();
       ctx.commandRegistry.execute = vi.fn().mockResolvedValue(null);

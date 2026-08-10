@@ -267,4 +267,24 @@ describe('AgentRunner abort', () => {
     expect(result.chain.getComponents()).toHaveLength(0);
     expect(providerManager.textChatWithFallback).not.toHaveBeenCalled();
   });
+
+  // ★ 8-10 竞态修复（coalescer-abort-race-fix）：fetch 已 resolve（回复文本已产出），
+  //   但返回前 signal 才被 abort → 必须返回 aborted 丢弃文本，否则与合并重发双重回复
+  it('fetch 已 resolve 但返回前 signal 被 abort → 返回 aborted（丢弃已产出文本）', async () => {
+    const ctrl = new AbortController();
+    const providerManager = {
+      getDefault: () => undefined,
+      textChatWithFallback: vi.fn().mockImplementation(async () => {
+        ctrl.abort(); // 模拟：LLM 响应完整返回的瞬间，新消息打断
+        return { role: 'assistant', completionText: '这是回复 A（不应发送）' };
+      }),
+    };
+    const toolRegistry = { toToolSet: () => undefined, execute: vi.fn() };
+    const runner = new AgentRunner(providerManager as any, toolRegistry as any);
+
+    const result = await runner.run('hi', 'sys', [], 's1', undefined, ctrl.signal);
+    expect(result.aborted).toBe(true);
+    expect(result.chain.getComponents()).toHaveLength(0); // 已产出文本被丢弃
+    expect(providerManager.textChatWithFallback).toHaveBeenCalledTimes(1); // 请求确实发出过
+  });
 });

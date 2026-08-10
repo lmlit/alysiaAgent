@@ -163,6 +163,20 @@ export class AgentRunner {
       }
     }
 
+    // ★ 8-10 竞态终检（coalescer-abort-race-fix）：fetch 已 resolve 但返回前被打断。
+    //   循环开头/err 分支的检查点在 fetch 之前，捕获不到"响应已完整返回后才 abort"
+    //   的竞态——此处兜底：被打断的生成结果一律丢弃（返回 aborted，不进入发送），
+    //   否则会与合并重发的回复形成双重回复。
+    if (signal?.aborted) {
+      logger.info(`[AgentRunner] aborted after final response (${sessionId.slice(-16)})`);
+      return {
+        chain: new MessageChain(),
+        tokenUsage: { input: totalInput, output: totalOutput, total: totalInput + totalOutput },
+        images: toolImages,
+        aborted: true,
+      };
+    }
+
     if (stepCount >= this.maxSteps) {
       finalText = finalText || '(达到最大步数限制)';
     }
