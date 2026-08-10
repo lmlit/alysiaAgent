@@ -262,7 +262,9 @@ class EventBus {
 > 2026-08-10 修复（change: eventbus-concurrent-private-dispatch，已归档）——
 > 根因修复：EventBus 串行调度导致打断合并永不触发 → 私聊并发 + 群聊串行；
 > 2026-08-10 修复（change: coalescer-merged-send-fix，已归档）——合并事件
-> 缺 send 回调 → 合并回复静默丢失（send 失败留痕 + abort 不误报 fallback）。
+> 缺 send 回调 → 合并回复静默丢失（send 失败留痕 + abort 不误报 fallback）；
+> 2026-08-10 修复（change: coalescer-cancel-thinking，已归档）——合并时
+> 取消被合并消息的"思考中"timer（经 cancel_thinking extra 回调）。
 
 **背景**：每条入站消息触发一次 LLM 请求，用户连续分条发会并行触发多条回复，体验混乱。
 
@@ -328,6 +330,10 @@ better-sqlite3 同步写（WAL），无需锁。
 - **发送失败必须留痕**：RespondStage send 失败打 logger.error（禁止静默吞错）
 - **abort 不误报 fallback**：ProviderManager 在 provider err 响应后、打 fallback
   WARN 前检查 `req.signal?.aborted` → 直接返回（abort 导致的 err 不算 provider 失败）
+- **合并取消冗余"思考中"（coalescer-cancel-thinking）**：adapter 在事件挂
+  `cancel_thinking` extra（clearTimeout thinkingTimer）；Coalescer 打断入桶时
+  调用——被合并的消息不再单独发"思考中"提示；**在途基底（合并事件源）的
+  timer 保留**（合并回复确实在途，提示语义正确）；flush 兜底路径统一取消
 
 ---
 

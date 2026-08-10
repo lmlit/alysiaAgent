@@ -26,6 +26,9 @@ export interface PipelineExtras {
   coalesced: boolean;
   /** ★ 8-10 Coalescer: 图片描述预热 Promise（adapter fire-and-forget 挂载，flush 时 await 拼接） */
   pending_image_descs: Array<Promise<string | null>>;
+  /** ★ 8-10 Coalescer: 取消本消息"思考中"提示 timer 的回调（adapter 挂载，
+   *   消息被打断合并时调用——已合并的消息不再单独提示） */
+  cancel_thinking: () => void;
 }
 
 // ── Stage / PipelineContext ───────────────────────────

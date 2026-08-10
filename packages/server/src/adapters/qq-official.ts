@@ -530,6 +530,15 @@ export class QQOfficialAgentAdapter implements Platform {
       sessionId,
     });
 
+    // ★ 8-10 合并时取消本消息的"思考中"timer（coalescer-cancel-thinking）：
+    //   消息被打断合并（pipeline 在 Coalescer 直接返回）时 adapter 不知情，
+    //   timer 照发 → 冗余提示。Coalescer 打断入桶时调用本回调；在途事件
+    //   （合并基底）的 timer 保留（回复确实在途，提示语义正确）。
+    event.setExtra('cancel_thinking', () => {
+      clearTimeout(thinkingTimer);
+      thinkingSent = true;
+    });
+
     // ★ 8-10 图片预热：描述 Promise 挂事件，Coalescer 负责 await 拼接
     if (pendingDescs.length > 0) {
       event.setExtra('pending_image_descs', pendingDescs);

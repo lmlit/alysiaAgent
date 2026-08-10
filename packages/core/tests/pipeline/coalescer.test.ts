@@ -222,6 +222,54 @@ describe('CoalescerStage', () => {
     expect((put.mock.calls[0][0] as MessageEvent).messageStr).toBe('第一条\n第二条');
   });
 
+  // ★ 8-10 合并取消冗余"思考中"（coalescer-cancel-thinking）：
+  //   入桶事件取消 timer；在途基底保留（提示语义正确）
+  it('打断入桶取消新消息的 cancel_thinking；在途基底不取消', async () => {
+    const stage = new CoalescerStage(undefined, { maxWaitMs: 10_000 });
+    await stage.initialize(makeCtx());
+    const put = vi.fn();
+    stage.setEventBus({ put } as any);
+
+    const ev1 = makeEvent('第一条');
+    const cancel1 = vi.fn();
+    ev1.setExtra('cancel_thinking', cancel1);
+    const gen1 = stage.process(ev1);
+    await gen1.next();
+    stage.getAbortRegistry().getOrCreate(SESSION);
+
+    const ev2 = makeEvent('第二条');
+    const cancel2 = vi.fn();
+    ev2.setExtra('cancel_thinking', cancel2);
+    const gen2 = stage.process(ev2);
+    await gen2.next();
+
+    expect(cancel2).toHaveBeenCalledTimes(1); // 入桶即取消（已合并，不再单独提示）
+    expect(cancel1).not.toHaveBeenCalled(); // 在途基底保留（合并回复确实在途）
+  });
+
+  it('flush 兜底（capTimer）统一取消桶内事件 timer', async () => {
+    vi.useFakeTimers();
+    const stage = new CoalescerStage(undefined, { maxWaitMs: 1000 });
+    await stage.initialize(makeCtx());
+    const put = vi.fn();
+    stage.setEventBus({ put } as any);
+
+    const gen1 = stage.process(makeEvent('第一条'));
+    await gen1.next();
+    stage.getAbortRegistry().getOrCreate(SESSION);
+
+    const ev2 = makeEvent('第二条');
+    const cancel2 = vi.fn();
+    ev2.setExtra('cancel_thinking', cancel2);
+    const gen2 = stage.process(ev2);
+    await gen2.next();
+    expect(cancel2).toHaveBeenCalledTimes(1); // 入桶已取消
+
+    await vi.advanceTimersByTimeAsync(1100); // capTimer 兜底 flush
+    expect(put).toHaveBeenCalledTimes(1);
+    expect(cancel2).toHaveBeenCalled(); // 兜底路径也调用（幂等，无害）
+  });
+
   it('无累计消息时 onGenerationAborted 不产生合并事件', async () => {
     const stage = new CoalescerStage(undefined, { maxWaitMs: 10_000 });
     await stage.initialize(makeCtx());
