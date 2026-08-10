@@ -86,6 +86,8 @@ describe('CoalescerStage', () => {
 
     // 模拟 llm-agent：第一条生成被打断 → 回调 onGenerationAborted
     const abortedEvent = makeEvent('第一条'); // 被打断事件（llm-agent 传入）
+    const customSend = vi.fn(); // 模拟 adapter 挂的实例 send 回调
+    abortedEvent.send = customSend;
     await stage.onGenerationAborted(SESSION, abortedEvent);
 
     expect(put).toHaveBeenCalledTimes(1);
@@ -93,6 +95,9 @@ describe('CoalescerStage', () => {
     expect(merged.messageStr).toBe('第一条\n第二条'); // 被打断文本 + 累计消息
     expect(merged.getExtra('coalesced')).toBe(true);
     expect(merged.getMessages()[0].type).toBe('plain');
+
+    // ★ 8-10 合并事件必须继承原事件 send（adapter 回调闭包）——否则回复静默丢失
+    expect(merged.send).toBe(customSend);
   });
 
   it('回复已出（无在飞）→ 新消息独立放行（不合并）', async () => {

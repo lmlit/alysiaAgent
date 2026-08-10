@@ -136,4 +136,18 @@ describe('RespondStage', () => {
     vi.spyOn(event, 'send').mockRejectedValue(new Error('send failed'));
     await expect(stage.process(event)).resolves.toBeUndefined();
   });
+
+  // ★ 8-10 发送失败必须留痕（不静默吞错）——合并事件缺 send 曾致回复静默丢失
+  it('send 失败打 logger.error（不再静默）', async () => {
+    const stage = new RespondStage();
+    await stage.initialize({} as any);
+    const event = makeEvent('hello');
+    const chain = new MessageChain().message('response');
+    event.setExtra('response_chain', chain);
+    vi.spyOn(event, 'send').mockRejectedValue(new Error('send failed'));
+    const { logger } = await import('../../src/utils/logger.js');
+    const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+    await stage.process(event);
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('[Respond] send failed'), expect.stringContaining('send failed'));
+  });
 });

@@ -171,6 +171,10 @@ export class CoalescerStage implements Stage {
       platformMeta: base.platformMeta,
       sessionId: base.sessionId,
     });
+    // ★ 8-10 合并事件必须继承原事件的 send 回调（coalescer-merged-send-fix）：
+    //   adapter 挂的实例字段闭包（捕获原消息 msg_id 等，不依赖 this）。
+    //   缺失时 RespondStage 调默认 send 直接 throw → 回复静默丢失（线上踩坑）。
+    mergedEvent.send = base.send;
     mergedEvent.setExtra('coalesced', true);
 
     if (!this.eventBus) {

@@ -48,6 +48,11 @@ export class ProviderManager {
         if (i > 0) logger.info(`[Provider] fallback success via ${provider.config.id} (${resp.completionText.slice(0, 60)})`);
         return resp;
       }
+      // ★ 8-10 abort 导致的 err（fetch 被打断）不算 provider 失败：不打 WARN、
+      //   不切 fallback（检查点在循环开头，err 后先打到这才会检查——前置）
+      if (req.signal?.aborted) {
+        return { role: 'err', completionText: 'Request aborted' };
+      }
       logger.warn(`[Provider] ${provider.config.id} failed, trying next...`);
     }
 

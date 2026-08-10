@@ -260,7 +260,9 @@ class EventBus {
 > 2026-08-10 修复（change: coalescer-abort-race-fix，已归档）——打断竞态：
 > fetch 已 resolve 但返回前被打断 → 结果必须丢弃（防双重回复）；
 > 2026-08-10 修复（change: eventbus-concurrent-private-dispatch，已归档）——
-> 根因修复：EventBus 串行调度导致打断合并永不触发 → 私聊并发 + 群聊串行。
+> 根因修复：EventBus 串行调度导致打断合并永不触发 → 私聊并发 + 群聊串行；
+> 2026-08-10 修复（change: coalescer-merged-send-fix，已归档）——合并事件
+> 缺 send 回调 → 合并回复静默丢失（send 失败留痕 + abort 不误报 fallback）。
 
 **背景**：每条入站消息触发一次 LLM 请求，用户连续分条发会并行触发多条回复，体验混乱。
 
@@ -318,6 +320,14 @@ better-sqlite3 同步写（WAL），无需锁。
 - **图片预热**：适配器图片描述 fire-and-forget 挂 `pending_image_descs` extra；
   flush 时 await 全部再拼 `[图片内容: <描述>]` 前置文本；合并事件不带图片组件
   （DeepSeek 只看文字 + 描述，图文不阻塞）
+- **合并事件必须继承 send（MUST，coalescer-merged-send-fix）**：
+  `mergedEvent.send = base.send`（adapter 挂的实例字段闭包，捕获原消息 msg_id，
+  不依赖 this）——缺省时 RespondStage 调默认 send 抛
+  `'send() must be overridden by Platform adapter'` → 回复静默丢失（线上踩坑）。
+  原消息 msg_id 被动回复 5 分钟内有效，合并生成通常几秒到几十秒
+- **发送失败必须留痕**：RespondStage send 失败打 logger.error（禁止静默吞错）
+- **abort 不误报 fallback**：ProviderManager 在 provider err 响应后、打 fallback
+  WARN 前检查 `req.signal?.aborted` → 直接返回（abort 导致的 err 不算 provider 失败）
 
 ---
 
