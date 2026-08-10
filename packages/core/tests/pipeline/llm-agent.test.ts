@@ -203,6 +203,8 @@ describe('LLMAgentStage', () => {
         expect.stringContaining('测试人格提示词'),
         [],
         't-1:private:s1',
+        undefined, // sampling 槽（makeMockContext 无 sampling 配置）
+        undefined, // signal（makeMockContext 无 coalescer）
       );
     });
 
@@ -223,6 +225,8 @@ describe('LLMAgentStage', () => {
         expect.stringContaining('你是知识渊博的助手。'),
         expect.any(Array),
         expect.any(String),
+        undefined,
+        undefined, // signal（makeMockContext 无 coalescer）
       );
     });
 
@@ -241,6 +245,8 @@ describe('LLMAgentStage', () => {
         expect.stringContaining('测试人格提示词'),
         expect.any(Array),
         expect.any(String),
+        undefined,
+        undefined, // signal
       );
     });
 
@@ -264,6 +270,8 @@ describe('LLMAgentStage', () => {
         expect.any(String),
         ['https://example.com/img.png'],
         expect.any(String),
+        undefined,
+        undefined, // signal
       );
     });
 
@@ -287,6 +295,8 @@ describe('LLMAgentStage', () => {
         expect.any(String),
         [], // empty string filtered out
         expect.any(String),
+        undefined,
+        undefined, // signal
       );
     });
 

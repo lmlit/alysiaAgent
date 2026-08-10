@@ -27,6 +27,7 @@ import { DEFAULT_MEMORY_CONFIG } from './types.js';
 import type { IVectorStore } from './interfaces/IVectorStore.js';
 import type { IEmbedService } from './interfaces/IEmbedService.js';
 import type { ILLMService } from './interfaces/ILLMService.js';
+import type { SamplingConfig, SamplingSlot } from '../provider/sampling.js';
 
 // ── 知识库分块参数（参考 AstrBot：chunk 512 / overlap 50）──
 const KB_CHUNK_SIZE = 500;
@@ -82,6 +83,8 @@ export class MemoryManager {
     private vectorStore: IVectorStore | null,
     private embedService: IEmbedService,
     private llmService: ILLMService,
+    /** ★ 8-10 采样配置（sampling-config-unify）：按 engine 场景绑定槽位 */
+    private sampling?: SamplingConfig,
   ) {
     this.eventStore = new EventStore(db, vectorStore);
     this.profileStore = new ProfileStore(db);
@@ -92,9 +95,16 @@ export class MemoryManager {
     this.codeContextStore = new CodeContextStore(db);
     this.lifeStore = new LifeStore(db);
 
+    // ★ 8-10 slotify：把同一定时任务/画像类调用绑定到对应采样槽位
+    const slotify = (slot?: Partial<SamplingSlot>): ILLMService => ({
+      complete: (sys, usr) => this.llmService.complete(sys, usr, slot),
+    });
+    const profileLlm = slotify(this.sampling?.profile?.extract);
+    const summaryLlm = slotify(this.sampling?.session?.summary);
+
     this.worldbookMatcher = new WorldbookMatcher(this.worldbookStore);
-    this.personaAdapter = new PersonaAdapter(this.personaStore, llmService);
-    this.profileExtractor = new ProfileExtractor(llmService);
+    this.personaAdapter = new PersonaAdapter(this.personaStore, profileLlm);
+    this.profileExtractor = new ProfileExtractor(profileLlm);
     this.promptAssembler = new PromptAssembler(
       this.profileStore, this.personaStore, this.conversationStore,
       this.knowledgeStore, this.worldbookStore, this.codeContextStore,
@@ -107,11 +117,11 @@ export class MemoryManager {
     this.sessionEndProcessor = new SessionEndProcessor(
       this.eventStore, this.conversationStore, this.profileStore,
       this.personaStore, this.worldbookStore, this.profileExtractor,
-      this.personaAdapter, this.llmService, this.embedService, this.vectorStore,
+      this.personaAdapter, summaryLlm, this.embedService, this.vectorStore,
     );
     this.cronProcessor = new CronProcessor(
       this.eventStore, this.conversationStore, this.knowledgeStore,
-      this.profileStore, this.profileExtractor, this.llmService, this.vectorStore,
+      this.profileStore, this.profileExtractor, profileLlm, this.vectorStore,
     );
 
     // Load persisted token stats on startup

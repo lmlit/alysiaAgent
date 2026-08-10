@@ -9,22 +9,28 @@
  * 关键差异：base64 不能带 data:image/...;base64, 前缀（纯 base64）。
  */
 import { logger } from '../utils/logger.js';
+import { DEFAULT_SAMPLING } from '../provider/sampling.js';
+import type { SamplingSlot } from '../provider/sampling.js';
 
 export interface VisionConfig {
   baseUrl: string;   // https://open.bigmodel.cn/api/paas/v4
   apiKey: string;
   model?: string;    // default: glm-4v-flash
+  /** ★ 8-10 采样槽（sampling.vision.describe，config.yml 可配；缺省 DEFAULT 0.1/200） */
+  sampling?: Partial<SamplingSlot>;
 }
 
 export class VisionBridge {
   private baseUrl: string;
   private apiKey: string;
   private model: string;
+  private sampling: Partial<SamplingSlot>;
 
   constructor(config: VisionConfig) {
     this.baseUrl = config.baseUrl.replace(/\/$/, '');
     this.apiKey = config.apiKey;
     this.model = config.model || 'glm-4v-flash';
+    this.sampling = { ...DEFAULT_SAMPLING.vision.describe, ...(config.sampling ?? {}) };
   }
 
   /** 描述一张图片（URL 或文件路径）。返回 null 表示失败。 */
@@ -36,6 +42,7 @@ export class VisionBridge {
       if (!base64) return null;
 
       // 2. 调 GLM-4V-Flash（纯 base64，不带 data URI 前缀）
+      // ★ 8-10 采样参数改读统一配置（sampling.vision.describe），不再硬编码
       const resp = await fetch(`${this.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
@@ -51,8 +58,7 @@ export class VisionBridge {
               { type: 'text', text: prompt || '请用1-2句话简要描述这张图片的内容。' },
             ],
           }],
-          max_tokens: 200,
-          temperature: 0.1,
+          ...this.sampling,
         }),
       });
 

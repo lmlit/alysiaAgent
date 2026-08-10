@@ -491,25 +491,26 @@ export class QQOfficialAgentAdapter implements Platform {
 
     // ★ 图片 → 文字描述（Vision Bridge）：用户发图片时，QQ 放在 attachments[] 中。
     //   msg_elements 是嵌套富媒体（引用消息等），优先级低于 attachments。
-    //   用 GLM-4V-Flash 转成文字描述后拼入 messageStr，DeepSeek 即可"看懂"图片。
+    //   ★ 8-10 图片预热：不再同步 await——describe fire-and-forget 挂到事件上，
+    //     由 Coalescer 在 flush（私聊合并窗口）/放行（群聊）时统一 await 拼接，
+    //     合并窗口时间用来掩盖描述延迟（图文不阻塞）。
     const elements: any[] = [...(data.attachments || []), ...(data.msg_elements || [])];
-    const imageDescs: string[] = [];
+    const pendingDescs: Promise<string | null>[] = [];
     if (elements.length > 0 && this.visionBridge) {
-      await Promise.all(elements.map(async (el: any) => {
+      for (const el of elements) {
         // QQ 附件 content_type 如 "image/jpeg"；msg_elements 用 msg_type
         const elType = el?.content_type ?? el?.msg_type ?? '';
         if (String(elType).startsWith('image')) {
           const url = el?.url || '';
-          if (!url) return;
-          const desc = await this.visionBridge!.describe(typeof url === 'string' ? url : '', '请用一两句话描述这张图片，注意图中的文字、场景和情绪。');
-          if (desc) imageDescs.push(`[图片内容: ${desc}]`);
+          if (!url) continue;
+          pendingDescs.push(
+            this.visionBridge!.describe(typeof url === 'string' ? url : '', '请用一两句话描述这张图片，注意图中的文字、场景和情绪。')
+              .catch(() => null),
+          );
         }
-      }));
+      }
     } else if (elements.length > 0 && !this.visionBridge) {
       logger.debug('[QQ Official] image attachments present but visionBridge not configured, skipping');
-    }
-    if (imageDescs.length > 0) {
-      content = imageDescs.join('\n') + (content ? '\n' + content : '');
     }
 
     const message: Message = {
@@ -528,6 +529,11 @@ export class QQOfficialAgentAdapter implements Platform {
       platformMeta: this.meta,
       sessionId,
     });
+
+    // ★ 8-10 图片预热：描述 Promise 挂事件，Coalescer 负责 await 拼接
+    if (pendingDescs.length > 0) {
+      event.setExtra('pending_image_descs', pendingDescs);
+    }
 
     // 短期记忆由 MemoryRetrievalStage 从 EventLog 读取，不再在适配器层维护
     let replyText = '';

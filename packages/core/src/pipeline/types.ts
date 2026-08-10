@@ -22,6 +22,10 @@ export interface PipelineExtras {
   _token_usage: { input: number; output: number; total: number };
   /** CLI ad-hoc → LLMAgentStage: 跨轮次对话历史 */
   conversation_history: Array<{ role: string; content: string }>;
+  /** ★ 8-10 Coalescer: 合并事件标记（原始消息已各自 ingest，pipeline 侧跳过） */
+  coalesced: boolean;
+  /** ★ 8-10 Coalescer: 图片描述预热 Promise（adapter fire-and-forget 挂载，flush 时 await 拼接） */
+  pending_image_descs: Array<Promise<string | null>>;
 }
 
 // ── Stage / PipelineContext ───────────────────────────
@@ -39,13 +43,19 @@ export interface PipelineContext {
   toolRegistry: ToolRegistry;
   commandRegistry: CommandRegistry;
   config: AlysiaConfig;
+  /** ★ 8-10 采样参数统一配置（DEFAULT_SAMPLING + config.yml 深合并后） */
+  sampling?: SamplingConfig;
+  /** ★ 8-10 输入合并器（CoalescerStage）：llm-agent 经它取打断 signal */
+  coalescer?: CoalescerStage;
 }
 
 // 前向声明 (避免循环依赖)
 import type { MessageEvent } from '../platform/event.js';
 import type { ProviderManager } from '../provider/manager.js';
+import type { SamplingConfig } from '../provider/sampling.js';
 import type { ToolRegistry } from '../tools/registry.js';
 import type { CommandRegistry } from '../commands/registry.js';
+import type { CoalescerStage } from './stages/coalescer.js';
 // Local config type for pipeline initialization
 interface AlysiaConfig {
   bot: { name: string; ownerId: string };

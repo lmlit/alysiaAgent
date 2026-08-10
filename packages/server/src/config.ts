@@ -1,6 +1,7 @@
 import { readFileSync } from 'fs';
 import { parse } from 'yaml';
 import { logger } from '@alysia/core';
+import type { DeepPartial, SamplingConfig } from '@alysia/core';
 
 export interface QQOfficialConfig {
   app_id: string;
@@ -23,6 +24,8 @@ export interface ServerConfig {
   qq_official?: QQOfficialConfig;
   server: { port: number; dataDir: string; workspaceDir: string };
   features?: { codeMode?: boolean; shell?: boolean; filesystem?: boolean; streaming?: boolean };
+  /** ★ 8-10 采样参数统一配置（7 槽位，缺省走 core DEFAULT_SAMPLING floor） */
+  sampling?: DeepPartial<SamplingConfig>;
 }
 
 export function loadConfig(path: string): ServerConfig {
@@ -75,5 +78,6 @@ export function loadConfig(path: string): ServerConfig {
       workspaceDir: data.server?.workspaceDir ?? './data/workspace',
     },
     features: data.features ?? { codeMode: false },
+    sampling: data.sampling ?? undefined,
   };
 }

@@ -39,6 +39,10 @@ export class ProviderManager {
     for (let i = 0; i < candidates.length; i++) {
       const provider = candidates[i];
       if (!provider) continue;
+      // ★ 8-10 打断：signal 已 abort → 不再试 fallback provider（否则打断会误触发切换烧钱）
+      if (req.signal?.aborted) {
+        return { role: 'err', completionText: 'Request aborted' };
+      }
       const resp = await provider.textChat(req);
       if (resp.role !== 'err') {
         if (i > 0) logger.info(`[Provider] fallback success via ${provider.config.id} (${resp.completionText.slice(0, 60)})`);

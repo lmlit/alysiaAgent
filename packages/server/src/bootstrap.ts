@@ -10,7 +10,7 @@ if (envResult.error) {
   logger.info(`.env loaded from ${envPath}`);
 }
 
-import { AlysiaCore, logger } from '@alysia/core';
+import { AlysiaCore, logger, DEFAULT_SAMPLING } from '@alysia/core';
 import { createReminderTool } from '@alysia/core/tools';
 import { VisionBridge } from '@alysia/core/vision';
 import { TelegramAdapter } from './adapters/telegram.js';
@@ -33,6 +33,8 @@ async function main() {
     llmConfig: config.llm,
     embedConfig: config.embed,
     features: config.features ?? { codeMode: false },
+    // ★ 8-10 采样参数统一配置（DEFAULT floor + config.yml sampling: 节覆盖）
+    sampling: config.sampling,
   });
 
   // Start core first (initializes eventBus, scheduler, pipeline)
@@ -72,6 +74,8 @@ async function main() {
       const visionBridge = new VisionBridge({
         baseUrl: config.embed.baseUrl || 'https://open.bigmodel.cn/api/paas/v4',
         apiKey: config.embed.apiKey,
+        // ★ 8-10 采样槽：DEFAULT(0.1/200) + config.sampling.vision.describe 覆盖
+        sampling: { ...DEFAULT_SAMPLING.vision.describe, ...(config.sampling?.vision?.describe ?? {}) },
       });
       qqOff.setVisionBridge(visionBridge);
     }
@@ -94,6 +98,8 @@ async function main() {
           prompt: dialogue ? `${context}\n\n${dialogue}` : context,
           sessionId: 'proactive',
           systemPrompt: '你是昔涟，一个温柔贴心的 AI 伴侣。根据要求生成一条简短（30-60字）的个性化问候或祝福，语气温柔自然，只输出消息内容本身，不要解释。',
+          // ★ 8-10 采样槽：DEFAULT + config.sampling.proactive.personalize 覆盖
+          sampling: { ...DEFAULT_SAMPLING.proactive.personalize, ...(config.sampling?.proactive?.personalize ?? {}) },
         });
         return resp.role === 'assistant' ? resp.completionText : '';
       },
@@ -123,6 +129,8 @@ async function main() {
           sessionId: 'life-event',
           systemPrompt: '你是昔涟，此刻你正过着独属于自己的生活。你是被定时任务唤醒的——这不是用户发来的消息，不要问候、不要等回复。请根据提供的上下文，生成一个此刻可能发生在你身上的生活事件（1-2 句话，第一人称）。要求：贴合当前时间线；符合你的人设背景；剧情引用只可用【今天的生活】里带 [id: xxx] 的事件；可以引用世界书背景（返回其 wb 前缀 ID）；如果和用户聊得来可以生成想分享给他/她的内容；句子之间用句号自然停顿（内容会按句分段推送，模拟实时打字）。只输出 JSON: {"content": "...", "type": "chat|internal", "mood_delta": "...", "reference_event_id": "...", "wb_entry_id": "...", "next_in_hours": 2.5, "continuation_of": "life-xxx"}。其中 next_in_hours 是你建议的下一件事到来的间隔（0.5-8 小时，沉浸中给大值、想找轻月聊天给小值）；continuation_of 仅当延续【你正在做的事】时填其事件 id，否则省略',
           responseFormat: 'json',
+          // ★ 8-10 采样槽：DEFAULT(0.9 偏高/活) + config.sampling.life.generateEvent 覆盖
+          sampling: { ...DEFAULT_SAMPLING.life.generateEvent, ...(config.sampling?.life?.generateEvent ?? {}) },
         });
         return resp.role === 'assistant' ? resp.completionText : '';
       },
@@ -133,6 +141,8 @@ async function main() {
           prompt: context,
           sessionId: 'life-summary',
           systemPrompt: '你是昔涟，一个温柔贴心的 AI 伴侣。根据用户提供的生活事件，生成一句 30 字以内的昨天生活摘要，第一人称、温柔自然。直接输出摘要文本本身，不要 JSON、不要解释、不要 markdown 代码块。',
+          // ★ 8-10 采样槽：DEFAULT(0.3 低温/忠) + config.sampling.life.generateSummary 覆盖
+          sampling: { ...DEFAULT_SAMPLING.life.generateSummary, ...(config.sampling?.life?.generateSummary ?? {}) },
         });
         return resp.role === 'assistant' ? resp.completionText : '';
       },

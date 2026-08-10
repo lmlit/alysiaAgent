@@ -26,6 +26,8 @@ export function createPipelineContext(overrides: Partial<PipelineContext> = {}):
     toolRegistry: undefined!,
     commandRegistry: undefined!,
     config,
+    sampling: undefined,
+    coalescer: undefined,
     ...overrides,
   };
 }

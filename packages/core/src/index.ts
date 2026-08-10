@@ -1,4 +1,8 @@
 export { logger } from './utils/logger.js';
+// ★ 8-10 采样参数统一配置（sampling-config-unify）：类型 + 默认 floor 导出，
+//   server 侧 config.yml 覆盖时从主入口导入
+export { DEFAULT_SAMPLING, mergeSampling, slotToBody } from './provider/sampling.js';
+export type { SamplingConfig, SamplingSlot, DeepPartial } from './provider/sampling.js';
 
 import { MemoryManager } from './memory/MemoryManager.js';
 import { initializeDatabase } from './memory/database.js';
@@ -14,6 +18,7 @@ import { WorldbookStage } from './pipeline/stages/worldbook.js';
 import { MemoryRetrievalStage } from './pipeline/stages/memory-retrieval.js';
 import { LLMAgentStage } from './pipeline/stages/llm-agent.js';
 import { RespondStage } from './pipeline/stages/respond.js';
+import { CoalescerStage } from './pipeline/stages/coalescer.js';
 import { createWebSearchTool, createWeatherTool } from './tools/web-search.js';
 import { createWorldbookTool } from './tools/worldbook.js';
 import { createReminderTool, createListRemindersTool, createCancelReminderTool } from './tools/reminder.js';
@@ -23,6 +28,8 @@ import { createSessionCommands } from './commands/session.js';
 import { createStatsCommand } from './commands/stats.js';
 import { seedPersona, seedWorldbook, buildPersonaSystemPrompt } from './persona/loader.js';
 import { logger } from './utils/logger.js';
+import { mergeSampling, slotToBody } from './provider/sampling.js';
+import type { SamplingConfig, SamplingSlot, DeepPartial } from './provider/sampling.js';
 
 // ── Feature flags ──────────────────────────────────────
 
@@ -55,6 +62,9 @@ export interface AlysiaCoreOptions {
   };
   /** 能力开关。未提供时全部使用默认值（codeMode=false）。 */
   features?: AlysiaFeatures;
+  /** ★ 8-10 采样参数统一配置（与 DEFAULT_SAMPLING 深合并，缺省走默认 floor）。
+   *  对应 config.yml 的 sampling: 节。 */
+  sampling?: DeepPartial<SamplingConfig>;
 }
 
 export class AlysiaCore {
@@ -64,9 +74,12 @@ export class AlysiaCore {
   commandRegistry!: CommandRegistry;
   eventBus!: EventBus;
   scheduler!: PipelineScheduler;
+  /** ★ 8-10 深合并后的采样配置（DEFAULT + opts.sampling） */
+  sampling: SamplingConfig;
 
   constructor(private opts: AlysiaCoreOptions) {
     // Intentionally async-free constructor — all heavy init happens in start()
+    this.sampling = mergeSampling(opts.sampling);
   }
 
   registerPlatform(name: string, scheduler?: PipelineScheduler): void {
@@ -127,8 +140,10 @@ export class AlysiaCore {
     };
 
     // LLM service (for memory system — must match ILLMService interface)
+    // ★ 8-10 第三参 sampling：由 MemoryManager 内部 slotify 包装按场景传槽位
+    //   （profile.extract / session.summary），undefined → 不传参数
     const llmService = {
-      complete: async (systemPrompt: string, userPrompt: string): Promise<string> => {
+      complete: async (systemPrompt: string, userPrompt: string, sampling?: Partial<SamplingSlot>): Promise<string> => {
         const resp = await fetch(`${this.opts.llmConfig.baseUrl}/chat/completions`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.opts.llmConfig.apiKey}` },
@@ -138,6 +153,7 @@ export class AlysiaCore {
               { role: 'system', content: systemPrompt },
               { role: 'user', content: userPrompt },
             ],
+            ...slotToBody(sampling),
           }),
         });
         if (!resp.ok) {
@@ -148,7 +164,7 @@ export class AlysiaCore {
       },
     };
 
-    this.memoryManager = new MemoryManager(db, vectorStore as any, embedService as any, llmService as any);
+    this.memoryManager = new MemoryManager(db, vectorStore as any, embedService as any, llmService as any, this.sampling);
 
     // Seed persona + worldbook from data files
     await seedPersona(this.memoryManager);
@@ -198,17 +214,25 @@ export class AlysiaCore {
     }
     this.commandRegistry.register(createStatsCommand((sid) => this.memoryManager.getTokenStats(sid) as any));
 
+    // ★ 8-10 输入合并 + 打断（input-coalescing-and-abort）：CoalescerStage 插在
+    //   memory-ingest 之后、worldbook 之前——私聊窗口合并 + 新消息打断在飞；
+    //   群聊不合并不打断（保持现状）
+    const coalescer = new CoalescerStage();
+
     // Pipeline
     const ctx = createPipelineContext({
       memoryManager: this.memoryManager as any,
       providerManager: this.providerManager as any,
       toolRegistry: this.toolRegistry as any,
       commandRegistry: this.commandRegistry as any,
+      sampling: this.sampling,
+      coalescer,
     });
 
     this.scheduler = new PipelineScheduler(ctx, [
       new PIIFilterStage(),
       new MemoryIngestStage(this.memoryManager as any, this.opts.ownerId),
+      coalescer,
       new WorldbookStage(),
       new MemoryRetrievalStage(this.memoryManager as any),
       new LLMAgentStage(),
@@ -217,6 +241,7 @@ export class AlysiaCore {
 
     // EventBus
     this.eventBus = new EventBus();
+    coalescer.setEventBus(this.eventBus);
 
     // Initialize
     await this.scheduler.initialize();

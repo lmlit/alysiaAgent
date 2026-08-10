@@ -103,12 +103,23 @@ export class LLMAgentStage implements Stage {
     }
 
     const start = Date.now();
+    // ★ 8-10 打断：从 Coalescer 的 AbortRegistry 取当前 signal（新消息到达即 abort）
+    const abortCtrl = this.ctx.coalescer?.getAbortRegistry().getOrCreate(event.unifiedMsgOrigin);
     const result = await this.runner.run(
       event.messageStr,
       systemPrompt,
       imageUrls.filter(Boolean),
       event.unifiedMsgOrigin,
+      // ★ 8-10 主对话采样槽（她的"嗓子"），sampling.chat 可配
+      this.ctx.sampling?.chat,
+      abortCtrl?.signal,
     );
+
+    // ★ 8-10 打断：生成被新消息中断 → 丢弃（未发任何内容），不设置回复、不回写记忆
+    if (result.aborted) {
+      logger.info(`[LLMAgent] generation aborted (${event.unifiedMsgOrigin.slice(-16)}), response discarded`);
+      return;
+    }
 
     // ★ 回复完成日志：能看到 bot 实际回了什么（含表情包标记）
     const replyText = result.chain.getComponents()
@@ -119,6 +130,9 @@ export class LLMAgentStage implements Stage {
     logger.info(`[LLMAgent] → ${replyText.slice(0, 120).replace(/\n/g, ' ')} (${Date.now() - start}ms)`);
 
     event.setExtra('response_chain', result.chain);
+
+    // ★ 8-10 请求正常完成，释放 abort controller（防注册表泄漏；不 abort）
+    this.ctx.coalescer?.getAbortRegistry().release(event.unifiedMsgOrigin);
 
     // Stash token usage so POST can read it after yield
     event.setExtra('_token_usage', result.tokenUsage);

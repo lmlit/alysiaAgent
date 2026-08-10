@@ -37,3 +37,36 @@ features:
   # shell: true       # 桌面端：开启 shell 执行
   # filesystem: true  # 桌面端：开启文件读写
   # streaming: true   # 桌面端：开启流式输出
+
+# ★ 采样参数统一配置（8-10 新增）：按场景分槽，不配则走 core 默认 floor。
+#   只改需要的槽/字段即可，全部可省略。
+sampling:
+  # 主对话 ReAct（她的"嗓子"）：默认不传参数（走服务端默认），想调在此配置
+  # chat:
+  #   temperature: 0.7
+  #   top_p: 1
+  #   presence_penalty: 0
+  #   frequency_penalty: 0
+  #   max_tokens: 1024
+  # vision:
+  #   describe:          # 图→描述，默认 temperature 0.1 / max_tokens 200
+  #     temperature: 0.1
+  #     max_tokens: 200
+  # life:
+  #   generateEvent:     # 事件生成，默认 temperature 0.9（偏高/活）
+  #     temperature: 0.9
+  #   generateSummary:   # 每日摘要，默认 temperature 0.3 / max_tokens 512（低温/忠）
+  #     temperature: 0.3
+  #     max_tokens: 512
+  # proactive:
+  #   personalize:       # 问候/关怀文案，默认 temperature 0.7 / max_tokens 256
+  #     temperature: 0.7
+  #     max_tokens: 256
+  # profile:
+  #   extract:           # 事实提取，默认 temperature 0.1 / max_tokens 1024（低温）
+  #     temperature: 0.1
+  #     max_tokens: 1024
+  # session:
+  #   summary:           # 会话摘要，默认 temperature 0.3 / max_tokens 512（低温）
+  #     temperature: 0.3
+  #     max_tokens: 512

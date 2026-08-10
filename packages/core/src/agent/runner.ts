@@ -3,6 +3,7 @@ import type { AgentHooks } from './hooks.js';
 import { NoopAgentHooks } from './hooks.js';
 import type { ProviderManager } from '../provider/manager.js';
 import type { LLMResponse } from '../provider/types.js';
+import type { SamplingSlot } from '../provider/sampling.js';
 import type { ToolRegistry } from '../tools/registry.js';
 import { MessageChain } from '../platform/chain.js';
 import { stripToolCallText } from '../utils/tool-call-strip.js';
@@ -29,11 +30,17 @@ export class AgentRunner {
     systemPrompt: string,
     imageUrls: string[] = [],
     sessionId: string = 'default',
+    /** ★ 8-10 主对话采样槽（sampling.chat，config.yml 可配），undefined 字段不传 API */
+    sampling?: Partial<SamplingSlot>,
+    /** ★ 8-10 打断 signal（Coalescer 新消息打断在飞）：每步检查 + 透传到 fetch */
+    signal?: AbortSignal,
   ): Promise<{
     chain: MessageChain;
     tokenUsage: { input: number; output: number; total: number };
     /** 工具发图结果（IMG: 前缀返回值），由调用方附加到回复链 */
     images: string[];
+    /** ★ 8-10 被打断标记：true 表示被新消息打断，调用方应丢弃（未发任何内容） */
+    aborted?: boolean;
   }> {
     const ctx = new AgentContext();
     ctx.addMessage({ role: 'system', content: systemPrompt });
@@ -47,6 +54,11 @@ export class AgentRunner {
     await this.hooks.onAgentBegin?.(null, ctx.messages);
 
     while (stepCount < this.maxSteps) {
+      // ★ 8-10 打断检查：signal 已 abort → 立即中止（请求可能还没发出或已被 fetch 层 abort）
+      if (signal?.aborted) {
+        logger.info(`[AgentRunner] aborted by signal (${sessionId.slice(-16)})`);
+        return { chain: new MessageChain(), tokenUsage: { input: totalInput, output: totalOutput, total: totalInput + totalOutput }, images: toolImages, aborted: true };
+      }
       stepCount++;
 
       // Truncate based on default provider's max context tokens
@@ -61,12 +73,19 @@ export class AgentRunner {
         contexts: ctx.toOpenAIFormat() as Array<{ role: string; content: string }>,
         imageUrls: stepCount === 1 ? imageUrls : [],
         funcTool: stepCount < this.maxSteps ? this.toolRegistry.toToolSet() : undefined,
+        sampling,
+        signal,
       };
 
       const response: LLMResponse =
         await this.providerManager.textChatWithFallback(req);
 
       if (response.role === 'err') {
+        // ★ 8-10 打断：fetch 层 abort 的 err → 返回 aborted 标记，不把 'Request aborted' 当回复
+        if (signal?.aborted) {
+          logger.info(`[AgentRunner] in-flight request aborted (${sessionId.slice(-16)})`);
+          return { chain: new MessageChain(), tokenUsage: { input: totalInput, output: totalOutput, total: totalInput + totalOutput }, images: toolImages, aborted: true };
+        }
         finalText = response.completionText;
         break;
       }

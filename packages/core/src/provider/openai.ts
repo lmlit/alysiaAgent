@@ -24,12 +24,25 @@ export class OpenAIProvider {
       body.tool_choice = 'auto';
     }
 
+    // ★ 8-10 采样参数：场景槽位（sampling.ts 统一配置），undefined 字段不传
+    if (req.sampling) {
+      for (const [k, v] of Object.entries(req.sampling)) {
+        if (v !== undefined) (body as Record<string, unknown>)[k] = v;
+      }
+    }
+
     // ★ 8-09 输入日志（debug 级，ALYSIA_DEBUG=1 时打印）——排查 prompt 组装/注入问题用。
     //   不截断：prompt 排障需要看完整组装（含工具定义/最近对话），日志文件侧已有轮转
     logger.debug(`[LLM] request: ${JSON.stringify(messages)}`);
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 60_000);
+    // ★ 8-10 打断：外部 signal（Coalescer 新消息打断在飞）与 60s timeout 组合——
+    //   外部 abort 也走同一 controller，确保真到 fetch（只调 .abort() 不接 fetch = 假打断）
+    if (req.signal) {
+      if (req.signal.aborted) controller.abort();
+      else req.signal.addEventListener('abort', () => controller.abort(), { once: true });
+    }
     const start = Date.now();
 
     try {
@@ -77,6 +90,11 @@ export class OpenAIProvider {
       };
     } catch (err: any) {
       if (err.name === 'AbortError') {
+        // ★ 8-10 区分外部打断 vs 超时：打断的请求 token usage ≈ 0（验 abort 真到 fetch 的锚点）
+        if (req.signal?.aborted) {
+          logger.info(`[LLM] ${model} aborted by signal (${Date.now() - start}ms)`);
+          return { role: 'err', completionText: 'Request aborted' };
+        }
         logger.error(`[LLM] ${model} timed out after 60s`);
         return { role: 'err', completionText: 'Request timed out (60s)' };
       }

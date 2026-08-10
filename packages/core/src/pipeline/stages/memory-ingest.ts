@@ -25,6 +25,11 @@ export class MemoryIngestStage implements Stage {
   async initialize(_ctx: PipelineContext): Promise<void> {}
 
   async process(event: MessageEvent): Promise<void> {
+    // ★ 8-10 合并事件跳过：原始消息已各自 ingest（不双计合并文本）
+    if (event.getExtra('coalesced')) {
+      logger.debug('[MemoryIngest] skip (coalesced)');
+      return;
+    }
     // 过滤：命令、空消息、隐私指令不写入长期记忆
     if (shouldSkipIngest(event.messageStr)) {
       logger.debug(`[MemoryIngest] skip (filtered): ${event.messageStr.slice(0, 50)}`);

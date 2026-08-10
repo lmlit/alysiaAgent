@@ -180,8 +180,37 @@ interface PipelineContext {
   providerManager: ProviderManager;
   toolRegistry: ToolRegistry;
   config: AlysiaConfig;
+  sampling?: SamplingConfig;   // ★ 8-10：采样参数统一配置（DEFAULT + config.yml 深合并）
 }
 ```
+
+### 3.2.1 采样参数统一配置（sampling-config-unify, 8-10）
+
+> 变更日志：2026-08-10 新增（change: sampling-config-unify，已归档）。
+
+temperature / top_p / presence_penalty / frequency_penalty / max_tokens **一处入口、按场景分槽**，
+禁止散落硬编码。
+
+**配置结构**（`config.yml` 的 `sampling:` 节，`packages/core/src/provider/sampling.ts` 定义类型与默认 floor）：
+
+```yaml
+sampling:
+  chat:        { temperature, top_p, presence_penalty, frequency_penalty, max_tokens }  # 主对话 ReAct（她的"嗓子"，与 persona/memory_config 语义聚团）
+  vision:      { describe }   # 图→描述，DEFAULT 0.1 / 200（低温/准）
+  life:        { generateEvent, generateSummary }   # DEFAULT 0.9 / 0.3（活 / 忠）
+  proactive:   { personalize } # DEFAULT 0.7 / 256
+  profile:     { extract }     # 事实提取，DEFAULT 0.1 / 1024（低温）
+  session:     { summary }     # 会话摘要，DEFAULT 0.3 / 512（低温）
+```
+
+**接缝约束（MUST）**：
+- 硬编码默认作 floor：`DEFAULT_SAMPLING` + `mergeSampling()` 深合并，config 缺省不报错、无 config 也能起
+- `chat` 槽默认空对象 = 不传参数（保持"走服务端默认"历史行为）；其他槽默认值见上
+- 所有采样参数必须经 `ProviderRequest.sampling` / `slotToBody()` 注入请求 body，
+  不得在 openai.ts / bridge.ts / life.ts / proactive.ts / engines 内硬编码
+- 记忆系统按场景绑定槽位：ProfileExtractor/PersonaAdapter/CronProcessor → `profile.extract`，
+  SessionEndProcessor → `session.summary`（MemoryManager 内 slotify 包装）
+- `ProviderRequest.sampling` 字段为 undefined 时 body 不带任何采样参数
 
 ### 3.3 MessageEvent — 统一消息事件
 
@@ -222,6 +251,41 @@ class EventBus {
 ```
 
 核心逻辑：`dispatch()` 从 AsyncQueue 阻塞取事件，根据 `event.session` 路由到对应的 `PipelineScheduler`。单进程内用内存队列，未来可替换为 Redis Streams 支持多进程。
+
+### 3.5 输入合并 + 打断（input-coalescing-and-abort, 8-10）
+
+> 变更日志：2026-08-10 新增（change: input-coalescing-and-abort，已归档）。
+
+**背景**：每条入站消息触发一次 LLM 请求，用户连续分条发会并行触发多条回复，体验混乱。
+
+**实现**：Pipeline 内 `CoalescerStage`（memory-ingest 之后、worldbook 之前）——
+单点实现，全部适配器自动覆盖；依赖 scheduler 对 async generator "不 yield 直接 return
+则后续 stage 不执行" 的既有语义。
+
+```typescript
+class CoalescerStage {
+  // 桶: Map<sessionId, { events, timer, capTimer }>  （按 session 分桶，禁止全局合并）
+  // 私聊: 首条消息入桶 → debounce 10s（新消息重置）+ 上限 10s（强制 flush，防涓流）
+  // flush: 换行拼接消息 → 合并 MessageEvent（coalesced 标记）→ 重入 EventBus（串行）
+  // 群聊: 不合并不打断（保持现状逐条回复）
+}
+```
+
+**接缝约束（MUST）**：
+- **按 session 分桶**：`Map<sessionId, {events, timer}>`，key = sessionId，禁止全局合并
+- **EventLog 忠实**：每条原始消息照常走 pii-filter → memory-ingest（独立 ingest）；
+  合并事件带 `coalesced` 标记，pii-filter/memory-ingest 跳过（不双计合并文本）
+- **打断必须传到 fetch**：`AbortRegistry`（Map<sessionId, AbortController>）——任何新消息
+  到达即 `abort()` 旧 controller；llm-agent 取当前 signal → runner 每步检查 →
+  `ProviderRequest.signal` → openai.ts 组合进 fetch（addEventListener + 60s timeout）。
+  只调 `.abort()` 而 signal 没到 fetch = 假打断（后端继续烧 token），禁止
+- **fallback 保护**：signal 已 abort 时 ProviderManager 不再切换 fallback provider
+- **非流式打断干净**：生成完成才发送；打断发生在 gen 阶段 = 未发任何内容，丢弃即可
+  （runner 返回 `aborted` 标记，llm-agent 不设 response_chain、不回写 EventLog）
+- **图片预热**：适配器图片描述 fire-and-forget 挂 `pending_image_descs` extra；
+  flush 时 await 全部再拼 `[图片内容: <描述>]` 前置文本；合并事件不带图片组件
+  （DeepSeek 只看文字 + 描述，图文不阻塞）
+- **窗口时长**：debounce 10s / 上限 10s（用户拍板）
 
 ---
 
@@ -414,6 +478,14 @@ class TelegramAdapter implements Platform {
                       ↑                               │
                       └──── 循环 (max N 次) ──────────┘
 ```
+
+### 6.1.1 打断（abort）契约（8-10）
+
+`AgentRunner.run(..., signal?)`：每步 ReAct 循环开头检查 `signal.aborted` → 立即中止；
+`signal` 经 `ProviderRequest.signal` 透传到 openai.ts 的 fetch（外部 abort 与 60s timeout
+组合进同一 AbortController）。被打断时返回 `aborted: true` 标记，不产回复
+（调用方丢弃，不回写记忆）。验证锚点：被打断请求日志 `aborted by signal` 且 token usage ≈ 0
+（usage 高 = signal 没到 fetch = 假打断）。
 
 ### 6.2 内置工具
 

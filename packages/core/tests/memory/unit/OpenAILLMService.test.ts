@@ -59,7 +59,9 @@ describe('OpenAILLMService', () => {
     expect(body.model).toBe('test-chat-model');
     expect(body.messages[0]).toEqual({ role: 'system', content: 'system prompt here' });
     expect(body.messages[1]).toEqual({ role: 'user', content: 'user prompt here' });
-    expect(body.temperature).toBe(0.3);
+    // ★ 8-10 采样统一：默认取 profile.extract 槽（temperature 0.1 / max_tokens 1024）
+    expect(body.temperature).toBe(0.1);
+    expect(body.max_tokens).toBe(1024);
   });
 
   it('should throw on API error', async () => {
