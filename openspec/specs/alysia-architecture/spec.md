@@ -264,7 +264,9 @@ class EventBus {
 > 2026-08-10 修复（change: coalescer-merged-send-fix，已归档）——合并事件
 > 缺 send 回调 → 合并回复静默丢失（send 失败留痕 + abort 不误报 fallback）；
 > 2026-08-10 修复（change: coalescer-cancel-thinking，已归档）——合并时
-> 取消被合并消息的"思考中"timer（经 cancel_thinking extra 回调）。
+> 取消被合并消息的"思考中"timer（经 cancel_thinking extra 回调）；
+> 2026-08-12 修复（change: thinking-pool-first-person，已归档）——"思考中"
+> 文案池自称统一第一人称"人家"（禁止"昔涟"第三人称自称）。
 
 **背景**：每条入站消息触发一次 LLM 请求，用户连续分条发会并行触发多条回复，体验混乱。
 
