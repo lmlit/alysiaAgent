@@ -37,11 +37,16 @@ export class ProfileExtractor {
         '你是一个用户画像提取器。提取关于用户的事实，每条附置信度(0-1)和原文证据。' +
         'directly_stated: 用户是否直接陈述了这个事实（true=用户亲口说的，如"我周末不上班"；' +
         'false=你从对话中推断的，如"用户可能从事技术工作"）。不确定则不提取。' +
-        '返回JSON: {"facts": [{"fact": "...", "confidence": 0.8, "evidence": "...", "directly_stated": true}]}',
+        // ★ 8-12 时效性分类（profile-transient-expiry）：瞬时事件不固化进长期画像
+        'transient: 该事实是否为时效性信息（true=仅在某个时间点/短期内成立：某天吃了什么、' +
+        '当天状态、单次事件、梦境、近期近况；false=稳定属性：城市/职业/习惯/偏好/关系/身体状况/长期爱好）。' +
+        '返回JSON: {"facts": [{"fact": "...", "confidence": 0.8, "evidence": "...", "directly_stated": true, "transient": false}]}',
         userMessages
       );
       const parsed = JSON.parse(response);
-      return (parsed.facts || []).map((f: { fact: string; confidence: number; evidence: string; directly_stated?: boolean }, i: number) => ({
+      // ★ 8-12 transient 接线：时效事实 48h 自动过期（ProfileStore.getActiveFacts 已过滤）
+      const transientTtlMs = 48 * 60 * 60 * 1000;
+      return (parsed.facts || []).map((f: { fact: string; confidence: number; evidence: string; directly_stated?: boolean; transient?: boolean }, i: number) => ({
         fact: f.fact,
         confidence: f.confidence,
         evidence: f.evidence,
@@ -51,7 +56,8 @@ export class ProfileExtractor {
         //   之前硬编码 'inferred'，导致所有事实显示"（待确认）"，被 LLM 打折对待。
         source: f.directly_stated ? 'user' as const : 'inferred' as const,
         valid_from: new Date().toISOString(),
-        valid_until: null as string | null,
+        // ★ 8-12 时效信息 48h 后自动过期；稳定属性永久有效
+        valid_until: f.transient ? new Date(Date.now() + transientTtlMs).toISOString() : null,
         status: 'active' as const,
       }));
     } catch {

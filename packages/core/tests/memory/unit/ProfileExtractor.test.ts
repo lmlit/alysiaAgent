@@ -109,6 +109,40 @@ describe('ProfileExtractor', () => {
     expect(activeFacts[0].confidence).toBe(0.9);
   });
 
+  // ★ 8-12 时效性分类（profile-transient-expiry）：transient=true → 48h 自动过期
+  it('transient=true → valid_until 设为 48h 后（时效事实自动过期）', async () => {
+    const mockTransientLLM: ILLMService = {
+      complete: async () => JSON.stringify({
+        facts: [
+          { fact: '用户午餐吃了香菜拌牛肉', confidence: 1, evidence: '我午餐吃了香菜拌牛肉', directly_stated: true, transient: true },
+        ],
+      }),
+    };
+    const extractor2 = new ProfileExtractor(mockTransientLLM);
+    const facts = await extractor2.extract([makeEvent('我午餐吃了香菜拌牛肉')]);
+    expect(facts).toHaveLength(1);
+    expect(facts[0].valid_until).not.toBeNull();
+    const ttl = new Date(facts[0].valid_until!).getTime() - Date.now();
+    expect(ttl).toBeGreaterThan(47 * 3600 * 1000);
+    expect(ttl).toBeLessThanOrEqual(48 * 3600 * 1000);
+  });
+
+  it('transient=false/缺失 → valid_until=null（稳定属性永久有效）', async () => {
+    const mockStableLLM: ILLMService = {
+      complete: async () => JSON.stringify({
+        facts: [
+          { fact: '用户目前所在城市是长沙', confidence: 1, evidence: '我在长沙', directly_stated: true, transient: false },
+          { fact: '用户玩星穹铁道', confidence: 0.9, evidence: '我在玩', directly_stated: true }, // 缺失 → 按稳定处理
+        ],
+      }),
+    };
+    const extractor2 = new ProfileExtractor(mockStableLLM);
+    const facts = await extractor2.extract([makeEvent('我在长沙')]);
+    expect(facts).toHaveLength(2);
+    expect(facts[0].valid_until).toBeNull();
+    expect(facts[1].valid_until).toBeNull();
+  });
+
   it('should return empty for events with no extractable info', async () => {
     const mockEmptyLLM: ILLMService = {
       complete: async () => JSON.stringify({ facts: [] }),

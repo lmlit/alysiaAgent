@@ -306,6 +306,22 @@ memory_config: {
 | 24h 无信号回归 0.05 | 自然遗忘曲线 |
 | 显式用户指令优先 | 立刻生效，不受限速 |
 
+### 4.4.1 时效性分类与自动过期（8-12，profile-transient-expiry）
+
+**问题（线上实锤）**：瞬时事件（"午餐吃了香菜拌牛肉"）被提成 confidence 1.0 的
+active fact 永久固化（valid_until=null）→ `getUserActivitySummary` 按 confidence
+取 top5 注入问候 prompt → bot 引用过期午餐（用户："香菜牛肉已经是我几百年前吃的午餐了"）。
+
+**机制**：提取 prompt 要求 LLM 对每条事实输出 `transient` 分类：
+- **稳定属性**（城市/职业/习惯/偏好/关系/身体状况/长期爱好）→ `transient=false`，
+  `valid_until=null`（永久）
+- **时效信息**（某天饮食/当天状态/单次事件/梦境/近期近况）→ `transient=true`，
+  `valid_until = now + 48h`（自动过期，`getActiveFacts` 已过滤）
+
+存量清洗（2026-08-12）：LLM 分批分类线上 194 条 facts，50 条时效事实补 48h
+过期（备份 `alysia.db.cleanup-bak-*` 可回滚）；少量误判（体重/习惯）48h 后自然
+消失，用户重提时重新提取。
+
 ### 4.5 纠正快路径 (v2)
 
 **问题**: 用户纠正（"不是/记错了/改了"）要等 SessionEnd 才生效，期间系统还在用错误画像。
