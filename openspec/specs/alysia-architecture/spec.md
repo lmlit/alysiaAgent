@@ -542,6 +542,13 @@ class TelegramAdapter implements Platform {
 返回前加终检 `signal.aborted`，命中则丢弃已产出文本、返回 aborted。所有返回路径
 （开头 / err 分支 / 终检）统一 aborted 语义：**被打断的生成结果永不发送**。
 
+**60s 超时语义（llm-request-timeout-race）**：AbortController 无法中断 undici
+fetch 的 DNS/连接建立阶段（libuv getaddrinfo 不可取消）——网络故障时 abort 传
+不到底层，请求会挂到 DNS 系统超时（线上实测 566s）。60s 超时用
+`Promise.race([fetch, timeoutPromise])` 保证准时返回（不依赖 signal 传播）；
+挂起 fetch 的最终 rejection 用 `.catch(() => {})` 吞掉防 unhandledRejection；
+外部打断仍走 AbortController（请求已发出后 abort 有效）。
+
 ### 6.2 内置工具
 
 | 工具 | 描述 | 实现 |

@@ -36,17 +36,28 @@ export class OpenAIProvider {
     logger.debug(`[LLM] request: ${JSON.stringify(messages)}`);
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 60_000);
-    // ★ 8-10 打断：外部 signal（Coalescer 新消息打断在飞）与 60s timeout 组合——
-    //   外部 abort 也走同一 controller，确保真到 fetch（只调 .abort() 不接 fetch = 假打断）
+    // ★ 8-10 打断：外部 signal（Coalescer 新消息打断在飞）→ 同一 controller 透传 fetch
     if (req.signal) {
       if (req.signal.aborted) controller.abort();
       else req.signal.addEventListener('abort', () => controller.abort(), { once: true });
     }
     const start = Date.now();
 
+    // ★ 8-12 超时修复（llm-request-timeout-race）：60s 超时改用 Promise.race——
+    //   AbortController 无法中断 undici fetch 的 DNS/连接建立阶段（libuv getaddrinfo
+    //   提交线程池后不可取消），网络故障（DNS 无响应）时 abort 传不到底层，请求会挂到
+    //   DNS 系统超时（线上实测 566s）而非 60s。race 保证准时返回 timed out；
+    //   底层挂起的 fetch 最终失败用 .catch(() => {}) 吞掉（防 unhandledRejection）。
+    let timeoutTimer: NodeJS.Timeout | undefined;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutTimer = setTimeout(
+        () => reject(Object.assign(new Error('LLM request timed out (60s)'), { name: 'AbortError' as const })),
+        60_000,
+      );
+    });
+
     try {
-      const response = await fetch(`${this.config.baseUrl}/chat/completions`, {
+      const fetchPromise = fetch(`${this.config.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -55,6 +66,10 @@ export class OpenAIProvider {
         body: JSON.stringify(body),
         signal: controller.signal,
       });
+      // 防 unhandledRejection：race 已返回（超时/外部 abort）后，挂起的底层请求
+      // 最终失败时其 rejection 必须被消费
+      fetchPromise.catch(() => {});
+      const response = await Promise.race([fetchPromise, timeoutPromise]);
 
       if (!response.ok) {
         const errText = await response.text();
@@ -95,13 +110,14 @@ export class OpenAIProvider {
           logger.info(`[LLM] ${model} aborted by signal (${Date.now() - start}ms)`);
           return { role: 'err', completionText: 'Request aborted' };
         }
+        // ★ 8-12 race 超时（或 AbortController 路径的 timeout）：统一 60s 语义
         logger.error(`[LLM] ${model} timed out after 60s`);
         return { role: 'err', completionText: 'Request timed out (60s)' };
       }
       logger.error(`[LLM] ${model} request error: ${err.message} (${Date.now() - start}ms)`);
       return { role: 'err', completionText: `Request error: ${err.message}` };
     } finally {
-      clearTimeout(timeout);
+      if (timeoutTimer) clearTimeout(timeoutTimer);
     }
   }
 
