@@ -151,6 +151,16 @@ describe('MemoryManager life methods', () => {
     expect(sample.some(x => x.content === '测试设定内容')).toBe(true);
   });
 
+  // ★ 8-12 二期④：life_event 种子纳入采样
+  it('getWorldbookSample 纳入 content_type=life_event 的事件种子（按 priority）', () => {
+    db.prepare(`INSERT INTO worldbook_entries (id, trigger_keys, trigger_mode, content, scope, priority, cooldown_sec, last_triggered, hit_count, created_at, updated_at, role, content_type)
+      VALUES ('wb-life', '[""]', 'any', '昔涟会在集市买桃子', 'chat', 20, 0, NULL, 0, '2026-08-06T00:00:00', '2026-08-06T00:00:00', 'alysia', 'life_event')`).run();
+    const sample = mm.getWorldbookSample(5);
+    expect(sample.some(x => x.content === '昔涟会在集市买桃子')).toBe(true);
+    // life_event 条目 priority 高 → 排前
+    expect(sample[0]?.content).toBe('昔涟会在集市买桃子');
+  });
+
   it('getWorldbookSample 返回含 id 的结构（终审修复：生成器引用 + 命中统计）', () => {
     db.prepare(`INSERT INTO worldbook_entries (id, trigger_keys, trigger_mode, content, scope, priority, cooldown_sec, last_triggered, hit_count, created_at, updated_at, role, content_type)
       VALUES ('wb-test', '["测试"]', 'any', '测试设定内容', 'chat', 10, 0, NULL, 0, '2026-08-06T00:00:00', '2026-08-06T00:00:00', 'alysia', 'text')`).run();

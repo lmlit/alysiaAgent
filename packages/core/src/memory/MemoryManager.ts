@@ -383,11 +383,13 @@ export class MemoryManager {
     return id;
   }
 
-  /** ★ 激活角色世界书采样（事件生成人设背景，priority 加权）。返回含 id，供生成器引用与命中统计 */
+  /** ★ 激活角色世界书采样（事件生成人设背景，priority 加权）。返回含 id，供生成器引用与命中统计。
+   *  ★ 8-12 二期④：纳入 content_type='life_event' 角色专属事件种子（事件模板），
+   *    按 priority 与文本条目同池采样——生成的事件更贴合角色设定 */
   getWorldbookSample(limit: number = 5): Array<{ id: string; content: string }> {
     const role = this.getActiveRoleId();
     const rows = this.db.prepare(
-      "SELECT id, content, priority FROM worldbook_entries WHERE role = ? AND scope IN ('chat', 'both') AND content_type = 'text' ORDER BY priority DESC LIMIT ?"
+      "SELECT id, content, priority FROM worldbook_entries WHERE role = ? AND scope IN ('chat', 'both') AND content_type IN ('text', 'life_event') ORDER BY priority DESC LIMIT ?"
     ).all(role, limit) as Array<{ id: string; content: string; priority: number }>;
     return rows.map(r => ({ id: r.id, content: r.content.slice(0, 100) }));
   }
