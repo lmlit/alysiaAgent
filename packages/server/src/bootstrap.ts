@@ -11,7 +11,7 @@ if (envResult.error) {
 }
 
 import { AlysiaCore, logger, startDailyLogCleanup, DEFAULT_SAMPLING } from '@alysia/core';
-import { createReminderTool } from '@alysia/core/tools';
+import { createReminderTool, createListRemindersTool, createCancelReminderTool, restoreReminders } from '@alysia/core/tools';
 import { VisionBridge } from '@alysia/core/vision';
 import { TelegramAdapter } from './adapters/telegram.js';
 import { QQOneBotAdapter } from './adapters/qq-onebot.js';
@@ -157,9 +157,10 @@ async function main() {
 
   // ★ 提醒主动推送：到点时通过 QQ 官方主动消息发给设置者
   //   过 LLM 用昔涟语气生成自然提醒文案，失败回落原始文本
+  // ★ 8-12 持久化（reminder-sqlite-persistence）：persist 走 MemoryManager SQLite，
+  //   启动时恢复（未过期重挂 / 过期补发）
   if (qqOff) {
-    // ★ 8-08 优化：notifyFn 返回 boolean——sendProactive 结果回传 reminder 判定失败重试
-    core.toolRegistry.register(createReminderTool(async (text, sessionId): Promise<boolean> => {
+    const notifyFn = async (text: string, sessionId?: string): Promise<boolean> => {
       if (!sessionId) { logger.info(`Reminder (no session): ${text}`); return true; }
       const m = sessionId.match(/:private:private_(.+)$/);
       if (m) {
@@ -181,7 +182,18 @@ async function main() {
         logger.info(`Reminder (non-private): ${text}`);
         return true;
       }
-    }));
+    };
+    // ★ 8-12 持久化：save/remove → MemoryManager（SQLite reminders 表）
+    const persist = {
+      save: (id: string, r: { text: string; triggerAt: Date; sessionId?: string; retryCount?: number }) =>
+        core.memoryManager.saveReminder(id, r),
+      remove: (id: string) => core.memoryManager.removeReminder(id),
+    };
+    core.toolRegistry.register(createReminderTool(notifyFn, persist));
+    core.toolRegistry.register(createListRemindersTool());
+    core.toolRegistry.register(createCancelReminderTool(persist));
+    // ★ 8-12 启动恢复：容器重启后未触发的提醒重新调度（过期立即补发）
+    restoreReminders(notifyFn, persist, core.memoryManager.listPendingReminders());
   }
 
   // 定时记忆压缩：每 6 小时跑一次 cron

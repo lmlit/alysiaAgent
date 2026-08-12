@@ -287,12 +287,14 @@ export class AlysiaCore {
     this.toolRegistry.register(createWebSearchTool());
     this.toolRegistry.register(createWeatherTool());
     this.toolRegistry.register(createWorldbookTool(db));
+    // ★ 8-12 桌面端/CLI 路径无 SQLite 持久化：no-op persist（内存调度不变）
+    const noopPersist = { save: () => {}, remove: () => {} };
     this.toolRegistry.register(createReminderTool(async (text: string): Promise<boolean> => {
       logger.info(`Reminder triggered: ${text}`);
       return true; // 仅日志路径视为已处理（无推送通道）
-    }));
+    }, noopPersist));
     this.toolRegistry.register(createListRemindersTool());
-    this.toolRegistry.register(createCancelReminderTool());
+    this.toolRegistry.register(createCancelReminderTool(noopPersist));
     // 表情包不再注册为工具 — 改用文案内标记 [表情包:名字]，发送时解析（LLMAgentStage + adapter）
   }
 

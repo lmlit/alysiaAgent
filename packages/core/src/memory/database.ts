@@ -128,6 +128,15 @@ export function initializeDatabase(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_life_events_time ON ai_life_events(created_at);
 
+    -- ★ 8-12 提醒持久化（reminder-sqlite-persistence）：容器重启不丢失
+    CREATE TABLE IF NOT EXISTS reminders (
+      id          TEXT PRIMARY KEY,
+      text        TEXT NOT NULL,
+      trigger_at  INTEGER NOT NULL,   -- epoch ms
+      session_id  TEXT NOT NULL DEFAULT '',
+      retry_count INTEGER DEFAULT 0
+    );
+
     CREATE TABLE IF NOT EXISTS ai_life_daily_summaries (
       date            TEXT PRIMARY KEY,
       summary         TEXT NOT NULL,

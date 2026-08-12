@@ -252,6 +252,45 @@ export class MemoryManager {
     }
   }
 
+  // ===== 提醒持久化（8-12，reminder-sqlite-persistence）=====
+
+  /** ★ 保存提醒（set_reminder 工具持久化）——容器重启不丢失 */
+  saveReminder(id: string, r: { text: string; triggerAt: Date; sessionId?: string; retryCount?: number }): void {
+    try {
+      this.db.prepare(
+        'INSERT INTO reminders (id, text, trigger_at, session_id, retry_count) VALUES (?, ?, ?, ?, ?) ' +
+        'ON CONFLICT(id) DO UPDATE SET text=excluded.text, trigger_at=excluded.trigger_at, session_id=excluded.session_id, retry_count=excluded.retry_count'
+      ).run(id, r.text, r.triggerAt.getTime(), r.sessionId ?? '', r.retryCount ?? 0);
+    } catch (err: any) {
+      logger.warn(`[Memory] saveReminder failed: ${err.message}`);
+    }
+  }
+
+  /** ★ 删除提醒（cancel / 触发后消费） */
+  removeReminder(id: string): void {
+    try {
+      this.db.prepare('DELETE FROM reminders WHERE id = ?').run(id);
+    } catch (err: any) {
+      logger.warn(`[Memory] removeReminder failed: ${err.message}`);
+    }
+  }
+
+  /** ★ 全部待触发提醒（含已过期的——启动恢复时补发用） */
+  listPendingReminders(): Array<{ id: string; text: string; triggerAt: Date; sessionId: string; retryCount: number }> {
+    try {
+      return this.db.prepare('SELECT * FROM reminders ORDER BY trigger_at').all().map((r: any) => ({
+        id: r.id,
+        text: r.text,
+        triggerAt: new Date(r.trigger_at),
+        sessionId: r.session_id,
+        retryCount: r.retry_count,
+      }));
+    } catch (err: any) {
+      logger.warn(`[Memory] listPendingReminders failed: ${err.message}`);
+      return [];
+    }
+  }
+
   // ===== AI 主动生活系统（v4）=====
 
   /** ★ 生活状态快照（Web 展示） */
