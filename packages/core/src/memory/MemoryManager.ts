@@ -358,6 +358,18 @@ export class MemoryManager {
     });
     this.lifeStore.updateState({ currentActivity: input.content, mood: input.moodDelta ?? undefined, lastEventId: id });
     logger.info(`[Life] event: [${input.type}] ${input.content.slice(0, 60)}`);
+    // ★ 8-12 事件向量检索（life-event-vector-search）：fire-and-forget 嵌入——
+    //   对话可召回"bot 自己做过的事"（与主提示词瘦身配对：瘦掉的细节检索兜底）。
+    //   embed 失败不阻塞事件记录（沿用 RealtimeProcessor 模式）
+    if (this.vectorStore) {
+      this.embedService.embed(input.content)
+        .then(vector => this.vectorStore!.insert(id, vector, input.content, {
+          source: 'life_event',
+          type: input.type,
+          created_at: now,
+        }))
+        .catch(() => { /* embedding failure is non-fatal */ });
+    }
     return id;
   }
 
@@ -456,13 +468,15 @@ export class MemoryManager {
     try {
       const vector = await this.embedService.embed(req.query);
       // ★ 8-09 事件向量纳入检索：[相关记忆] 可捞回超 24h 的对话细节（含回写后的 AI 发言）
-      const [convResults, knowledgeResults, eventResults] = await Promise.all([
+      // ★ 8-12 life 事件纳入检索（life-event-vector-search）：bot 自己的"生活"可被召回
+      const [convResults, knowledgeResults, eventResults, lifeResults] = await Promise.all([
         this.conversationStore.searchByVector(vector, req.limit),
         this.knowledgeStore.searchByVector(vector, Math.min(3, req.limit)),
         this.eventStore.searchByVector(vector, Math.min(3, req.limit)),
+        this.vectorStore.search(vector, Math.min(2, req.limit), { source: 'life_event' }),
       ]);
       retrieved = this.applyKnobsToRetrieved(
-        [...convResults, ...knowledgeResults, ...eventResults],
+        [...convResults, ...knowledgeResults, ...eventResults, ...lifeResults],
         knobs,
       ).slice(0, req.limit);
     } catch {

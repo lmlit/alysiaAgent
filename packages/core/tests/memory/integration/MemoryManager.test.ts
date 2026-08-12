@@ -180,6 +180,42 @@ describe('MemoryManager', () => {
     expect(result.retrieved.map(r => r.id)).toEqual(['imp', 'norm']);
   });
 
+  // ===== 8-12 事件向量检索（life-event-vector-search）=====
+
+  it('recordLifeEvent → 事件嵌入向量（source=life_event，fire-and-forget）', async () => {
+    const inserts: Array<{ source?: string }> = [];
+    const vectorStore: IVectorStore = {
+      insert: async (_id: string, _v: number[], _t: string, meta: Record<string, unknown>) => { inserts.push(meta); },
+      search: async () => [],
+      delete: async () => {},
+      count: async () => 0,
+    };
+    const mm = new MemoryManager(db, vectorStore, mockEmbed, mockLLM);
+    const id = mm.recordLifeEvent({ type: 'chat', content: '在阳台看书' });
+    await new Promise(r => setTimeout(r, 20)); // 等 fire-and-forget 嵌入完成
+    expect(inserts).toHaveLength(1);
+    expect(inserts[0].source).toBe('life_event');
+    expect(inserts[0].created_at).toBeTruthy();
+    expect(id).toContain('life-');
+  });
+
+  it('read() 检索含 life 事件（source=life_event）', async () => {
+    const vectorStore: IVectorStore = {
+      insert: async () => {},
+      search: async (_v: number[], _k: number, opts?: { source?: string }) => {
+        if (opts?.source === 'life_event') return [
+          { id: 'life-1', score: 0.85, text: '午后在画册上描了一颗星', metadata: { source: 'life_event', created_at: new Date().toISOString() } },
+        ];
+        return [];
+      },
+      delete: async () => {},
+      count: async () => 1,
+    };
+    const mm = new MemoryManager(db, vectorStore, mockEmbed, mockLLM);
+    const result = await mm.read({ query: '画册', mode: 'chat', limit: 5 });
+    expect(result.retrieved.some(r => r.id === 'life-1')).toBe(true);
+  });
+
   it('should list and delete knowledge docs', async () => {
     await manager.importKnowledge({ title: '文档A', content: '内容A' });
     await manager.importKnowledge({ title: '文档B', content: '内容B' });
