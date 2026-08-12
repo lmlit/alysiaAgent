@@ -390,7 +390,7 @@ await memoryManager.ingest({
 - [x] 窗口外事件补叙（8-12：昨天 internal 最近 2 条注入）
 - [x] 事件向量检索（8-12：recordLifeEvent 嵌入 source=life_event，read() 纳入召回）
 - [x] 世界书 life_event 种子（8-12：getWorldbookSample 纳入，priority 同池采样）
-- [ ] 亲密度 Web UI 可视化
+- [x] 亲密度 API 就绪（/api/life 返回 intimacy）；UI 渲染待 Web 端整体开工
 
 ---
 
