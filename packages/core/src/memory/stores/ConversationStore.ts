@@ -17,6 +17,8 @@ export class ConversationStore {
         source: 'conversation',
         topics: conv.topics,
         session_id: conv.session_id,
+        // ★ 8-12 旋钮接线：会话结束时间供 recency 衰减（存量向量无此字段 → 不衰减）
+        updated_at: conv.ended_at,
       });
     }
   }

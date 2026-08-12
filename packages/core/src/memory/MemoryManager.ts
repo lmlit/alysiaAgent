@@ -252,6 +252,16 @@ export class MemoryManager {
     }
   }
 
+  /** ★ 8-12 记忆旋钮调整（Web 端/LLM 适配用，转发 PersonaStore） */
+  adjustMemoryConfig(config: Partial<MemoryConfig>): void {
+    this.personaStore.updateMemoryConfig(config);
+  }
+
+  /** ★ 8-12 记忆旋钮读取（当前激活角色） */
+  getMemoryConfig(): MemoryConfig {
+    return this.personaStore.getMemoryConfig();
+  }
+
   // ===== 提醒持久化（8-12，reminder-sqlite-persistence）=====
 
   /** ★ 保存提醒（set_reminder 工具持久化）——容器重启不丢失 */
@@ -411,12 +421,16 @@ export class MemoryManager {
     const activeRole = this.getActiveRoleId();
     const triggers = await this.worldbookMatcher.match(req.query, req.mode, activeRole);
 
+    // ★ 8-12 记忆旋钮（memory-knobs-into-recall-pipeline）：召回排序前应用
+    //   recency_weight（时间衰减）+ decay_rate（遗忘速度）+ importance_threshold（优先）
+    const knobs = this.personaStore.getMemoryConfig();
+
     // 向量存储未启用时直接走文本检索（避免 embed 成功但 search 空结果不触发 fallback）
     if (!this.vectorStore) {
-      const retrieved = [
+      const retrieved = this.applyKnobsToRetrieved([
         ...this.conversationStore.searchByText(req.query, req.limit),
         ...this.knowledgeStore.searchChunksByText(req.query, Math.min(3, req.limit)),
-      ].sort((a, b) => b.score - a.score).slice(0, req.limit);
+      ], knobs).slice(0, req.limit);
 
       return {
         context: '',
@@ -436,16 +450,17 @@ export class MemoryManager {
         this.knowledgeStore.searchByVector(vector, Math.min(3, req.limit)),
         this.eventStore.searchByVector(vector, Math.min(3, req.limit)),
       ]);
-      retrieved = [...convResults, ...knowledgeResults, ...eventResults]
-        .sort((a, b) => b.score - a.score)
-        .slice(0, req.limit);
+      retrieved = this.applyKnobsToRetrieved(
+        [...convResults, ...knowledgeResults, ...eventResults],
+        knobs,
+      ).slice(0, req.limit);
     } catch {
       // Fallback: SQLite LIKE search when embed API fails
       // 知识库升级为搜 chunk 全文（之前只搜标题，几乎搜不到内容）
-      retrieved = [
+      retrieved = this.applyKnobsToRetrieved([
         ...this.conversationStore.searchByText(req.query, req.limit),
         ...this.knowledgeStore.searchChunksByText(req.query, Math.min(3, req.limit)),
-      ].sort((a, b) => b.score - a.score).slice(0, req.limit);
+      ], knobs).slice(0, req.limit);
     }
 
     return {
@@ -454,6 +469,39 @@ export class MemoryManager {
       retrieved,
       worldbook_triggers: triggers,
     };
+  }
+
+  /**
+   * ★ 8-12 记忆旋钮接线（memory-knobs-into-recall-pipeline）：
+   * - decay_rate：遗忘速度——半衰期 = 24h / decay_rate（0.3 → ~80h 半衰；1 → 24h 秒忘；0 → 不忘）
+   * - recency_weight：时间惩罚上限——score × (1 − recency_weight × ageFactor × 0.5)
+   *   （ageFactor = 1 − e^(−age/半衰期)，0~1；=0 念旧不罚）
+   * - importance_threshold：importance > threshold 的结果加分优先（metadata.importance）
+   * 知识库（无时间字段）天然不衰减；metadata 缺时间按最新处理（不罚）。
+   * 限制：服务端 ingest importance 恒 0——importance 加分待 importance 计算接入后自动生效。
+   */
+  private applyKnobsToRetrieved(retrieved: SearchResult[], knobs: MemoryConfig): SearchResult[] {
+    const now = Date.now();
+    const halfLifeHours = 24 / Math.max(knobs.decay_rate, 0.05);
+    const scored = retrieved.map(r => {
+      let score = r.score;
+      // recency 衰减：metadata.created_at/updated_at（事件/会话向量带；知识无 → 不衰减）
+      const ts = (r.metadata?.created_at ?? r.metadata?.updated_at) as string | undefined;
+      if (typeof ts === 'string') {
+        const ageHours = (now - new Date(ts).getTime()) / 3_600_000;
+        if (ageHours > 0) {
+          const ageFactor = 1 - Math.exp(-ageHours / halfLifeHours);
+          score = score * (1 - knobs.recency_weight * ageFactor * 0.5);
+        }
+      }
+      // importance 优先：metadata.importance > threshold → 加分（数据到位自动生效）
+      const imp = r.metadata?.importance;
+      if (typeof imp === 'number' && imp > knobs.importance_threshold) {
+        score += 0.15;
+      }
+      return { ...r, score };
+    });
+    return scored.sort((a, b) => b.score - a.score);
   }
 
   /** @deprecated 请使用 assembleWithWorldbook()，它包含了 Worldbook 和 search results 的完整组装 */

@@ -6,7 +6,7 @@
 
 | slug | 系统 | 状态 | 来源（旧文档） | 最后变更 |
 |------|------|------|----------------|----------|
-| memory-system | 记忆系统（7 store / 3 engine / 3 processor / 旋钮） | active | docs/superpowers/specs/2026-06-28-memory-system-design.md | 2026-08-12 画像时效性分类（transient + 48h 自动过期） |
+| memory-system | 记忆系统（7 store / 3 engine / 3 processor / 旋钮） | active | docs/superpowers/specs/2026-06-28-memory-system-design.md | 2026-08-12 画像时效性分类 + 记忆旋钮接入召回管道 |
 | alysia-architecture | 总体架构（monorepo / 双模式） | active | docs/superpowers/specs/2026-07-20-alysia-architecture-design.md | 2026-08-12 输入合并+打断（即时生成修订 + 竞态修复 + EventBus 私聊并发 + send 继承 + 思考中去重 + LLM 超时 race）+ 采样参数统一配置 |
 | pipeline-contract | Pipeline 契约 + 记忆修复 | frozen | docs/superpowers/specs/2026-07-30-pipeline-contract-and-memory-fix.md | 2026-08-07 迁移 |
 | server-desktop-separation | 服务端/桌面端分离 | frozen | docs/superpowers/specs/2026-07-30-server-desktop-separation.md | 2026-08-07 迁移 |
@@ -32,7 +32,6 @@
 |--------|------|------|
 | [worldbook-sampling-cooldown](../changes/worldbook-sampling-cooldown/proposal.md) | ai-life §6/7 世界书采样缺 cooldown 过滤（只做了 priority 排序 + hit_count） | docs → impl（补实现，spec 不改） |
 | [add-platforms-endpoint](../changes/add-platforms-endpoint/proposal.md) | Web-API §3.4 `GET /api/platforms` 全仓库无实现——唯一文档了但完全没建的接口 | docs → impl（补实现，契约不改） |
-| [memory-knobs-into-recall-pipeline](../changes/memory-knobs-into-recall-pipeline/proposal.md) | memory §4.3 旋钮只接亲密度，召回/遗忘管道零消费（半空转） | docs → impl（补实现，spec 不改） |
 
 ## 相关活文档（非 spec，但同为 source of truth）
 

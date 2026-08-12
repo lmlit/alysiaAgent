@@ -296,6 +296,19 @@ memory_config: {
 
 **记忆人格联动 (v2)**: 人格自适应引擎每次调整时，同步评估是否影响记忆行为，通过同一 PersonaAdapter 输出 `memory_config` 增量。LLM 根据交互模式判断角色是否"变得更念旧/更健忘/更记仇"，与 tone/speech/emotional 共用同一护栏机制。
 
+**召回管道接线 (8-12，memory-knobs-into-recall-pipeline)**: `MemoryManager.read()`
+排序前应用旋钮（`applyKnobsToRetrieved`，三路检索统一）：
+- `decay_rate`：遗忘速度——半衰期 = 24h / decay_rate（0.3 → ~80h 半衰；1 → 24h；0 → 不忘）
+- `recency_weight`：时间惩罚上限——`score × (1 − recency_weight × ageFactor × 0.5)`，
+  `ageFactor = 1 − e^(−age/半衰期)`（0~1；=0 念旧不罚）
+- `importance_threshold`：metadata.importance > threshold → score +0.15 优先
+  （服务端 ingest importance 恒 0 期间不生效，importance 计算接入后自动生效）
+- 知识库（无时间字段）天然不衰减；metadata 缺时间按最新处理
+- 事件向量 metadata 已有 created_at；会话向量补 updated_at（存量向量无时间 → 不衰减）
+- `retention_bias` / `confirmation_bias`：存储/提取情感偏向——未接线（作用面需
+  importance/情感计算支持，后续）
+- 对外：`MemoryManager.adjustMemoryConfig / getMemoryConfig`（Web 契约）
+
 ### 4.4 安全护栏
 
 | 规则 | 作用 |

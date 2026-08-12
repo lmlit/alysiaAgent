@@ -111,6 +111,75 @@ describe('MemoryManager', () => {
     expect(hit).toBeDefined();
   });
 
+  // ===== 8-12 记忆旋钮接线（memory-knobs-into-recall-pipeline）=====
+
+  it('旋钮衰减：recency_weight 高时旧结果被罚，新结果靠前', async () => {
+    const now = Date.now();
+    const vectorStore: IVectorStore = {
+      insert: async () => {},
+      // ★ 按 source 区分返回：event 两条（旧/新），knowledge 一条（无时间不衰减）
+      search: async (_v: number[], _k: number, opts?: { source?: string }) => {
+        if (opts?.source === 'chat') return [
+          { id: 'old', score: 0.9, text: '旧事件', metadata: { source: 'event', created_at: new Date(now - 3 * 86_400_000).toISOString() } },
+          { id: 'new', score: 0.8, text: '新事件', metadata: { source: 'event', created_at: new Date(now - 3_600_000).toISOString() } },
+        ];
+        if (opts?.source === 'knowledge') return [
+          { id: 'kb', score: 0.7, text: '知识条目', metadata: { source: 'knowledge' } },
+        ];
+        return [];
+      },
+      delete: async () => {},
+      count: async () => 3,
+    };
+    const mm = new MemoryManager(db, vectorStore, mockEmbed, mockLLM);
+    // 强旋钮：recency_weight=1（只认最近）→ 3 天前的 0.9 被罚 50%×ageFactor 后低于新事件
+    mm.adjustMemoryConfig({ recency_weight: 1 });
+    const result = await mm.read({ query: 'x', mode: 'chat', limit: 5 });
+    const order = result.retrieved.map(r => r.id);
+    expect(order[0]).toBe('new'); // 新事件超越旧事件
+    expect(order).toContain('kb'); // 知识不衰减仍在
+  });
+
+  it('旋钮：decay_rate=0（不忘）→ 旧结果不衰减，保持相关度排序', async () => {
+    const now = Date.now();
+    const vectorStore: IVectorStore = {
+      insert: async () => {},
+      search: async (_v: number[], _k: number, opts?: { source?: string }) => {
+        if (opts?.source === 'chat') return [
+          { id: 'old', score: 0.9, text: '旧事件', metadata: { source: 'event', created_at: new Date(now - 10 * 86_400_000).toISOString() } },
+          { id: 'new', score: 0.8, text: '新事件', metadata: { source: 'event', created_at: new Date(now - 3_600_000).toISOString() } },
+        ];
+        return [];
+      },
+      delete: async () => {},
+      count: async () => 2,
+    };
+    const mm = new MemoryManager(db, vectorStore, mockEmbed, mockLLM);
+    // 写 decay_rate=0：半衰无穷 → 不罚
+    mm.adjustMemoryConfig({ decay_rate: 0 });
+    const result = await mm.read({ query: 'x', mode: 'chat', limit: 5 });
+    expect(result.retrieved.map(r => r.id)).toEqual(['old', 'new']); // 相关度排序保持
+  });
+
+  it('旋钮：importance > threshold 的结果加分提前', async () => {
+    const vectorStore: IVectorStore = {
+      insert: async () => {},
+      search: async (_v: number[], _k: number, opts?: { source?: string }) => {
+        if (opts?.source === 'chat') return [
+          { id: 'imp', score: 0.5, text: '重要事件', metadata: { source: 'event', importance: 0.9 } },
+          { id: 'norm', score: 0.6, text: '普通事件', metadata: { source: 'event' } },
+        ];
+        return [];
+      },
+      delete: async () => {},
+      count: async () => 2,
+    };
+    const mm = new MemoryManager(db, vectorStore, mockEmbed, mockLLM);
+    const result = await mm.read({ query: 'x', mode: 'chat', limit: 5 });
+    // importance 0.9 > threshold 0.4 → +0.15 → 0.65 > 0.6 提前
+    expect(result.retrieved.map(r => r.id)).toEqual(['imp', 'norm']);
+  });
+
   it('should list and delete knowledge docs', async () => {
     await manager.importKnowledge({ title: '文档A', content: '内容A' });
     await manager.importKnowledge({ title: '文档B', content: '内容B' });
