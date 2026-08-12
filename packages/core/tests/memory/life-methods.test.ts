@@ -40,6 +40,34 @@ describe('MemoryManager life methods', () => {
     expect(inj).toContain('在阳台看书');
   });
 
+  // ★ 8-12 主提示词瘦身（life-prompt-slim）：今天事件只注入最近 3 条
+  it('今天超过 3 条事件 → 只注入最近 3 条（倒序）', () => {
+    for (let i = 1; i <= 5; i++) {
+      mm.lifeStore.addEvent({
+        id: `e${i}`, createdAt: new Date(Date.now() + i * 1000).toISOString(), // 递增时间
+        type: 'chat', content: `事件${i}`,
+      });
+    }
+    const inj = mm.getLifeEventInjection();
+    expect(inj).toContain('事件5');
+    expect(inj).toContain('事件4');
+    expect(inj).toContain('事件3');
+    expect(inj).not.toContain('事件2'); // 最旧的被截断
+    expect(inj).not.toContain('事件1');
+    // 倒序：事件5 在 事件4 前
+    expect(inj.indexOf('事件5')).toBeLessThan(inj.indexOf('事件4'));
+  });
+
+  it('注入预算：总长超 500 字 → 丢最旧摘要保事件', () => {
+    mm.recordLifeEvent({ type: 'chat', content: '今天的事件细节'.repeat(30) }); // 长事件
+    for (let d = 1; d <= 7; d++) {
+      mm.upsertDailySummary(`2026-08-${String(d).padStart(2, '0')}`, '摘要'.repeat(40));
+    }
+    const inj = mm.getLifeEventInjection();
+    expect(inj).toContain('今天的事件细节'); // 事件保留
+    expect(inj.length).toBeLessThanOrEqual(550); // 预算附近
+  });
+
   it('getLifeEventInjection 时区边界：本地 0 点前的 UTC 事件归"今天" + 本地时间显示', () => {
     vi.useFakeTimers();
     try {

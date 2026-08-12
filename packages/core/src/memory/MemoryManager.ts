@@ -324,15 +324,26 @@ export class MemoryManager {
     const summaries = this.lifeStore.getRecentSummaries(7).filter(s => s.date !== todayKey);
     if (today.length === 0 && summaries.length === 0) return '';
 
-    const lines: string[] = [];
-    for (const e of today) {
-      // 本地时间显示 HH:MM
+    // ★ 8-12 主提示词瘦身（life-prompt-slim）：今天事件只注入最近 3 条（倒序）——
+    //   bot 的"当下状态"（正在做的事 + 最近一两件事）够用，更多细节由事件向量
+    //   检索（二期②）在相关时召回；预算 ≤ 500 字，超出优先保留事件、丢最旧摘要
+    const MAX_TODAY_EVENTS = 3;
+    const MAX_INJECTION_CHARS = 500;
+    const recentToday = [...today].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, MAX_TODAY_EVENTS);
+
+    const eventLines = recentToday.map(e => {
       const time = formatLocalTime(new Date(e.createdAt)).slice(-5);
-      lines.push(`- 今天 ${time} ${e.content}`);
+      return `- 今天 ${time} ${e.content}`;
+    });
+    const summaryLines = summaries.map(s => `- ${s.date}: ${s.summary}`);
+
+    let lines = [...eventLines, ...summaryLines];
+    // 预算裁剪：从摘要尾部开始丢（事件优先保留）
+    while (lines.join('\n').length > MAX_INJECTION_CHARS && summaryLines.length > 0) {
+      summaryLines.pop();
+      lines = [...eventLines, ...summaryLines];
     }
-    for (const s of summaries) {
-      lines.push(`- ${s.date}: ${s.summary}`);
-    }
+    if (lines.length === 0) return '';
     return `[我的近期日常]\n${lines.join('\n')}`;
   }
 
