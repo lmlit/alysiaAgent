@@ -58,6 +58,43 @@ describe('MemoryManager life methods', () => {
     expect(inj.indexOf('事件5')).toBeLessThan(inj.indexOf('事件4'));
   });
 
+  // ★ 8-12 窗口外补叙（life-offline-recap）：昨天 internal 事件注入最近 2 条
+  it('昨天 3 条 internal → 只注入最近 2 条（跨天补叙）', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date(2026, 7, 12, 12, 0, 0)); // 本地 8-12 中午
+      const yesterday = (h: number, m: number) =>
+        new Date(2026, 7, 11, h, m).toISOString();
+      for (let i = 1; i <= 3; i++) {
+        mm.lifeStore.addEvent({
+          id: `y${i}`, createdAt: yesterday(8 + i, 30), type: 'internal', content: `深夜事件${i}`,
+        });
+      }
+      const inj = mm.getLifeEventInjection();
+      expect(inj).toContain('深夜事件3');
+      expect(inj).toContain('深夜事件2');
+      expect(inj).not.toContain('深夜事件1'); // 最旧的昨天事件不补叙
+      expect(inj).toContain('昨天 '); // 带昨天时间戳格式
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('昨天 chat 类型事件不补叙（只补 internal 独处事件）', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date(2026, 7, 12, 12, 0, 0));
+      mm.lifeStore.addEvent({
+        id: 'y-chat', createdAt: new Date(2026, 7, 11, 20, 0).toISOString(),
+        type: 'chat', content: '昨天的推送事件',
+      });
+      const inj = mm.getLifeEventInjection();
+      expect(inj).not.toContain('昨天的推送事件'); // chat 已推送过，不补
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('注入预算：总长超 500 字 → 丢最旧摘要保事件', () => {
     mm.recordLifeEvent({ type: 'chat', content: '今天的事件细节'.repeat(30) }); // 长事件
     for (let d = 1; d <= 7; d++) {

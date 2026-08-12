@@ -322,7 +322,17 @@ export class MemoryManager {
     const today = this.lifeStore.getEventsSince(sinceIso)
       .filter(e => localDateKeyFromISO(e.createdAt) === todayKey); // 边界兜底
     const summaries = this.lifeStore.getRecentSummaries(7).filter(s => s.date !== todayKey);
-    if (today.length === 0 && summaries.length === 0) return '';
+    // ★ 8-12 窗口外补叙（life-offline-recap）：昨天 internal 事件（bot 独处、未推送）
+    //   最近 2 条——用户跨天后对话时 bot 自然记得昨晚做了什么（查询须在早期 return 前）
+    const yesterdayKey = localDateKey(new Date(Date.now() - 86_400_000));
+    let recapLines: string[] = [];
+    try {
+      recapLines = this.lifeStore.getEventsSince(new Date(`${yesterdayKey}T00:00:00`).toISOString())
+        .filter(e => e.type === 'internal' && localDateKeyFromISO(e.createdAt) === yesterdayKey)
+        .slice(-2)
+        .map(e => `- 昨天 ${formatLocalTime(new Date(e.createdAt)).slice(-5)} ${e.content}`);
+    } catch { /* recap failure is non-fatal */ }
+    if (today.length === 0 && summaries.length === 0 && recapLines.length === 0) return '';
 
     // ★ 8-12 主提示词瘦身（life-prompt-slim）：今天事件只注入最近 3 条（倒序）——
     //   bot 的"当下状态"（正在做的事 + 最近一两件事）够用，更多细节由事件向量
@@ -337,11 +347,11 @@ export class MemoryManager {
     });
     const summaryLines = summaries.map(s => `- ${s.date}: ${s.summary}`);
 
-    let lines = [...eventLines, ...summaryLines];
-    // 预算裁剪：从摘要尾部开始丢（事件优先保留）
+    let lines = [...eventLines, ...recapLines, ...summaryLines];
+    // 预算裁剪：从摘要尾部开始丢（事件 + 补叙优先保留）
     while (lines.join('\n').length > MAX_INJECTION_CHARS && summaryLines.length > 0) {
       summaryLines.pop();
-      lines = [...eventLines, ...summaryLines];
+      lines = [...eventLines, ...recapLines, ...summaryLines];
     }
     if (lines.length === 0) return '';
     return `[我的近期日常]\n${lines.join('\n')}`;

@@ -387,7 +387,7 @@ await memoryManager.ingest({
 
 **二期（独立立项）**：
 - [x] 主提示词瘦身（8-12：今天事件 top3 注入 + 500 字预算，细节走向量检索）
-- [ ] 窗口外事件补叙机制
+- [x] 窗口外事件补叙（8-12：昨天 internal 最近 2 条注入）
 - [x] 事件向量检索（8-12：recordLifeEvent 嵌入 source=life_event，read() 纳入召回）
 - [ ] 世界书 `content_type: 'life_event'` 角色专属事件种子
 - [ ] 亲密度 Web UI 可视化
