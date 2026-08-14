@@ -1,0 +1,43 @@
+/* 基础样式:重置 + 全局 + 滚动条 + 动效 */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body, #app { height: 100%; }
+
+body {
+  font-family: var(--aw-font);
+  background: var(--aw-bg-base);
+  color: var(--aw-text);
+  font-size: var(--aw-fs-md);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  transition: background var(--aw-dur) var(--aw-ease), color var(--aw-dur) var(--aw-ease);
+}
+
+/* 背景星空(深色主题下) */
+body::before {
+  content: '';
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background:
+    radial-gradient(1200px 600px at 80% -10%, rgba(124, 108, 240, 0.12), transparent 60%),
+    radial-gradient(900px 500px at 10% 30%, rgba(103, 232, 249, 0.06), transparent 55%);
+  transition: opacity var(--aw-dur);
+}
+[data-theme='dawn'] body::before { opacity: 0.4; }
+
+a { color: var(--aw-accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+button { font-family: inherit; cursor: pointer; }
+
+/* 滚动条 */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: var(--aw-border-strong); border-radius: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* 文本选择 */
+::selection { background: rgba(232, 196, 106, 0.3); }
+
+/* 动效尊重系统设置 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}

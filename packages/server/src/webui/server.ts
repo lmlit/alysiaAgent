@@ -31,6 +31,9 @@
 import Fastify from 'fastify';
 import type { AlysiaCore } from '@alysia/core';
 import { registerChatRoutes } from './chat.js';
+import { existsSync, readFileSync } from 'fs';
+import { dirname, join, resolve } from 'path';
+import { fileURLToPath } from 'url';
 
 export function createWebuiApp(core: AlysiaCore) {
   const app = Fastify({ logger: false });
@@ -39,6 +42,16 @@ export function createWebuiApp(core: AlysiaCore) {
 
   // ── 系统 ──────────────────────────────────────────
   app.get('/api/health', async () => ({ status: 'ok', uptime: process.uptime() }));
+
+  // ★ 8-15 WebUI 静态托管(生产形态:同源 serve dist;hash 路由只需 index.html;
+  //   dev 用 vite dev server 5173 代理 /api)——构建产物缺失时静默跳过
+  const webuiDist = resolve(dirname(fileURLToPath(import.meta.url)), '../../webui/dist');
+  if (existsSync(join(webuiDist, 'index.html'))) {
+    app.get('/', async (_req: unknown, reply: any) => {
+      reply.type('text/html; charset=utf-8');
+      return reply.send(readFileSync(join(webuiDist, 'index.html')));
+    });
+  }
 
   // ── 会话 ──────────────────────────────────────────
   app.get('/api/sessions', async () => {
@@ -123,6 +136,23 @@ export function createWebuiApp(core: AlysiaCore) {
 
   // ── 表情包 ─────────────────────────────────────────
   app.get('/api/stickers', async () => core.memoryManager.listStickers());
+
+  // ★ 8-15 表情包文件（聊天视图 [表情包:名字] 渲染用）
+  app.get('/api/stickers/file/:name', async (req, reply) => {
+    const s = core.memoryManager.findSticker((req.params as any).name);
+    if (!s?.content) return reply.code(404).send({ ok: false, error: 'sticker not found' });
+    try {
+      const { readFileSync } = await import('fs');
+      const data = readFileSync(s.content);
+      const ext = s.content.split('.').pop()?.toLowerCase() ?? '';
+      const mime: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp' };
+      reply.header('Content-Type', mime[ext] ?? 'application/octet-stream');
+      reply.header('Cache-Control', 'public, max-age=86400');
+      return reply.send(data);
+    } catch {
+      return reply.code(404).send({ ok: false, error: 'sticker file missing' });
+    }
+  });
 
   // ── 隐私模式 ───────────────────────────────────────
   app.post('/api/privacy', async (req) => {
