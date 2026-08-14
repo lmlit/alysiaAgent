@@ -7,6 +7,9 @@ import { computed, nextTick, onMounted, ref } from 'vue';
 import { chatApi, sessionApi } from '../api/modules';
 import { streamChat } from '../api/client';
 import { useAppStore } from '../stores/app';
+import Live2DCanvas from '../components/live2d/Live2DCanvas.vue';
+
+const showPet = ref(true);
 
 const app = useAppStore();
 const CURRENT_SESSION_KEY = 'aw-chat-session';
@@ -150,6 +153,10 @@ const chatSessions = computed(() => sessions.value);
 
     <!-- 对话区 -->
     <div class="chat-main">
+      <div class="pet-corner" :class="{ hidden: !showPet }">
+        <button class="pet-toggle" @click="showPet = !showPet">{{ showPet ? '✕ 收起小人' : '✦ 召唤小人' }}</button>
+        <Live2DCanvas v-if="showPet" :width="220" :height="280" :interactive="true" />
+      </div>
       <div ref="listEl" class="msg-list">
         <div v-if="error" class="err-banner">{{ error }}</div>
         <template v-for="m in messages" :key="m.createdAt ?? m.content">
@@ -224,7 +231,19 @@ const chatSessions = computed(() => sessions.value);
 .session-count { font-size: 11px; color: var(--aw-text-faint); }
 .session-empty { color: var(--aw-text-faint); font-size: var(--aw-fs-sm); text-align: center; padding: 20px 0; }
 
-.chat-main { display: flex; flex-direction: column; min-width: 0; }
+.chat-main { display: flex; flex-direction: column; min-width: 0; position: relative; }
+.pet-corner {
+  position: absolute; right: 12px; bottom: 12px; z-index: 5;
+  transition: opacity var(--aw-dur) var(--aw-ease), transform var(--aw-dur) var(--aw-ease);
+}
+.pet-corner.hidden { opacity: 0; pointer-events: none; transform: translateY(10px); }
+.pet-toggle {
+  position: absolute; top: 0; left: 50%; transform: translateX(-50%); z-index: 6;
+  font-size: 10px; padding: 2px 8px; border-radius: var(--aw-radius-full);
+  border: 1px solid var(--aw-border); background: var(--aw-bg-raised);
+  color: var(--aw-text-faint); white-space: nowrap;
+}
+.pet-toggle:hover { color: var(--aw-gold); border-color: var(--aw-border-gold); }
 .msg-list { flex: 1; overflow-y: auto; padding: 20px 24px; }
 .err-banner {
   background: rgba(248, 113, 113, 0.1); border: 1px solid var(--aw-danger);

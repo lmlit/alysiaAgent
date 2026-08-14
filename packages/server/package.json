@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "exports": {
+    ".": "./dist/bootstrap.js",
+    "./webui": "./dist/webui/server.js"
+  },
   "scripts": {
     "build": "tsc",
     "start": "node dist/bootstrap.js",

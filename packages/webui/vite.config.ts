@@ -17,5 +17,11 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     chunkSizeWarningLimit: 1500,
+    rollupOptions: {
+      input: {
+        main: 'index.html',
+        pet: 'pet.html',
+      },
+    },
   },
 });

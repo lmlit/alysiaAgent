@@ -36,3 +36,19 @@ Vue 3 + Vite + Pinia + vue-router(hash)SPA,`packages/webui/`;
 
 - 静态托管:dist/index.html(hash 路由);产物缺失静默跳过
 - `GET /api/stickers/file/:name`:findSticker → 读文件返回(带 Content-Type/Cache-Control)
+
+## 7. Live2D(2026-08-15,change: webui-desktop-shell)
+
+- 模型:public/models/cyrene/(Cubism4,9.1MB;许可:是依七哒授权署名,不可商用)
+- 渲染层 src/live2d/:manager/mouth-sync/speaking-motion/interaction/expression-reset/focus/actions(照抄 Cyrene)
+- `Live2DCanvas.vue`:Vue 封装,暴露 window.live2d{playAction,startMouth,stopMouth,dispose};聊天视图右下角可折叠
+- `pet.html` + `pet.ts`:桌宠页(vite 多页入口),透明窗口加载
+- 依赖:pixi.js 7.3 + pixi-live2d-display 0.5.0-beta + live2dcubismcore.min.js(public/)
+
+## 8. Electron 壳(packages/desktop,2026-08-15)
+
+- 主进程 = 本地完整实例:AlysiaCore(本地 userData db,codeMode=true)+ createWebuiApp(127.0.0.1 随机端口)
+- 主窗口:1280×860 加载 SPA(hash 路由)
+- 桌宠窗口:400×500 transparent/frame:false/skipTaskbar/hasShadow:false + alwaysOnTop(screen-saver)
+  + setIgnoreMouseEvents(true,{forward:true})(照抄 Cyrene)
+- 一期不做动作工具(交互点击 9 命中区已可玩;play_live2d_action 留待 TTS 接线)
