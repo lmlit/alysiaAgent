@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { sessionApi } from '../api/modules';
+import { Clock3 } from 'lucide-vue-next';
 import { useAsync, SectionCard, Table, EmptyState, Tag } from '../components/common';
 
 const { data, loading, reload } = useAsync(async () => (await sessionApi.list()) as any);
@@ -17,7 +18,7 @@ function isWebui(sid: string) {
 
 <template>
   <div class="page">
-    <SectionCard title="会话" icon="🕘" hint="webui: 前缀为 WebUI 聊天会话,与 QQ 通道隔离">
+    <SectionCard title="会话" :icon="Clock3" hint="webui: 前缀为 WebUI 聊天会话,与 QQ 通道隔离">
       <template #actions><button class="btn" @click="reload">刷新</button></template>
       <div v-if="loading" class="hint">加载中…</div>
       <EmptyState v-else-if="data && !data.sessions?.length" text="还没有会话" />

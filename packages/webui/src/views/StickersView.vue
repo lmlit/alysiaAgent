@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { stickersApi } from '../api/modules';
+import { Smile } from 'lucide-vue-next';
 import { useAsync, SectionCard, EmptyState } from '../components/common';
 
 const { data, loading, reload } = useAsync(async () => (await stickersApi.list()) as any);
@@ -7,7 +8,7 @@ const { data, loading, reload } = useAsync(async () => (await stickersApi.list()
 
 <template>
   <div class="page">
-    <SectionCard title="表情包" icon="😊" hint="她在文案里写 [表情包:名字] 时会发送对应图片">
+    <SectionCard title="表情包" :icon="Smile" hint="她在文案里写 [表情包:名字] 时会发送对应图片">
       <template #actions><button class="btn" @click="reload">刷新</button></template>
       <div v-if="loading" class="hint">加载中…</div>
       <EmptyState v-else-if="data && !data.stickers?.length" text="还没有表情包" />

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { lifeApi } from '../api/modules';
+import { LayoutGrid } from 'lucide-vue-next';
 import { useAsync, SectionCard, Table, EmptyState, Tag, ConfirmButton } from '../components/common';
 
 const { data, loading, reload } = useAsync(async () => (await lifeApi.templates()) as any);
@@ -12,7 +13,7 @@ async function remove(id: string) {
 
 <template>
   <div class="page">
-    <SectionCard title="生活模板池" icon="🧩" hint="LLM 事件生成失败时的兜底活动;self = 昔涟自己发明的日常">
+    <SectionCard title="生活模板池" :icon="LayoutGrid" hint="LLM 事件生成失败时的兜底活动;self = 昔涟自己发明的日常">
       <template #actions><button class="btn" @click="reload">刷新</button></template>
       <div v-if="loading" class="hint">加载中…</div>
       <EmptyState v-else-if="data && !data.templates?.length" text="模板池是空的" />

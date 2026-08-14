@@ -18,6 +18,9 @@ import { QQOneBotAdapter } from './adapters/qq-onebot.js';
 import { QQOfficialAgentAdapter } from './adapters/qq-official.js';
 import { loadConfig } from './config.js';
 
+// ★ 8-15 桌面端模式（webui-desktop-shell）：跳过 IM 适配器与主动推送，只起 core + webui
+const IS_DESKTOP = process.env.ALYSIA_DESKTOP === '1';
+
 async function main() {
   const configPath = process.env.ALYSIA_CONFIG || './config.yml';
   const config = loadConfig(configPath);
@@ -45,7 +48,7 @@ async function main() {
   core.eventBus.setDefaultScheduler(core.scheduler);
 
   // Telegram
-  if (config.telegram?.token) {
+  if (!IS_DESKTOP && config.telegram?.token) {
     const telegram = new TelegramAdapter(config.telegram, 'telegram-1');
     core.registerPlatform('telegram::private', core.scheduler);
     telegram.setEventBus(core.eventBus);
@@ -54,7 +57,7 @@ async function main() {
   }
 
   // QQ OneBot v11 (第三方 NapCat/LLOneBot)
-  if (config.qq) {
+  if (!IS_DESKTOP && config.qq) {
     const qq = new QQOneBotAdapter(config.qq, 'qq-1');
     core.registerPlatform('onebot_v11::private', core.scheduler);
     core.registerPlatform('onebot_v11::group', core.scheduler);
@@ -65,7 +68,7 @@ async function main() {
 
   // QQ 官方 Agent (WebSocket 客户端，不需要公网 IP)
   let qqOff: QQOfficialAgentAdapter | null = null;
-  if (config.qq_official) {
+  if (!IS_DESKTOP && config.qq_official) {
     qqOff = new QQOfficialAgentAdapter(config.qq_official, 'qq-official-1');
     core.registerPlatform('qq-official-1::private', core.scheduler);
     core.registerPlatform('qq-official-1::group', core.scheduler);

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { statsApi } from '../api/modules';
+import { BarChart3 } from 'lucide-vue-next';
 import { useAsync, SectionCard, Table, EmptyState } from '../components/common';
 
 const { data, loading, reload } = useAsync(async () => (await statsApi.get()) as any);
@@ -18,7 +19,7 @@ function rowsOf(): Array<Record<string, unknown>> {
 
 <template>
   <div class="page">
-    <SectionCard title="Token 统计" icon="📊">
+    <SectionCard title="Token 统计" :icon="BarChart3">
       <template #actions><button class="btn" @click="reload">刷新</button></template>
       <div v-if="loading" class="hint">加载中…</div>
       <template v-else-if="data">
@@ -45,6 +46,6 @@ function rowsOf(): Array<Record<string, unknown>> {
 .hint { color: var(--aw-text-faint); padding: 12px 0; }
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 14px; margin-bottom: 18px; }
 .stat { background: var(--aw-bg-input); border: 1px solid var(--aw-border); border-radius: var(--aw-radius-md); padding: 16px; text-align: center; }
-.stat-num { font-size: 26px; font-weight: 800; background: var(--aw-grad-brand); -webkit-background-clip: text; background-clip: text; color: transparent; font-family: var(--aw-font-code); }
+.stat-num { font-size: 26px; font-weight: 800; color: var(--aw-gold); font-family: var(--aw-font-code); }
 .stat-lbl { margin-top: 4px; font-size: var(--aw-fs-xs); color: var(--aw-text-faint); }
 </style>

@@ -16,6 +16,7 @@
     "fastify": "^5.0.0"
   },
   "devDependencies": {
+    "@electron/rebuild": "^4.2.0",
     "electron": "^33.0.0",
     "typescript": "^6.0.3"
   }

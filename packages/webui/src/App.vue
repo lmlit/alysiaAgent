@@ -2,6 +2,7 @@
 import { onMounted, onUnmounted, ref } from 'vue';
 import { useAppStore, THEMES } from './stores/app';
 import { modules } from './modules';
+import { Heart, Sparkle, Clapperboard } from 'lucide-vue-next';
 
 const app = useAppStore();
 const online = ref(false);
@@ -25,7 +26,7 @@ onUnmounted(() => {
   <div class="shell">
     <aside class="sidebar">
       <div class="brand">
-        <span class="brand-orb">✦</span>
+        <span class="brand-orb"><Sparkle :size="16" stroke-width="2.2" /></span>
         <span class="brand-name">ALYSIA</span>
       </div>
       <nav class="nav">
@@ -36,7 +37,7 @@ onUnmounted(() => {
           class="nav-item"
           active-class="active"
         >
-          <span class="nav-icon">{{ m.icon }}</span>
+          <component :is="m.icon" :size="16" stroke-width="1.8" class="nav-icon" />
           <span>{{ m.title }}</span>
         </RouterLink>
       </nav>
@@ -53,10 +54,10 @@ onUnmounted(() => {
       </div>
       <div class="topbar-right">
         <span v-if="app.intimacy !== null" class="pill" :title="'亲密度'">
-          ♥ {{ app.intimacy }}
+          <Heart :size="11" stroke-width="2" class="heart" /> {{ app.intimacy }}
         </span>
         <span v-if="app.activeRole" class="pill" :title="'激活角色'">
-          🎭 {{ app.activeRole }}
+          <Clapperboard :size="11" stroke-width="2" /> {{ app.activeRole }}
         </span>
         <select v-model="app.theme" class="theme-select" @change="app.setTheme(app.theme)">
           <option v-for="t in THEMES" :key="t" :value="t">
@@ -112,16 +113,28 @@ onUnmounted(() => {
   -webkit-background-clip: text; background-clip: text; color: transparent;
 }
 
-.nav { display: flex; flex-direction: column; gap: 2px; flex: 1; overflow-y: auto; }
+.nav { display: flex; flex-direction: column; gap: 2px; flex: 1; overflow-y: auto; padding-top: 4px; }
 .nav-item {
+  position: relative;
   display: flex; align-items: center; gap: 10px;
   padding: 9px 12px; border-radius: var(--aw-radius-md);
   color: var(--aw-text-dim); font-size: var(--aw-fs-md);
   transition: all var(--aw-dur) var(--aw-ease);
 }
 .nav-item:hover { background: var(--aw-bg-hover); color: var(--aw-text); text-decoration: none; }
-.nav-item.active { background: var(--aw-bg-active); color: var(--aw-gold); }
-.nav-icon { font-size: 15px; width: 20px; text-align: center; }
+.nav-item.active {
+  background: var(--aw-bg-active);
+  color: var(--aw-gold);
+}
+.nav-item.active::before {
+  content: '';
+  position: absolute; left: -10px; top: 20%; bottom: 20%; width: 3px;
+  border-radius: 2px;
+  background: var(--aw-grad-brand);
+  box-shadow: 0 0 8px rgba(232, 196, 106, 0.5);
+}
+.nav-icon { width: 18px; flex: 0 0 18px; }
+.nav-item.active .nav-icon { color: var(--aw-gold); }
 
 .sidebar-foot { padding-top: 12px; border-top: 1px solid var(--aw-border); }
 .conn { display: flex; align-items: center; gap: 8px; font-size: var(--aw-fs-sm); color: var(--aw-text-faint); padding: 0 10px; }

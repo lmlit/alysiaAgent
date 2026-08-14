@@ -31,7 +31,7 @@
 import Fastify from 'fastify';
 import type { AlysiaCore } from '@alysia/core';
 import { registerChatRoutes } from './chat.js';
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, readFileSync, statSync } from 'fs';
 import { dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -43,13 +43,34 @@ export function createWebuiApp(core: AlysiaCore) {
   // ── 系统 ──────────────────────────────────────────
   app.get('/api/health', async () => ({ status: 'ok', uptime: process.uptime() }));
 
-  // ★ 8-15 WebUI 静态托管(生产形态:同源 serve dist;hash 路由只需 index.html;
-  //   dev 用 vite dev server 5173 代理 /api)——构建产物缺失时静默跳过
-  const webuiDist = resolve(dirname(fileURLToPath(import.meta.url)), '../../webui/dist');
+  // ★ 8-15 WebUI 静态托管(生产形态:同源 serve 整个 dist——assets/模型/pet.html 全量;
+  //   未知路径回退 index.html(hash 路由);dev 用 vite dev server 5173 代理 /api)
+  const webuiDist = resolve(dirname(fileURLToPath(import.meta.url)), '../../../webui/dist');
+  const MIME: Record<string, string> = {
+    html: 'text/html; charset=utf-8', js: 'text/javascript', css: 'text/css',
+    json: 'application/json', png: 'image/png', jpg: 'image/jpeg', gif: 'image/gif',
+    webp: 'image/webp', svg: 'image/svg+xml', ico: 'image/x-icon', wasm: 'application/wasm',
+    'model3.json': 'application/json', moc3: 'application/octet-stream', exp3: 'application/json',
+    physics3: 'application/json', mp3: 'audio/mpeg', wav: 'audio/wav', zst: 'application/octet-stream',
+  };
+  // Fastify v5 无 '/*' 通配路由 → 用 setNotFoundHandler 兜底静态文件(排除 /api)
   if (existsSync(join(webuiDist, 'index.html'))) {
-    app.get('/', async (_req: unknown, reply: any) => {
-      reply.type('text/html; charset=utf-8');
-      return reply.send(readFileSync(join(webuiDist, 'index.html')));
+    app.setNotFoundHandler(async (req: any, reply: any) => {
+      const url = String(req?.url ?? '/').split('?')[0];
+      if (url.startsWith('/api/')) {
+        return reply.code(404).send({ ok: false, error: 'not found' });
+      }
+      const pathname = decodeURIComponent(url.replace(/^\//, ''));
+      let filePath = resolve(webuiDist, pathname || 'index.html');
+      // 防目录穿越
+      if (!filePath.startsWith(webuiDist)) return reply.code(403).send({ ok: false });
+      if (!existsSync(filePath) || statSync(filePath).isDirectory()) {
+        filePath = join(webuiDist, 'index.html');
+      }
+      const ext = filePath.split('.').pop()?.toLowerCase() ?? '';
+      reply.type(MIME[ext] ?? 'application/octet-stream');
+      reply.header('Cache-Control', ext === 'html' ? 'no-cache' : 'public, max-age=86400');
+      return reply.send(readFileSync(filePath));
     });
   }
 

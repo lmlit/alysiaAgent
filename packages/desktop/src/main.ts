@@ -1,51 +1,50 @@
 /**
- * ★ 8-15 Electron 壳(PRD M4,照抄 Cyrene 窗口件)
- * 主进程 = 本地完整实例:AlysiaCore + 内嵌 Fastify(webui) + 双窗口
+ * ★ 8-15 Electron 壳(PRD M4,子进程架构)
+ * 后端跑独立 Node 子进程(server bootstrap --desktop 模式)——原生模块
+ * (better-sqlite3/LanceDB)在 Node ABI 下运行,规避 Electron ABI 不匹配;
+ * Electron 主进程保持薄:窗口壳 + 后端生命周期管理。
  *  - 主窗口:SPA(管理面板 + 聊天 + 内嵌小人)
- *  - 桌宠窗口:透明/无边框/置顶/点击穿透,加载 pet.html(独立小人,照抄 Cyrene)
+ *  - 桌宠窗口:透明/无边框/置顶/点击穿透,加载 pet.html(照抄 Cyrene)
  */
 import { app, BrowserWindow, screen } from 'electron';
-import { join } from 'path';
-import { homedir } from 'os';
-import 'dotenv/config';
-import { AlysiaCore } from '@alysia/core';
-import { createWebuiApp } from '@alysia/server/webui';
+import { fork, type ChildProcess } from 'child_process';
+import { resolve } from 'path';
 import { logger } from '@alysia/core';
+
+const BACKEND_PORT = 6185;
+const BACKEND_URL = `http://127.0.0.1:${BACKEND_PORT}`;
 
 let mainWindow: BrowserWindow | null = null;
 let petWindow: BrowserWindow | null = null;
-let core: AlysiaCore | null = null;
-let httpPort = 0;
+let backend: ChildProcess | null = null;
 
-const WEBUI_BASE = join(import.meta.dirname, '../../webui');
-
-async function startBackend(): Promise<number> {
-  core = new AlysiaCore({
-    dbPath: join(app.getPath('userData'), 'alysia.db'),
-    ownerId: process.env.ALYSIA_OWNER_ID ?? 'local',
-    workspaceDir: process.env.ALYSIA_WORKSPACE ?? homedir(),
-    llmConfig: {
-      baseUrl: process.env.OPENAI_BASE_URL ?? 'https://api.deepseek.com/v1',
-      apiKey: process.env.OPENAI_API_KEY ?? '',
-      model: process.env.CHAT_MODEL ?? 'deepseek-v4-flash',
-    },
-    embedConfig: {
-      baseUrl: process.env.EMBED_BASE_URL ?? 'https://open.bigmodel.cn/api/paas/v4',
-      apiKey: process.env.EMBED_API_KEY ?? '',
-      model: process.env.EMBED_MODEL ?? 'embedding-2',
-    },
-    features: { codeMode: true }, // 桌面端全量工具 + CodeContext
+function startBackend(): void {
+  const serverDir = resolve(import.meta.dirname, '../../server');
+  backend = fork(resolve(serverDir, 'dist/bootstrap.js'), [], {
+    cwd: serverDir, // dotenv 从 server 目录向上解析到项目根 .env
+    // ★ execPath 指向真实 Node:Electron 的 fork 默认用自身可执行文件(ABI 不匹配 →
+    //   better-sqlite3 ERR_DLOPEN_FAILED)。pnpm/npm 运行时都会注入 npm_node_execPath。
+    execPath: process.env.npm_node_execPath ?? 'node',
+    env: { ...process.env, ALYSIA_DESKTOP: '1', ELECTRON_RUN_AS_NODE: '1' },
+    stdio: 'inherit',
   });
-  await core.start();
-  core.registerPlatform('local::private', core.scheduler);
+  backend.on('exit', (code) => {
+    logger.info(`[Desktop] backend exited (code=${code})`);
+    backend = null;
+  });
+}
 
-  // createWebuiApp 返回已配置的 Fastify 实例(同 server bootstrap 用法)
-  const webui = createWebuiApp(core);
-  await webui.listen({ host: '127.0.0.1', port: 0 });
-  const addr = webui.server.address();
-  httpPort = typeof addr === 'object' && addr ? addr.port : 0;
-  logger.info(`[Desktop] backend ready on http://127.0.0.1:${httpPort}`);
-  return httpPort;
+/** 轮询 /api/health 直到后端就绪(30s 超时) */
+async function waitForBackend(timeoutMs = 30_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/health`);
+      if (res.ok) return;
+    } catch { /* not ready yet */ }
+    await new Promise(r => setTimeout(r, 500));
+  }
+  throw new Error('backend failed to start within timeout');
 }
 
 function createMainWindow() {
@@ -56,12 +55,9 @@ function createMainWindow() {
     minHeight: 640,
     title: 'Alysia · 昔涟',
     backgroundColor: '#07050f',
-    webPreferences: {
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
+    webPreferences: { contextIsolation: true, nodeIntegration: false },
   });
-  mainWindow.loadURL(`http://127.0.0.1:${httpPort}/#/chat`);
+  mainWindow.loadURL(`${BACKEND_URL}/#/chat`);
   mainWindow.on('closed', () => { mainWindow = null; });
 }
 
@@ -80,16 +76,17 @@ function createPetWindow() {
     hasShadow: false,
     webPreferences: { contextIsolation: true, nodeIntegration: false },
   });
-  petWindow.loadURL(`http://127.0.0.1:${httpPort}/pet.html`);
+  petWindow.loadURL(`${BACKEND_URL}/pet.html`);
   petWindow.setAlwaysOnTop(true, 'screen-saver');
-  // 点击穿透:小人透明区域不挡鼠标(桌面交互优先);渲染层 pet.ts 未接管时保持可点
-  petWindow.setIgnoreMouseEvents(true, { forward: true });
+  // ★ 一期:不做像素级点击穿透(需 preload + click-through IPC 像素采样,见 PRD 遗留);
+  //   窗口可交互——小人可点击/可拖拽(拖拽逻辑在 pet.ts)
   petWindow.on('closed', () => { petWindow = null; });
 }
 
 app.whenReady().then(async () => {
   try {
-    await startBackend();
+    startBackend();
+    await waitForBackend();
     createMainWindow();
     createPetWindow();
   } catch (err) {
@@ -103,6 +100,9 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
-  core?.stop?.().catch(() => {});
+  backend?.kill();
   app.quit();
 });
+
+// 进程退出兜底:后端子进程一并回收
+process.on('exit', () => { backend?.kill(); });

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { reactive } from 'vue';
 import { personaApi } from '../api/modules';
+import { Moon } from 'lucide-vue-next';
 import { useAsync, SectionCard } from '../components/common';
 
 const { data, loading, reload } = useAsync(async () => (await personaApi.get()) as any);
@@ -35,7 +36,7 @@ const knobMeta: Array<{ key: string; label: string; desc: string }> = [
 
 <template>
   <div class="page">
-    <SectionCard title="人格参数" icon="🌙" hint="3 维度 × 4 参数,5 道护栏保护">
+    <SectionCard title="人格参数" :icon="Moon" hint="3 维度 × 4 参数,5 道护栏保护">
       <template #actions><button class="btn" @click="reload">刷新</button></template>
       <div v-if="loading" class="hint">加载中…</div>
       <template v-else-if="data">
@@ -44,7 +45,7 @@ const knobMeta: Array<{ key: string; label: string; desc: string }> = [
             <h4 class="dim-title">{{ { tone: '语气 tone', speechStyle: '说话风格', emotionalRange: '情感幅度' }[gk] }}</h4>
             <div v-for="(v, pk) in group" :key="pk" class="param-row">
               <span class="param-name">{{ pk }}</span>
-              <div class="param-bar"><div class="param-fill" :style="{ width: `${Math.max(4, Math.min(100, (v + 1) * 50))}%` }"></div></div>
+              <div class="param-bar"><div class="param-fill" :style="{ '--p': Math.max(0.04, Math.min(1, (v + 1) * 0.5)) }"></div></div>
               <span class="param-val">{{ v.toFixed(2) }}</span>
               <button class="mini" @click="adjust(`${gk}.${pk}`, -0.05)">−</button>
               <button class="mini" @click="adjust(`${gk}.${pk}`, 0.05)">+</button>
@@ -54,7 +55,7 @@ const knobMeta: Array<{ key: string; label: string; desc: string }> = [
       </template>
     </SectionCard>
 
-    <SectionCard title="记忆旋钮" icon="🎛️" hint="实时调节她'怎么记'">
+    <SectionCard title="记忆旋钮" :icon="SlidersHorizontal" hint="实时调节她'怎么记'">
       <div v-if="data?.memoryConfig" class="knobs">
         <div v-for="k in knobMeta" :key="k.key" class="knob-row">
           <div class="knob-info">
@@ -88,7 +89,7 @@ const knobMeta: Array<{ key: string; label: string; desc: string }> = [
 .param-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: var(--aw-fs-sm); }
 .param-name { width: 84px; color: var(--aw-text-dim); font-size: var(--aw-fs-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .param-bar { flex: 1; height: 6px; background: var(--aw-bg-card); border-radius: 3px; overflow: hidden; }
-.param-fill { height: 100%; background: var(--aw-grad-brand); border-radius: 3px; transition: width var(--aw-dur) var(--aw-ease); }
+.param-fill { height: 100%; background: var(--aw-grad-brand); border-radius: 3px; transform: scaleX(var(--p, 0)); transform-origin: left; transition: transform var(--aw-dur) var(--aw-ease); }
 .param-val { width: 42px; text-align: right; color: var(--aw-text-faint); font-size: var(--aw-fs-xs); font-family: var(--aw-font-code); }
 .mini { width: 22px; height: 22px; border-radius: 6px; border: 1px solid var(--aw-border); background: var(--aw-bg-input); color: var(--aw-text-dim); font-size: 13px; line-height: 1; }
 .mini:hover { color: var(--aw-accent); border-color: var(--aw-accent); }

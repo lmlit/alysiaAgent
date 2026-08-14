@@ -43,7 +43,10 @@ onMounted(async () => {
       width: props.width,
       height: props.height,
       modelPath: 'models/cyrene/Cyrene.model3.json',
-      onLoad: () => emit('ready'),
+      onLoad: () => {
+        console.log('[Live2D] model ready');
+        emit('ready');
+      },
     });
     await manager.init();
     manager.applyZoom(props.zoom);

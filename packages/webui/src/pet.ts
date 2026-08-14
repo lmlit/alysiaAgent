@@ -55,3 +55,28 @@ manager.init().then(() => {
 window.addEventListener('resize', () => {
   manager.resize?.(window.innerWidth, window.innerHeight);
 });
+
+// ── 拖窗(照抄 Cyrene 拖窗段:pointerdown 记录偏移 → moveTo;区分点击与拖动)──
+let dragging = false;
+let dragOffsetX = 0;
+let dragOffsetY = 0;
+let moved = false;
+let downPos = { x: 0, y: 0 };
+
+canvas.addEventListener('pointerdown', (e) => {
+  dragging = true;
+  moved = false;
+  downPos = { x: e.screenX, y: e.screenY };
+  dragOffsetX = e.screenX - window.screenX;
+  dragOffsetY = e.screenY - window.screenY;
+  canvas.setPointerCapture(e.pointerId);
+});
+
+canvas.addEventListener('pointermove', (e) => {
+  if (!dragging) return;
+  const dist = Math.hypot(e.screenX - downPos.x, e.screenY - downPos.y);
+  if (dist > 5) moved = true; // 超过点击阈值才算拖动
+  if (moved) window.moveTo(e.screenX - dragOffsetX, e.screenY - dragOffsetY);
+});
+
+canvas.addEventListener('pointerup', () => { dragging = false; });

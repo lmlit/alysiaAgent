@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "lucide-vue-next": "^1.0.0",
     "pinia": "^2.2.0",
     "pixi-live2d-display": "0.5.0-beta",
     "pixi.js": "^7.3.0",

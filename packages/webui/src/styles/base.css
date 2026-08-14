@@ -37,6 +37,17 @@ button { font-family: inherit; cursor: pointer; }
 /* 文本选择 */
 ::selection { background: rgba(232, 196, 106, 0.3); }
 
+/* 光标颜色跟随主题 */
+input, textarea { caret-color: var(--aw-gold); }
+
+/* 焦点环(craft floor:键盘可访问性) */
+:focus-visible {
+  outline: 2px solid var(--aw-gold);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible { outline-offset: 1px; }
+
 /* 动效尊重系统设置 */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }

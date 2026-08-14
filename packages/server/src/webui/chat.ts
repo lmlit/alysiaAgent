@@ -28,6 +28,13 @@ function collectPlain(chain: MessageChain): string {
   return t;
 }
 
+/** ★ 会话 id 统一清洗:剥掉全部 webui:private: 前缀(历史 bug 曾累积多重前缀,
+ *   前端 localStorage 也可能存了带前缀的 id)——unifiedMsgOrigin 只由
+ *   MessageSession.toString 拼一层 */
+function cleanSid(id: string): string {
+  return String(id ?? '').replace(/^(webui:private:)+/, '');
+}
+
 function makeWebuiEvent(core: AlysiaCore, sessionId: string, text: string): MessageEvent {
   const now = new Date().toISOString();
   const message = {
@@ -54,7 +61,7 @@ export function registerChatRoutes(app: any, core: AlysiaCore): void {
   app.post('/api/chat/prompt', async (req: any, reply: any) => {
     const { text, sessionId } = (req.body ?? {}) as ChatBody;
     if (!text?.trim()) return reply.code(400).send({ ok: false, error: 'text 为空' });
-    const sid = sessionId || `sess-${Date.now()}`;
+    const sid = cleanSid(sessionId ?? '') || `sess-${Date.now()}`;
     const origin = `webui:private:${sid}`;
 
     const result = await new Promise<{ ok: boolean; reply?: string; error?: string }>((resolve) => {
@@ -83,7 +90,7 @@ export function registerChatRoutes(app: any, core: AlysiaCore): void {
   app.post('/api/chat/stream', async (req: any, reply: any) => {
     const { text, sessionId } = (req.body ?? {}) as ChatBody;
     if (!text?.trim()) return reply.code(400).send({ ok: false, error: 'text 为空' });
-    const sid = sessionId || `sess-${Date.now()}`;
+    const sid = cleanSid(sessionId ?? '') || `sess-${Date.now()}`;
     const origin = `webui:private:${sid}`;
 
     reply.hijack();
@@ -140,20 +147,20 @@ export function registerChatRoutes(app: any, core: AlysiaCore): void {
   app.get('/api/sessions/:id/messages', async (req: any) => {
     const { id } = req.params as { id: string };
     const { limit, before } = req.query as { limit?: string; before?: string };
-    const origin = id.startsWith('webui:private:') ? id : `webui:private:${id}`;
+    const origin = `webui:private:${cleanSid(id)}`;
     const messages = core.memoryManager.getSessionMessages(
       origin,
       Math.min(Number(limit) || 50, 200),
       before || undefined,
     );
-    return { ok: true, sessionId: id, messages, hasMore: messages.length >= (Number(limit) || 50) };
+    return { ok: true, sessionId: cleanSid(id), messages, hasMore: messages.length >= (Number(limit) || 50) };
   });
 
   // ── 在途生成检查（页面刷新恢复"回复中"状态）──
   app.get('/api/chat/pending', async (req: any) => {
     const { sessionId } = req.query as { sessionId?: string };
     if (!sessionId) return { ok: true, inFlight: false };
-    const origin = sessionId.startsWith('webui:private:') ? sessionId : `webui:private:${sessionId}`;
+    const origin = `webui:private:${cleanSid(sessionId)}`;
     return { ok: true, inFlight: core.isGenerating(origin) };
   });
 }

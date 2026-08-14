@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { rolesApi } from '../api/modules';
+import { Clapperboard, Download } from 'lucide-vue-next';
 import { useAsync, SectionCard, Table, Tag, EmptyState } from '../components/common';
 import { useAppStore } from '../stores/app';
 
@@ -36,7 +37,7 @@ async function doImport() {
 
 <template>
   <div class="page">
-    <SectionCard title="角色" icon="🎭" hint="角色包 = 人格参数 + 系统提示 + 世界书">
+    <SectionCard title="角色" :icon="Clapperboard" hint="角色包 = 人格参数 + 系统提示 + 世界书">
       <template #actions><button class="btn" @click="reload">刷新</button></template>
       <div v-if="loading" class="hint">加载中…</div>
       <EmptyState v-else-if="data && !data.roles?.length" text="还没有角色" />
@@ -54,7 +55,7 @@ async function doImport() {
       </Table>
     </SectionCard>
 
-    <SectionCard title="导入角色包" icon="📥">
+    <SectionCard title="导入角色包" :icon="Download">
       <textarea v-model="importText" class="import-ta" placeholder="粘贴角色包 JSON…" rows="6"></textarea>
       <div class="import-row">
         <button class="btn primary" :disabled="importBusy || !importText.trim()" @click="doImport">

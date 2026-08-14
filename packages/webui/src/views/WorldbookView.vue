@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { worldbookApi } from '../api/modules';
+import { BookOpen } from 'lucide-vue-next';
 import { useAsync, SectionCard, Table, EmptyState, Tag, ConfirmButton } from '../components/common';
 
 const { data, loading, reload } = useAsync(async () => (await worldbookApi.list()) as any);
@@ -17,7 +18,7 @@ function fmt(iso?: string) {
 
 <template>
   <div class="page">
-    <SectionCard title="世界书条目" icon="📖" hint="source=self 为昔涟自写(自进化审计面);删错可凭日志找回">
+    <SectionCard title="世界书条目" :icon="BookOpen" hint="source=self 为昔涟自写(自进化审计面);删错可凭日志找回">
       <template #actions><button class="btn" @click="reload">刷新</button></template>
       <div v-if="loading" class="hint">加载中…</div>
       <EmptyState v-else-if="data && !data.entries?.length" text="世界书是空的" />

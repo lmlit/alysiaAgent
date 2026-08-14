@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { profileApi } from '../api/modules';
+import { User } from 'lucide-vue-next';
 import { useAsync, SectionCard, JsonView, EmptyState } from '../components/common';
 
 const { data, loading, error, reload } = useAsync(async () => (await profileApi.get()) as Record<string, unknown>);
@@ -7,7 +8,7 @@ const { data, loading, error, reload } = useAsync(async () => (await profileApi.
 
 <template>
   <div class="page">
-    <SectionCard title="用户画像" icon="👤" hint="ProfileStore — 用户事实带来源与置信度">
+    <SectionCard title="用户画像" :icon="User" hint="ProfileStore — 用户事实带来源与置信度">
       <template #actions><button class="btn" @click="reload">刷新</button></template>
       <div v-if="loading" class="hint">加载中…</div>
       <div v-else-if="error" class="hint err">{{ error }}</div>

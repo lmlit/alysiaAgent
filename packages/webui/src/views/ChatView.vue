@@ -15,7 +15,9 @@ const app = useAppStore();
 const CURRENT_SESSION_KEY = 'aw-chat-session';
 
 const sessions = ref<Array<{ sessionId: string; messageCount: number; lastActive: string }>>([]);
-const currentId = ref(localStorage.getItem(CURRENT_SESSION_KEY) ?? '');
+/** ★ 裸会话 id(不含 webui:private: 前缀)——统一约定,避免前缀累积污染 */
+const cleanSid = (id: string) => String(id ?? '').replace(/^(webui:private:)+/, '');
+const currentId = ref(cleanSid(localStorage.getItem(CURRENT_SESSION_KEY) ?? ''));
 const messages = ref<Array<{ role: string; content: string; createdAt?: string }>>([]);
 const input = ref('');
 const sending = ref(false);
@@ -24,9 +26,28 @@ const listEl = ref<HTMLElement | null>(null);
 const error = ref('');
 const abortCtrl = ref<AbortController | null>(null);
 
+// ★ 8-15 思考区:reasoning 块不输出正文,进"思考中"折叠条(默认隐藏内容,复用 QQ thinking 文案风格)
+const THINKING_LINES = [
+  '想着你刚才说的话…',
+  '在心里慢慢过了一遍…',
+  '歪着头想了想…',
+  '轻轻唔了一声…',
+];
+const thinking = ref({ active: false, text: '', line: '' });
+const showThinking = ref(false);
+let thinkingIdx = 0;
+
 onMounted(async () => {
   await refreshSessions();
-  if (currentId.value) await loadMessages();
+  // ★ 会话复用:优先 localStorage 记住的会话;否则自动选最近的历史会话
+  //   (历史对话可直接继续,不新建)——用户想新开才点"新会话"
+  if (currentId.value) {
+    await loadMessages();
+  } else if (sessions.value.length > 0) {
+    currentId.value = cleanSid(sessions.value[0].sessionId);
+    localStorage.setItem(CURRENT_SESSION_KEY, currentId.value);
+    await loadMessages();
+  }
 });
 
 async function refreshSessions() {
@@ -54,8 +75,8 @@ function newSession() {
 }
 
 function switchSession(id: string) {
-  currentId.value = id;
-  localStorage.setItem(CURRENT_SESSION_KEY, id);
+  currentId.value = cleanSid(id);
+  localStorage.setItem(CURRENT_SESSION_KEY, currentId.value);
   loadMessages();
 }
 
@@ -71,15 +92,24 @@ async function send() {
   messages.value.push({ role: 'user', content: text });
   const assistant = ref({ role: 'assistant', content: '' });
   messages.value.push(assistant.value);
+  thinking.value = { active: false, text: '', line: THINKING_LINES[thinkingIdx++ % THINKING_LINES.length] };
+  showThinking.value = false;
   scrollBottom();
 
   abortCtrl.value = new AbortController();
   try {
     await streamChat('/api/chat/stream', { text, sessionId: currentId.value }, (frame) => {
       if (frame.type === 'chunk') {
-        assistant.value.content += String(frame.text ?? '');
-        scrollBottom();
+        if (frame.kind === 'reasoning') {
+          // ★ 思考内容进思考区,绝不进正文(默认隐藏,可展开)
+          thinking.value.active = true;
+          thinking.value.text += String(frame.text ?? '');
+        } else {
+          assistant.value.content += String(frame.text ?? '');
+          scrollBottom();
+        }
       } else if (frame.type === 'done') {
+        // 思考条保留(折叠态,streaming=false 显示"想好了"),内容可回看
         if (frame.reply && !assistant.value.content) assistant.value.content = String(frame.reply);
         streaming.value = false;
         refreshSessions();
@@ -176,7 +206,16 @@ const chatSessions = computed(() => sessions.value);
             </div>
           </div>
         </template>
-        <div v-if="streaming" class="thinking">昔涟正在想着…</div>
+        <!-- ★ 思考条:转圈 + 第一人称文案;思考内容默认隐藏可展开。
+             思考结束(done/aborted)后保留为折叠态(转圈停),不消失——"想完了"仍可回看 -->
+        <div v-if="thinking.active" class="thinking" :class="{ done: !streaming }">
+          <span v-if="streaming" class="spinner"></span>
+          <span class="thinking-line">{{ streaming ? thinking.line : '想好了' }}</span>
+          <button v-if="thinking.text" class="think-toggle" @click="showThinking = !showThinking">
+            {{ showThinking ? '收起' : (streaming ? '看她在想什么' : '看她想了什么') }}
+          </button>
+          <div v-if="showThinking && thinking.text" class="think-content">{{ thinking.text }}</div>
+        </div>
       </div>
 
       <div class="composer">
@@ -262,20 +301,49 @@ const chatSessions = computed(() => sessions.value);
   white-space: pre-wrap;
 }
 .msg.user .bubble {
-  background: linear-gradient(135deg, rgba(124, 108, 240, 0.35), rgba(232, 196, 106, 0.25));
+  background: linear-gradient(135deg, rgba(124, 108, 240, 0.42), rgba(232, 196, 106, 0.28));
   border: 1px solid var(--aw-border-strong);
-  border-bottom-right-radius: 4px;
+  border-bottom-right-radius: 6px;
+  box-shadow: 0 2px 12px rgba(124, 108, 240, 0.12);
+  color: var(--aw-text);
 }
 .msg.assistant .bubble {
-  background: var(--aw-bg-card);
+  background: var(--aw-bg-raised);
   border: 1px solid var(--aw-border);
-  border-bottom-left-radius: 4px;
+  border-bottom-left-radius: 6px;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.18);
 }
 .cursor { color: var(--aw-gold); animation: blink 1s step-start infinite; }
 @keyframes blink { 50% { opacity: 0; } }
 .sticker { max-width: 120px; max-height: 120px; object-fit: contain; margin: 4px 0; }
-.thinking { color: var(--aw-text-faint); font-size: var(--aw-fs-sm); padding: 0 24px 8px; animation: pulse 1.6s ease-in-out infinite; }
-@keyframes pulse { 50% { opacity: 0.4; } }
+.thinking {
+  display: flex; align-items: center; gap: 8px;
+  color: var(--aw-text-faint); font-size: var(--aw-fs-sm);
+  padding: 6px 24px 10px; flex-wrap: wrap;
+}
+.spinner {
+  width: 14px; height: 14px; flex: 0 0 14px; border-radius: 50%;
+  border: 2px solid var(--aw-border-strong);
+  border-top-color: var(--aw-gold);
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.thinking.done .thinking-line { color: var(--aw-text-dim); }
+.think-toggle {
+  font-size: var(--aw-fs-xs); color: var(--aw-text-faint);
+  background: none; border: 1px solid var(--aw-border);
+  border-radius: var(--aw-radius-full); padding: 2px 10px;
+  margin-left: auto;
+}
+.think-toggle:hover { color: var(--aw-gold); border-color: var(--aw-border-gold); }
+.think-content {
+  flex-basis: 100%;
+  background: var(--aw-bg-input); border: 1px solid var(--aw-border);
+  border-radius: var(--aw-radius-sm); padding: 8px 12px;
+  font-size: var(--aw-fs-xs); color: var(--aw-text-faint);
+  line-height: 1.6; max-height: 140px; overflow-y: auto;
+  white-space: pre-wrap; word-break: break-word;
+}
 
 .composer {
   border-top: 1px solid var(--aw-border);

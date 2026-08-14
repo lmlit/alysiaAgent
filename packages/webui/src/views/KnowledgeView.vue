@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { knowledgeApi } from '../api/modules';
+import { Library, Upload } from 'lucide-vue-next';
 import { useAsync, SectionCard, Table, Tag, EmptyState, ConfirmButton } from '../components/common';
 
 const { data, loading, reload } = useAsync(async () => (await knowledgeApi.list()) as any);
@@ -39,7 +40,7 @@ function fmt(iso?: string) {
 
 <template>
   <div class="page">
-    <SectionCard title="知识库" icon="📚" hint="RAG:去重 → 分块(500/50) → 向量检索">
+    <SectionCard title="知识库" :icon="Library" hint="RAG:去重 → 分块(500/50) → 向量检索">
       <template #actions><button class="btn" @click="reload">刷新</button></template>
       <div v-if="loading" class="hint">加载中…</div>
       <EmptyState v-else-if="data && !data.docs?.length" text="还没有知识文档" />
@@ -58,7 +59,7 @@ function fmt(iso?: string) {
       </Table>
     </SectionCard>
 
-    <SectionCard title="导入知识" icon="📥">
+    <SectionCard title="导入知识" :icon="Upload">
       <input v-model="title" class="input" placeholder="标题" />
       <textarea v-model="content" class="import-ta" placeholder="文档内容…" rows="6"></textarea>
       <div class="import-row">

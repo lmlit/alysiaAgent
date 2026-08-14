@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { lifeApi } from '../api/modules';
+import { Sparkles, ScrollText } from 'lucide-vue-next';
 import { useAsync, SectionCard, Table, EmptyState, Tag } from '../components/common';
 
 const { data, loading, reload } = useAsync(async () => (await lifeApi.snapshot()) as any);
@@ -13,7 +14,7 @@ function fmt(iso?: string) {
 
 <template>
   <div class="page">
-    <SectionCard title="她现在" icon="🌸">
+    <SectionCard title="她现在" :icon="Sparkles">
       <template #actions><button class="btn" @click="reload">刷新</button></template>
       <div v-if="loading" class="hint">加载中…</div>
       <template v-else-if="data">
@@ -25,7 +26,7 @@ function fmt(iso?: string) {
       </template>
     </SectionCard>
 
-    <SectionCard title="近 7 天生活事件" icon="📜">
+    <SectionCard title="近 7 天生活事件" :icon="ScrollText">
       <EmptyState v-if="data && !data.events?.length" text="还没有生活事件" />
       <Table
         v-else-if="data"
@@ -50,7 +51,7 @@ function fmt(iso?: string) {
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; }
 .stat { background: var(--aw-bg-input); border: 1px solid var(--aw-border); border-radius: var(--aw-radius-md); padding: 18px; text-align: center; }
 .stat.wide { grid-column: 1 / -1; }
-.stat-num { font-size: 30px; font-weight: 800; background: var(--aw-grad-brand); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.stat-num { font-size: 30px; font-weight: 800; color: var(--aw-gold); }
 .stat-num.emoji { background: none; -webkit-background-clip: unset; color: var(--aw-text); font-size: 26px; }
 .stat-num.act { font-size: 18px; }
 .stat-lbl { margin-top: 6px; font-size: var(--aw-fs-xs); color: var(--aw-text-faint); }
