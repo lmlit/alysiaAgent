@@ -242,6 +242,12 @@ export class MemoryManager {
     return this.eventStore.getRecentBySession(sessionId, limit, since);
   }
 
+  /** ★ 8-15 WebUI 会话历史分页（webui-chat-endpoints）：created_at 游标向下翻页，
+   *   before 为 ISO 游标；省略取最新 limit 条。时间倒序（最新在前）。 */
+  getSessionMessages(sessionId: string, limit: number = 50, before?: string): Array<{ role: string; content: string; senderName: string; createdAt?: string }> {
+    return this.eventStore.getMessagesBySession(sessionId, limit, before);
+  }
+
   /** ★ 8-09：最近对话注入块（主动消息生成器用——问候/Life 事件也吃对话上下文）。
    *  格式与 memory-retrieval 的 [最近对话] 一致："[HH:MM] 你/昔涟: 内容"，24h 窗口 + limit 条。
    *  无消息返回 ''。 */

@@ -201,6 +201,17 @@ getPersonaSnapshot(): {
 | `addWorldbookEntry({triggerKeys, content})` | 昔涟自写世界书条目（机械预检 + LLM 校验，source='self'） |
 | `listWorldbookEntries()` | 世界书条目列表（含 source：seed/self，硬审计面） |
 | `deleteWorldbookEntry(id)` | 删除世界书条目（仅用户指令驱动，日志留完整内容可找回） |
+| `getSessionMessages(sessionId, limit, before?)` | ★ 8-15 会话消息历史（created_at 游标分页，时间倒序） |
+
+## 2.8 聊天端点（WebUI，2026-08-15 已封装）
+
+**Web 路由**:
+- `POST /api/chat/prompt` → `{ok, sessionId, reply}` — 注入消息进 pipeline（记忆/人格/生活全链路），非流式完整回复，90s 超时
+- `POST /api/chat/stream` → SSE 帧流 — `connected / chunk{kind,text} / done{reply} / aborted / error`
+- `GET /api/sessions/:id/messages?limit=&before=` → `{ok, sessionId, messages, hasMore}` — 历史分页（游标向下翻页）
+- `GET /api/chat/pending?sessionId=` → `{ok, inFlight}` — 会话在途生成状态
+
+**会话命名**:`webui:private:<id>`（与 QQ 通道完全隔离，归入私聊记忆隔离）
 
 ---
 

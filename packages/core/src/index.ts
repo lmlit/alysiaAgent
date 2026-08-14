@@ -75,6 +75,8 @@ export class AlysiaCore {
   commandRegistry!: CommandRegistry;
   eventBus!: EventBus;
   scheduler!: PipelineScheduler;
+  /** ★ 8-15 WebUI pending 查询（webui-chat-endpoints）：在途生成检查 */
+  coalescer!: CoalescerStage;
   /** ★ 8-10 深合并后的采样配置（DEFAULT + opts.sampling） */
   sampling: SamplingConfig;
 
@@ -85,6 +87,11 @@ export class AlysiaCore {
 
   registerPlatform(name: string, scheduler?: PipelineScheduler): void {
     this.eventBus.registerScheduler(name, scheduler ?? this.scheduler);
+  }
+
+  /** ★ 8-15 WebUI（webui-chat-endpoints）：会话是否有在途生成（Coalescer 打断注册表） */
+  isGenerating(sessionId: string): boolean {
+    return this.coalescer?.getAbortRegistry().isInFlight(sessionId) ?? false;
   }
 
   async start(): Promise<void> {
@@ -219,6 +226,7 @@ export class AlysiaCore {
     //   memory-ingest 之后、worldbook 之前——私聊窗口合并 + 新消息打断在飞；
     //   群聊不合并不打断（保持现状）
     const coalescer = new CoalescerStage();
+    this.coalescer = coalescer; // ★ 8-15 WebUI pending 查询（webui-chat-endpoints）
 
     // Pipeline
     const ctx = createPipelineContext({

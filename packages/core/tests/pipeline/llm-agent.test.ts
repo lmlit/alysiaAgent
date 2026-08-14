@@ -15,11 +15,13 @@ import { MessageChain } from '../../src/platform/chain.js';
 // Hoisted mock for AgentRunner.run() — shared across all tests
 // ---------------------------------------------------------------------------
 const mockRun = vi.hoisted(() => vi.fn());
+const mockRunStream = vi.hoisted(() => vi.fn());
 
 vi.mock('../../src/agent/runner.js', () => {
   return {
     AgentRunner: class {
       run = mockRun;
+      runStream = mockRunStream;
     },
   };
 });
@@ -496,5 +498,89 @@ describe('LLMAgentStage — 8-09 输出回写', () => {
         payload: { content: '这是回复内容', role: 'assistant' },
       })
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ★ 8-15 流式分支（webui-chat-endpoints）：on_chunk → runStream；aborted → on_done(null)
+// ---------------------------------------------------------------------------
+describe('LLMAgentStage — 8-15 流式分支', () => {
+  beforeEach(() => {
+    mockRun.mockReset();
+    mockRunStream.mockReset();
+  });
+
+  it('有 on_chunk → 走 runStream（非流式路径不受影响）', async () => {
+    const ctx = makeMockContext();
+    ctx.commandRegistry.execute = vi.fn().mockResolvedValue(null);
+    mockRunStream.mockResolvedValue({
+      chain: new MessageChain().message('流式回复'),
+      tokenUsage: { input: 10, output: 5, total: 15 },
+    });
+    const stage = new LLMAgentStage();
+    await stage.initialize(ctx);
+
+    const event = makeEvent('你好');
+    const onChunk = vi.fn();
+    event.setExtra('on_chunk', onChunk);
+    await consumeGenerator(stage.process(event));
+
+    expect(mockRunStream).toHaveBeenCalledWith(
+      '你好', expect.stringContaining('测试人格提示词'), [], 't-1:private:s1',
+      undefined, undefined, onChunk,  // sampling/abortCtrl.signal/onChunk
+    );
+    expect(mockRun).not.toHaveBeenCalled();
+    // 回复链正常设置
+    expect(event.getExtra('response_chain')).toBeDefined();
+  });
+
+  it('流式回复 → send 回调后触发 on_done(chain)', async () => {
+    const ctx = makeMockContext();
+    ctx.commandRegistry.execute = vi.fn().mockResolvedValue(null);
+    mockRunStream.mockResolvedValue({
+      chain: new MessageChain().message('逐块回复'),
+      tokenUsage: { input: 1, output: 1, total: 2 },
+    });
+    const stage = new LLMAgentStage();
+    await stage.initialize(ctx);
+
+    const event = makeEvent('你好');
+    event.setExtra('on_chunk', vi.fn());
+    const onDone = vi.fn();
+    event.setExtra('on_done', onDone);
+    const sendSpy = vi.fn().mockResolvedValue(undefined);
+    event.send = sendSpy;
+    await consumeGenerator(stage.process(event));
+
+    // 模拟 RespondStage：调 event.send(chain) → llm-agent 包装后触发 on_done(chain)
+    await event.send(new MessageChain().message('逐块回复'));
+
+    expect(onDone).toHaveBeenCalledWith(expect.any(MessageChain));
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('生成被打断（aborted）→ on_done(null) 被调（SSE 端点据此关闭）', async () => {
+    const ctx = makeMockContext();
+    ctx.commandRegistry.execute = vi.fn().mockResolvedValue(null);
+    mockRunStream.mockResolvedValue({
+      chain: new MessageChain(),
+      tokenUsage: { input: 0, output: 0, total: 0 },
+      aborted: true,
+    });
+    const stage = new LLMAgentStage();
+    await stage.initialize(ctx);
+
+    const event = makeEvent('你好');
+    event.setExtra('on_chunk', vi.fn());
+    const onDone = vi.fn();
+    event.setExtra('on_done', onDone);
+    // aborted 分支直接 return（不 yield）——手动消费
+    const gen = stage.process(event);
+    const r1 = await gen.next();
+    expect(r1.done).toBe(true);
+
+    expect(onDone).toHaveBeenCalledWith(null);
+    // 不设置回复链
+    expect(event.getExtra('response_chain')).toBeUndefined();
   });
 });

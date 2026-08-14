@@ -85,6 +85,35 @@ export class EventStore {
     return rows;
   }
 
+  /** ★ 8-15 WebUI 会话历史分页（webui-chat-endpoints）：created_at 游标向下翻页。
+   *   before 为 ISO 游标（取比它更早的消息）；省略取最新 limit 条。返回时间倒序（最新在前）。 */
+  getMessagesBySession(sessionId: string, limit: number = 50, before?: string): Array<{ role: string; content: string; senderName: string; createdAt?: string }> {
+    const rows = before
+      ? this.db.prepare(`
+        SELECT payload, source, created_at FROM events
+        WHERE session_id = ? AND type = 'message' AND created_at < ?
+        ORDER BY created_at DESC
+        LIMIT ?
+      `).all(sessionId, before, limit) as Array<{ payload: string; source: string; created_at: string }>
+      : this.db.prepare(`
+        SELECT payload, source, created_at FROM events
+        WHERE session_id = ? AND type = 'message'
+        ORDER BY created_at DESC
+        LIMIT ?
+      `).all(sessionId, limit) as Array<{ payload: string; source: string; created_at: string }>;
+
+    return rows.map(r => {
+      const p = JSON.parse(r.payload);
+      const role = p.role ?? (p.sender_id ? 'user' : 'assistant');
+      return {
+        role,
+        content: p.content || '',
+        senderName: p.sender_name || (role === 'user' ? '用户' : '昔涟'),
+        createdAt: r.created_at,
+      };
+    });
+  }
+
   /** 获取某个会话最近的消息（用于短期上下文） */
   /** 最近消息（短期记忆）。limit 上限；since 可选时间窗口（ISO 字符串比较，created_at 存 ISO）。
    *  返回附带 createdAt（ISO），供亲密度衰减等需要"最后消息时间"的调用方使用。 */

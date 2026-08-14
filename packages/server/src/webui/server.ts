@@ -30,9 +30,12 @@
  */
 import Fastify from 'fastify';
 import type { AlysiaCore } from '@alysia/core';
+import { registerChatRoutes } from './chat.js';
 
 export function createWebuiApp(core: AlysiaCore) {
   const app = Fastify({ logger: false });
+  // ★ 8-15 WebUI 聊天端点（webui-chat-endpoints）：prompt/stream/messages/pending
+  registerChatRoutes(app, core);
 
   // ── 系统 ──────────────────────────────────────────
   app.get('/api/health', async () => ({ status: 'ok', uptime: process.uptime() }));

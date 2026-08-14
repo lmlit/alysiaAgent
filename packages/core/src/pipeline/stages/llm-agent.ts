@@ -105,20 +105,37 @@ export class LLMAgentStage implements Stage {
     const start = Date.now();
     // ★ 8-10 打断：从 Coalescer 的 AbortRegistry 取当前 signal（新消息到达即 abort）
     const abortCtrl = this.ctx.coalescer?.getAbortRegistry().getOrCreate(event.unifiedMsgOrigin);
-    const result = await this.runner.run(
-      event.messageStr,
-      systemPrompt,
-      imageUrls.filter(Boolean),
-      event.unifiedMsgOrigin,
-      // ★ 8-10 主对话采样槽（她的"嗓子"），sampling.chat 可配
-      this.ctx.sampling?.chat,
-      abortCtrl?.signal,
-    );
+    // ★ 8-15 WebUI 流式分支（webui-chat-endpoints）：on_chunk 挂载 → runStream
+    const onChunk = event.getExtra('on_chunk');
+    const result = onChunk
+      ? await this.runner.runStream(
+          event.messageStr,
+          systemPrompt,
+          imageUrls.filter(Boolean),
+          event.unifiedMsgOrigin,
+          this.ctx.sampling?.chat,
+          abortCtrl?.signal,
+          onChunk,
+        )
+      : await this.runner.run(
+          event.messageStr,
+          systemPrompt,
+          imageUrls.filter(Boolean),
+          event.unifiedMsgOrigin,
+          // ★ 8-10 主对话采样槽（她的"嗓子"），sampling.chat 可配
+          this.ctx.sampling?.chat,
+          abortCtrl?.signal,
+        );
+
+    // ★ 8-15 结束通知 helper：正常 = send 回调内触发（见 RespondStage 调用点之后）；
+    //   打断分支直接触发 null（不经过 RespondStage，SSE 端点必须知道生成已丢弃）
+    const done = (chain: MessageChain | null) => { event.getExtra('on_done')?.(chain); };
 
     // ★ 8-10 打断：生成被新消息中断 → 丢弃（未发任何内容），不设置回复、不回写记忆；
     //   通知 Coalescer 即时 flush 累计消息（合并重发）
     if (result.aborted) {
       logger.info(`[LLMAgent] generation aborted (${event.unifiedMsgOrigin.slice(-16)}), response discarded`);
+      done(null);
       this.ctx.coalescer?.onGenerationAborted(event.unifiedMsgOrigin, event);
       return;
     }
@@ -128,6 +145,7 @@ export class LLMAgentStage implements Stage {
     //   语义：被打断就丢弃，合并只合并请求（输入），不合并返回结果——杜绝双重回复。
     if (abortCtrl?.signal.aborted) {
       logger.info(`[LLMAgent] aborted after completion (${event.unifiedMsgOrigin.slice(-16)}), response discarded`);
+      done(null);
       this.ctx.coalescer?.onGenerationAborted(event.unifiedMsgOrigin, event);
       return;
     }
@@ -141,6 +159,15 @@ export class LLMAgentStage implements Stage {
     logger.info(`[LLMAgent] → ${replyText.slice(0, 120).replace(/\n/g, ' ')} (${Date.now() - start}ms)`);
 
     event.setExtra('response_chain', result.chain);
+
+    // ★ 8-15 on_done 挂载：RespondStage 调 event.send(chain) 时触发（正常结束通知）
+    if (event.getExtra('on_done')) {
+      const baseSend = event.send.bind(event);
+      event.send = async (chain: MessageChain) => {
+        await baseSend(chain);
+        done(chain);
+      };
+    }
 
     // ★ 8-10 请求正常完成，释放 abort controller（防注册表泄漏；不 abort）
     this.ctx.coalescer?.getAbortRegistry().release(event.unifiedMsgOrigin);

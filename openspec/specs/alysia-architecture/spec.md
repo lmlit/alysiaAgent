@@ -584,6 +584,33 @@ chunk yield + tool_calls 累积，但零调用者）：
   首 chunk 前失败：err 文本作为最终回复
 - **主路径不变**：QQ 通道继续 run() + textChatWithFallback 非流式，行为零影响
 
+### 6.1.3 WebUI 聊天端点（2026-08-15，change: webui-chat-endpoints）
+
+**PipelineExtras 扩展**:
+- `on_chunk?: (chunk: { kind: 'text' | 'reasoning'; text: string }) => void` —— 流式块回调
+  （SSE 注入；LLMAgentStage 检测到即走 runStream 分支）
+- `on_done?: (chain: MessageChain | null) => void` —— 结束通知：正常 = RespondStage 的
+  send 回调内触发（LLMAgentStage 包装 event.send 后调用）；打断（aborted 分支不经过
+  RespondStage）= LLMAgentStage 直接触发 null——SSE 端点据此关闭，防挂起
+
+**LLMAgentStage 流式分支**:检测 `on_chunk` → `runner.runStream(..., onChunk)`；文本/
+reasoning 块逐块回调；回复链/usage 记录/回写记忆/日志与非流式一致；3 处 aborted 分支
+调 `on_done(null)` 后 return。非流式路径不变（QQ/Telegram/OneBot 继续 runner.run()）。
+
+**WebUI 会话**:`webui:private:<id>`（裸 ID 传 MessageEvent，unifiedMsgOrigin 由
+MessageSession.toString 拼接，与 QQ adapter 同模式；与 QQ 通道完全隔离）。
+
+**端点**:
+- `POST /api/chat/prompt`：MessageEvent → eventBus.put（走完整 pipeline），send 回调收集
+  完整回复，90s 超时；空回复（被打断）→ ok:false
+- `POST /api/chat/stream`：SSE —— connected / chunk{kind,text} / done{reply} /
+  aborted（on_done(null)）/ error（超时）
+- `GET /api/sessions/:id/messages?limit=&before=`：events 表 created_at 游标分页
+  （时间倒序，最新在前；hasMore = 满页）
+- `GET /api/chat/pending?sessionId=`：Coalescer AbortRegistry.isInFlight——
+  页面刷新恢复"回复中"状态
+- `MemoryManager.getSessionMessages(sessionId, limit, before?)` / `AlysiaCore.isGenerating`
+
 ### 6.2 内置工具
 
 | 工具 | 描述 | 实现 |
