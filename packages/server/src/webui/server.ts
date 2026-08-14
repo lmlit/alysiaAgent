@@ -23,6 +23,10 @@
  *   DELETE /api/knowledge/:id      — 删除知识文档
  *   POST /api/privacy              — 隐私模式开关
  *   GET  /api/life                 — AI 生活状态快照 + 事件流
+ *   GET  /api/worldbook            — 世界书条目列表（含 source）
+ *   DELETE /api/worldbook/:id      — 删除世界书条目（用户事后改）
+ *   GET  /api/life/templates       — 生活模板池列表
+ *   DELETE /api/life/templates/:id — 删除生活模板（用户事后改）
  */
 import Fastify from 'fastify';
 import type { AlysiaCore } from '@alysia/core';
@@ -129,6 +133,21 @@ export function createWebuiApp(core: AlysiaCore) {
     const snapshot = core.memoryManager.getLifeSnapshot();
     const events = core.memoryManager.listLifeEvents(7);
     return { snapshot, events };
+  });
+
+  // ── ★ 8-14 内容自进化（content-self-evolution）：硬审计面 + 用户事后删除兜底 ──
+  app.get('/api/worldbook', async () => ({ entries: core.memoryManager.listWorldbookEntries() }));
+
+  app.delete('/api/worldbook/:id', async (req) => {
+    const ok = core.memoryManager.deleteWorldbookEntry((req.params as any).id);
+    return { ok };
+  });
+
+  app.get('/api/life/templates', async () => ({ templates: core.memoryManager.listLifeTemplates() }));
+
+  app.delete('/api/life/templates/:id', async (req) => {
+    const ok = core.memoryManager.deleteLifeTemplate((req.params as any).id);
+    return { ok };
   });
 
   return app;

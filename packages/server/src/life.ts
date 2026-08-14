@@ -9,7 +9,6 @@ import { readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { dirname } from 'path';
 import { logger } from '@alysia/core';
 import { formatLocalTime, localDateKey, localDateKeyFromISO } from '@alysia/core/memory';
-import { LIFE_TEMPLATES, LifeTemplate } from './life-templates.js';
 
 export interface LifeOpts {
   ownerOpenid: string;
@@ -349,18 +348,20 @@ export class LifeService {
     }
   }
 
-  /** 加权随机模板（权重越高越常被选中）；空库返回 null */
-  private pickTemplate(): LifeTemplate | null {
-    if (LIFE_TEMPLATES.length === 0) return null;
-    const total = LIFE_TEMPLATES.reduce((s, t) => s + t.weight, 0);
+  /** ★ 8-14 加权随机模板（权重越高越常被选中）；空池返回 null。
+   *  模板池迁 SQLite（content-self-evolution）：listLifeTemplates 实时读取（seed + self） */
+  private pickTemplate(): { activity: string; type: 'chat' | 'internal' } | null {
+    const templates = this.memoryManager.listLifeTemplates() ?? [];
+    if (templates.length === 0) return null;
+    const total = templates.reduce((s: number, t: any) => s + (t.weight ?? 2), 0);
     let r = Math.random() * total;
-    for (const t of LIFE_TEMPLATES) {
-      r -= t.weight;
+    for (const t of templates) {
+      r -= (t.weight ?? 2);
       if (r <= 0) return t;
     }
     // 数学上不可达：r < total 恒成立（Math.random() ∈ [0,1)），循环内必命中。
     // 保留返回值以满足 TS 控制流分析。
-    return LIFE_TEMPLATES[0];
+    return templates[0];
   }
 
   // ── 每日摘要生成 ────────────────────────────────────

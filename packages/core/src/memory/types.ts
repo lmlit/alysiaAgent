@@ -109,6 +109,8 @@ export interface WorldbookEntry {
   role?: string;
   /** v3 角色系统：内容类型 'text' | 'image' | 'sticker'（表情包素材） */
   content_type?: string;
+  /** ★ 8-14 内容自进化：条目来源 'seed'(角色包导入/seed) | 'self'(昔涟自写) */
+  source?: string;
 }
 
 export interface CodeContext {

@@ -6,9 +6,9 @@ export class WorldbookStore {
 
   insert(entry: WorldbookEntry): void {
     this.db.prepare(`
-      INSERT INTO worldbook_entries (id, trigger_keys, trigger_mode, content, scope, priority, cooldown_sec, last_triggered, hit_count, created_at, updated_at, role, content_type)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(entry.id, entry.trigger_keys, entry.trigger_mode, entry.content, entry.scope, entry.priority, entry.cooldown_sec, entry.last_triggered, entry.hit_count, entry.created_at, entry.updated_at, entry.role ?? 'alysia', entry.content_type ?? 'text');
+      INSERT INTO worldbook_entries (id, trigger_keys, trigger_mode, content, scope, priority, cooldown_sec, last_triggered, hit_count, created_at, updated_at, role, content_type, source)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(entry.id, entry.trigger_keys, entry.trigger_mode, entry.content, entry.scope, entry.priority, entry.cooldown_sec, entry.last_triggered, entry.hit_count, entry.created_at, entry.updated_at, entry.role ?? 'alysia', entry.content_type ?? 'text', entry.source ?? 'seed');
   }
 
   getById(id: string): WorldbookEntry | null {
@@ -108,6 +108,7 @@ export class WorldbookStore {
       updated_at: row.updated_at as string,
       role: (row.role as string) ?? 'alysia',
       content_type: (row.content_type as string) ?? 'text',
+      source: (row.source as string) ?? 'seed',
     };
   }
 }

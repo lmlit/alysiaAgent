@@ -47,12 +47,8 @@ function condense(content: string): string {
 }
 
 export function createWorldbookTool(db: Database.Database): ToolDefinition {
-  const skillIndex = buildSkillIndex(db);
-
-  const catalog = [...skillIndex.entries()]
-    .map(([id, s]) => `- \`${id}\`: ${s.summary}`)
-    .join('\n');
-
+  // ★ 8-14 内容自进化：索引改为 handler 内实时构建（原启动冻结 → 自写条目查不到 = 自相矛盾）。
+  //  条目量小（几十条），每次调用重建成本可忽略。
   return {
     name: 'lookup_worldbook',
     description: '查询昔涟的背景知识（崩坏星穹铁道角色设定）。当用户问及昔涟的身世、来历、过去，或提到翁法罗斯、白厄、迷迷、德谬歌、浮黎、泰坦、黄金裔、哀丽秘榭、铁幕、绝灭大君等关键词时调用。传入关键词即可搜索。',
@@ -67,6 +63,7 @@ export function createWorldbookTool(db: Database.Database): ToolDefinition {
       const keyword = (args.keyword || '') as string;
       if (!keyword) return '请提供搜索关键词。';
 
+      const skillIndex = buildSkillIndex(db); // ★ 实时构建：自写条目即刻可查
       // 搜索匹配的条目
       const results: string[] = [];
       for (const [id, val] of skillIndex) {

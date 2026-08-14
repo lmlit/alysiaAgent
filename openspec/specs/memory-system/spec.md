@@ -178,9 +178,34 @@ CREATE TABLE worldbook_entries (
     last_triggered  TEXT,
     hit_count       INTEGER DEFAULT 0,
     created_at      TEXT NOT NULL,
-    updated_at      TEXT NOT NULL
+    updated_at      TEXT NOT NULL,
+    source          TEXT DEFAULT 'seed'     -- 8-14: 条目来源 'seed'(角色包导入/seed) | 'self'(昔涟自写)
 );
 ```
+
+### 2.8 内容自进化（2026-08-14，change: content-self-evolution）
+
+昔涟可往自己的持久内容库写新条目（新回忆/设定 → worldbook；新日常 → life 模板池），
+**无事前审批**，安全靠事后：
+
+- **写工具**（chat tools 注册，仅她自己的视角）：
+  - `write_worldbook`：参数 `trigger_keys[]`（未来触发关键词）+ `content`（≤250 字）
+  - `add_life_template`：参数 `activity` + `type`（chat/internal，默认 internal）
+- **写入校验双段**：① 机械预检（content/trigger_keys 查重、长度 ≤250、触发词非空——规则最可靠先挡）；
+  ② LLM 校验器（复用 llmService.complete，max_tokens 128、低温；判定 prompt 只给条目本身不给对话
+  上下文；判定标准：只写关于她自己的事/她的世界、用户事实不写、模糊不写、离谱危险不写、与已有
+  条目冲突不写）→ `{decision: write|reject}`。**校验器异常/超时 → 降级拒写**（宁可漏记不误记）。
+- **通知 = 内容浮现，不是操作汇报**：无"我加了一条设定"元语言；工具 result 可见后，主循环 LLM
+  把新内容当回忆/念头自然说出（生活陈述口吻）。沿用 personalize 语气，无需新通道。
+- **审计双轨**：`logger.info('[SelfEvolve] …')` 硬记录（完整内容，可扫描 + 找回）；
+  `source='self'` 标记 + webui 列表 = 软审计面。
+- **删除仅响应明确用户指令**：`delete_worldbook_entry`（按 ID 或内容关键词）/ `delete_life_template`，
+  description 硬约束 LLM 不得自主删除自己的条目；每次删除日志留完整内容（误删可从日志找回）。
+  **不暴露 update**——她不可改写自己的历史，只能新增/应指令删除。
+- **lookup_worldbook 实时化**：handler 每次调用从 db 实时查询（条目量小，成本可忽略），
+  替换启动冻结的 index——自写条目即刻可查。
+- **自写条目 role='alysia'、scope='chat'、source='self'**，入库即自然进入 worldbook 匹配
+  （matchByKeywords）与 life 生成采样链（getWorldbookSample），她的新设定影响她后续过什么日子。
 
 ### 2.7 Code Context Store（项目上下文）— SQLite
 
@@ -509,6 +534,7 @@ query → Worldbook 匹配 → embed API → LanceDB 向量检索
 
 | 日期 | 变更 |
 |---|---|
+| 2026-08-14 | 内容自进化: worldbook/life 模板自写工具 + LLM 校验器(异常降级拒写) + 对话内删除(仅响应指令) + lookup_worldbook 实时化 + source 列 |
 | 2026-06-28 | 初始设计，确认所有 7 节内容 |
 | 2026-06-28 | 修正：编程模式改为注入精简画像（仅技术相关字段） |
 | 2026-07-29 | v2 画像系统: ProfileFact 加 source/valid_from/valid_until/status 四字段; 冲突解决改为 supersede+审计链; 召回加状态过滤和置信度排序; 新增纠正快路径 (RealtimeProcessor); 新增隐私模式 (full/readonly/off); 新增记忆人格旋钮 (memory_config) 与 PersonaAdapter 联动 |

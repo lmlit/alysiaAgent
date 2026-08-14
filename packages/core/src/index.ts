@@ -22,6 +22,7 @@ import { CoalescerStage } from './pipeline/stages/coalescer.js';
 import { createWebSearchTool, createWeatherTool } from './tools/web-search.js';
 import { createWorldbookTool } from './tools/worldbook.js';
 import { createReminderTool, createListRemindersTool, createCancelReminderTool } from './tools/reminder.js';
+import { createSelfEvolveTools } from './tools/self-evolve.js';
 import { createShellExecTool } from './tools/shell.js';
 import { createWriteFileTool, createReadFileTool, createListFilesTool } from './tools/filesystem.js';
 import { createSessionCommands } from './commands/session.js';
@@ -295,6 +296,10 @@ export class AlysiaCore {
     }, noopPersist));
     this.toolRegistry.register(createListRemindersTool());
     this.toolRegistry.register(createCancelReminderTool(noopPersist));
+    // ★ 8-14 内容自进化（content-self-evolution）：自写 worldbook/life 模板 + 用户指令删除
+    for (const tool of createSelfEvolveTools(this.memoryManager)) {
+      this.toolRegistry.register(tool);
+    }
     // 表情包不再注册为工具 — 改用文案内标记 [表情包:名字]，发送时解析（LLMAgentStage + adapter）
   }
 

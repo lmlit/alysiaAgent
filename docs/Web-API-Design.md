@@ -187,6 +187,20 @@ getPersonaSnapshot(): {
 | `getUserActivitySummary()` | 用户近况摘要（事件生成用） |
 | `updateLifeState(partial)` | 更新 AI 实时状态 |
 | `upsertDailySummary(date, summary)` | 写入/更新某天生活摘要 |
+| `listLifeTemplates()` | 生活模板池列表（seed + self） |
+| `addLifeTemplate({activity, type})` | 昔涟自加生活模板（机械预检 + LLM 校验，weight 固定 2） |
+| `deleteLifeTemplate(id)` | 删除生活模板（仅用户指令，日志留底） |
+
+## 2.7 内容自进化（worldbook 自写，2026-08-14 已封装）
+
+**Web 路由**: `GET /api/worldbook` → `{ entries }`；`DELETE /api/worldbook/:id` → `{ ok }`
+**Web 路由**: `GET /api/life/templates` → `{ templates }`；`DELETE /api/life/templates/:id` → `{ ok }`
+
+| Core 方法 | 用途 |
+|-----------|------|
+| `addWorldbookEntry({triggerKeys, content})` | 昔涟自写世界书条目（机械预检 + LLM 校验，source='self'） |
+| `listWorldbookEntries()` | 世界书条目列表（含 source：seed/self，硬审计面） |
+| `deleteWorldbookEntry(id)` | 删除世界书条目（仅用户指令驱动，日志留完整内容可找回） |
 
 ---
 

@@ -19,6 +19,10 @@ function makeMocks(overrides: Record<string, any> = {}) {
     updateLifeState: vi.fn(),
     listLifeEvents: vi.fn().mockReturnValue([]),
     listLifeSummaries: vi.fn().mockReturnValue([]),
+    // ★ 8-14 模板池迁库：pickTemplate 从库实时读取
+    listLifeTemplates: vi.fn().mockReturnValue([
+      { id: 'lt-1', activity: '给自己倒了杯水', type: 'internal', weight: 5, source: 'seed' },
+    ]),
     listSessions: vi.fn().mockReturnValue([]),
     upsertDailySummary: vi.fn(),
     markLifeEventDelivered: vi.fn(),

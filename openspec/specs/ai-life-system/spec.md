@@ -115,6 +115,16 @@ CREATE TABLE ai_life_daily_summaries (
   summary         TEXT,              -- 当日生活摘要（LLM 生成）
   created_at      TEXT
 );
+
+-- ★ 8-14 生活模板池（content-self-evolution）：替代原 const/JSON 加载
+CREATE TABLE life_templates (
+  id          TEXT PRIMARY KEY,
+  activity    TEXT NOT NULL,          -- 活动描述
+  type        TEXT NOT NULL DEFAULT 'internal',  -- 'chat' | 'internal'
+  weight      INTEGER NOT NULL DEFAULT 2,        -- 加权随机权重；自加条目固定 2（防权重操纵）
+  source      TEXT NOT NULL DEFAULT 'seed',      -- 'seed'(既有种子) | 'self'(昔涟自写)
+  created_at  TEXT NOT NULL
+);
 ```
 
 ---
@@ -356,18 +366,13 @@ await memoryManager.ingest({
 
 ## 14. 通用模板库
 
-`packages/server/data/life-templates.json`（少量，无角色特色）：
+**★ 8-14（change: content-self-evolution）迁入 SQLite `life_templates` 表**（替代原
+`packages/server/life-templates.ts` const / `data/life-templates.json`）：
 
-```json
-[
-  { "activity": "给自己倒了杯水", "type": "internal", "weight": 5 },
-  { "activity": "翻着手机发呆", "type": "internal", "weight": 4 },
-  { "activity": "听到楼下琴声，有点想学", "type": "chat", "weight": 2 },
-  ...
-]
-```
-
-加载于 LifeService 构造时；LLM 失败时随机取用（weight 加权）。
+- seed 8 条既有模板（source='seed'）启动时 INSERT OR IGNORE 保底（以 id 幂等——用户删过的种子重启不复活）
+- 昔涟可通过 `add_life_template` 自加（source='self'，weight 固定 2，type 参数化）
+- `LifeService.pickTemplate()` 从 `memoryManager.listLifeTemplates()` 实时读取（weight 加权）；
+  LLM 失败回落逻辑不变（模板事件强制 internal 防剧情链断裂）
 
 ---
 

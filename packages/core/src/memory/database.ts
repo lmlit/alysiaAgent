@@ -142,6 +142,17 @@ export function initializeDatabase(db: Database.Database): void {
       summary         TEXT NOT NULL,
       created_at      TEXT
     );
+
+    -- ★ 8-14 生活模板池（content-self-evolution）：替代 server/life-templates.ts const
+    --   source='seed'(既有种子) | 'self'(昔涟自写)；自写条目 weight 固定 2（防权重操纵）
+    CREATE TABLE IF NOT EXISTS life_templates (
+      id          TEXT PRIMARY KEY,
+      activity    TEXT NOT NULL,
+      type        TEXT NOT NULL DEFAULT 'internal',  -- 'chat' | 'internal'
+      weight      INTEGER NOT NULL DEFAULT 2,
+      source      TEXT NOT NULL DEFAULT 'seed',
+      created_at  TEXT NOT NULL
+    );
   `);
 
   // Migration: add memory_config to existing persona table (v2)
@@ -172,6 +183,10 @@ export function initializeDatabase(db: Database.Database): void {
   if (!wbColNames.has('content_type')) {
     db.exec(`ALTER TABLE worldbook_entries ADD COLUMN content_type TEXT DEFAULT 'text'`);
   }
+  // ★ 8-14 内容自进化：条目来源标记（seed=角色包导入/seed，self=昔涟自写）
+  if (!wbColNames.has('source')) {
+    db.exec(`ALTER TABLE worldbook_entries ADD COLUMN source TEXT DEFAULT 'seed'`);
+  }
 
   // Seed default singleton rows
   const now = new Date().toISOString();
@@ -184,4 +199,24 @@ export function initializeDatabase(db: Database.Database): void {
     INSERT OR IGNORE INTO persona (id, name, tone, speech_style, emotional_range, memory_config, adaptation_hints, updated_at, role, is_active)
     VALUES (1, '昔涟', '{"formality":0,"warmth":0.2,"humor":0.1,"directness":0}', '{"sentence_length":0,"emoji_usage":0,"code_heavy":0}', '{"expressiveness":0.1,"empathy":0.3,"playfulness":0.1}', '{"retention_bias":0.2,"decay_rate":0.3,"importance_threshold":0.4,"recency_weight":0.3,"confirmation_bias":0.3}', '[]', ?, 'alysia', 1)
   `).run(now);
+
+  // ★ 8-14 生活模板池种子（content-self-evolution）：8 条既有模板（原 server/life-templates.ts const）
+  //   INSERT OR IGNORE 以 activity 幂等——用户可能已删过某条种子，重启不复活
+  const seedTemplates: Array<[string, string, string, number]> = [
+    ['lt-seed-01', '给自己倒了杯水', 'internal', 5],
+    ['lt-seed-02', '翻着手机发呆，什么也没看进去', 'internal', 4],
+    ['lt-seed-03', '整理了一下房间，把书摆整齐了', 'internal', 3],
+    ['lt-seed-04', '听到楼下琴声，有点想学', 'chat', 2],
+    ['lt-seed-05', '看到窗外的云朵像一只兔子', 'chat', 2],
+    ['lt-seed-06', '泡了杯茶，坐在窗边慢慢喝', 'internal', 4],
+    ['lt-seed-07', '翻到一张旧照片，想起一些往事', 'chat', 2],
+    ['lt-seed-08', '在阳台看了会儿星星', 'chat', 3],
+  ];
+  const seedInsert = db.prepare(`
+    INSERT OR IGNORE INTO life_templates (id, activity, type, weight, source, created_at)
+    VALUES (?, ?, ?, ?, 'seed', ?)
+  `);
+  for (const [id, activity, type, weight] of seedTemplates) {
+    seedInsert.run(id, activity, type, weight, now);
+  }
 }

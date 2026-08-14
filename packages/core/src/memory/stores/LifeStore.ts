@@ -100,6 +100,31 @@ export class LifeStore {
     return rows.reverse(); // 旧 → 新
   }
 
+  // ── ★ 8-14 生活模板池（content-self-evolution）──────────────────────────────
+  //   源 server/life-templates.ts const → 本表；'seed' 种子 + 'self' 昔涟自写
+
+  addTemplate(t: { id: string; activity: string; type: 'chat' | 'internal'; weight: number; source: 'seed' | 'self'; createdAt: string }): void {
+    this.db.prepare(`
+      INSERT OR REPLACE INTO life_templates (id, activity, type, weight, source, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(t.id, t.activity, t.type, t.weight, t.source, t.createdAt);
+  }
+
+  listTemplates(): Array<{ id: string; activity: string; type: 'chat' | 'internal'; weight: number; source: string }> {
+    const rows = this.db.prepare('SELECT * FROM life_templates ORDER BY created_at ASC').all() as Record<string, unknown>[];
+    return rows.map(r => ({
+      id: r.id as string,
+      activity: r.activity as string,
+      type: r.type as 'chat' | 'internal',
+      weight: r.weight as number,
+      source: (r.source as string) ?? 'seed',
+    }));
+  }
+
+  deleteTemplate(id: string): boolean {
+    return this.db.prepare('DELETE FROM life_templates WHERE id = ?').run(id).changes > 0;
+  }
+
   private rowToEvent(r: Record<string, unknown>): LifeEvent {
     return {
       id: r.id as string,

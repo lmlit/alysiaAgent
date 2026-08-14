@@ -33,6 +33,18 @@ import type { SamplingConfig, SamplingSlot } from '../provider/sampling.js';
 const KB_CHUNK_SIZE = 500;
 const KB_CHUNK_OVERLAP = 50;
 
+// ★ 8-14 内容自进化校验器 prompt：判定该不该写入持久设定库。
+//  只给条目本身（不给对话上下文，防上下文污染判断）；输出 JSON 供解析。
+const SELF_ENTRY_VALIDATOR_PROMPT = `你是"内容自进化"的轻校验器，判定一条候选条目是否适合写入昔涟的持久设定库。
+判定标准（任一命中即 reject）：
+- 不是关于昔涟自己或她世界的（如用户的事实、隐私、对用户的指令）
+- 内容模糊、不确定，像幻觉
+- 离谱、危险、恶意内容
+- 与已有设定冲突
+只允许：关于她自己的经历、喜好、世界观设定的补充，具体且确定。
+输入格式：条目类型 + 条目内容。
+只输出 JSON：{"decision": "write"|"reject", "reason": "一句话理由"}`;
+
 // ── Token 统计 ──────────────────────────────────────────
 interface TokenStats {
   recordCount: number;
@@ -397,6 +409,119 @@ export class MemoryManager {
   /** ★ 世界书命中统计（spec §7 ②）：事件引用条目 → hit_count+1 + last_triggered（与对话触发共用冷却） */
   bumpWorldbookHit(id: string): void {
     this.worldbookStore.recordTrigger(id);
+  }
+
+  // ===== ★ 8-14 内容自进化（content-self-evolution）=====
+  // 昔涟自写持久内容条目：worldbook（回忆/设定）+ life 模板（日常活动）。
+  // 写入校验双段：机械预检（查重/长度/触发词）→ LLM 校验器；异常降级拒写（宁可漏记不误记）。
+  // 安全靠事后：logger.info 硬审计 + source='self' 标记 + 用户对话内指令删除。
+
+  /** 轻校验器：LLM 判定该不该写（判定 prompt 只给条目本身，不给对话上下文防污染）。
+   *  异常/解析失败 → 拒写（模糊一律不写）。 */
+  private async validateSelfEntry(kind: string, content: string): Promise<{ ok: boolean; reason: string }> {
+    try {
+      const text = (await this.llmService.complete(SELF_ENTRY_VALIDATOR_PROMPT, `${kind}\n${content}`))
+        .replace(/^```(?:json)?\s*|\s*```$/g, '').trim();
+      const parsed = JSON.parse(text) as { decision?: string; reason?: string };
+      if (parsed?.decision === 'write') return { ok: true, reason: '通过' };
+      return { ok: false, reason: parsed?.reason ?? '校验未通过' };
+    } catch (err: any) {
+      logger.warn(`[SelfEvolve] validator failed (${kind}), reject-write: ${err.message}`);
+      return { ok: false, reason: '校验失败' };
+    }
+  }
+
+  /** 自写世界书条目：机械预检 → LLM 校验 → 写入（source='self'，role=alysia）。 */
+  async addWorldbookEntry(input: { triggerKeys: string[]; content: string }): Promise<{ ok: boolean; id?: string; reason?: string }> {
+    const triggerKeys = (input.triggerKeys ?? []).map(k => String(k).trim()).filter(Boolean);
+    const content = (input.content ?? '').trim();
+    if (triggerKeys.length === 0) return { ok: false, reason: '触发词为空' };
+    if (!content) return { ok: false, reason: '内容为空' };
+    if (content.length > 250) return { ok: false, reason: '内容超过 250 字上限' };
+
+    // 机械查重：content 完全重复 / trigger_keys 交集
+    if (this.db.prepare('SELECT id FROM worldbook_entries WHERE content = ?').get(content)) {
+      return { ok: false, reason: '已有完全相同的内容' };
+    }
+    const keySet = new Set(triggerKeys);
+    const existingRows = this.db.prepare('SELECT trigger_keys FROM worldbook_entries').all() as Array<{ trigger_keys: string }>;
+    for (const row of existingRows) {
+      try {
+        const rowKeys = new Set(JSON.parse(row.trigger_keys) as string[]);
+        for (const k of keySet) if (rowKeys.has(k)) return { ok: false, reason: `触发词"${k}"已被其他条目占用` };
+      } catch { /* 忽略坏行 */ }
+    }
+
+    const v = await this.validateSelfEntry('worldbook', `条目: ${content}\n触发词: ${triggerKeys.join('、')}`);
+    if (!v.ok) return { ok: false, reason: v.reason };
+
+    const now = new Date().toISOString();
+    const id = `wb_self_${this.hashStr(triggerKeys.join('') + content)}`;
+    this.worldbookStore.insert({
+      id, trigger_keys: JSON.stringify(triggerKeys), trigger_mode: 'any', content,
+      scope: 'chat', priority: 3, cooldown_sec: 300,
+      last_triggered: null, hit_count: 0, created_at: now, updated_at: now,
+      role: 'alysia', content_type: 'text', source: 'self',
+    });
+    // ★ 硬审计记录（可扫描 + 撤销找回）
+    logger.info(`[SelfEvolve] worldbook+ ${id} 触发词[${triggerKeys.join(',')}] 内容: ${content.slice(0, 60)}`);
+    return { ok: true, id };
+  }
+
+  /** 自写世界书条目列表（Web 审计面；source 区分 seed/self） */
+  listWorldbookEntries(): Array<{ id: string; triggerKeys: string[]; content: string; source: string; createdAt: string }> {
+    const rows = this.db.prepare(
+      'SELECT id, trigger_keys, content, source, created_at FROM worldbook_entries ORDER BY created_at DESC'
+    ).all() as Array<{ id: string; trigger_keys: string; content: string; source: string; created_at: string }>;
+    return rows.map(r => ({
+      id: r.id,
+      triggerKeys: JSON.parse(r.trigger_keys) as string[],
+      content: r.content,
+      source: r.source ?? 'seed',
+      createdAt: r.created_at,
+    }));
+  }
+
+  /** 删除世界书条目（仅用户指令驱动；删除日志留完整内容供找回） */
+  deleteWorldbookEntry(id: string): boolean {
+    const row = this.db.prepare('SELECT content, source FROM worldbook_entries WHERE id = ?').get(id) as { content: string; source: string } | undefined;
+    if (!row) return false;
+    this.worldbookStore.deleteEntry(id);
+    logger.info(`[SelfEvolve] worldbook- ${id} (source=${row.source}) 内容: ${row.content.slice(0, 60)}`);
+    return true;
+  }
+
+  /** 自加生活模板：机械预检 → LLM 校验 → 写入（source='self'，weight 固定 2 防权重操纵） */
+  async addLifeTemplate(input: { activity: string; type?: 'chat' | 'internal' }): Promise<{ ok: boolean; id?: string; reason?: string }> {
+    const activity = (input.activity ?? '').trim();
+    const type = input.type === 'chat' ? 'chat' : 'internal';
+    if (!activity) return { ok: false, reason: '活动描述为空' };
+    if (activity.length > 250) return { ok: false, reason: '内容超过 250 字上限' };
+    if (this.db.prepare('SELECT id FROM life_templates WHERE activity = ?').get(activity)) {
+      return { ok: false, reason: '已有相同的活动模板' };
+    }
+    const v = await this.validateSelfEntry('life_template', `活动: ${activity}`);
+    if (!v.ok) return { ok: false, reason: v.reason };
+
+    const now = new Date().toISOString();
+    const id = `lt_self_${this.hashStr(activity)}`;
+    this.lifeStore.addTemplate({ id, activity, type, weight: 2, source: 'self', createdAt: now });
+    logger.info(`[SelfEvolve] life_template+ ${id} [${type}] ${activity.slice(0, 60)}`);
+    return { ok: true, id };
+  }
+
+  /** 生活模板池列表（seed + self；LifeService.pickTemplate 实时读取） */
+  listLifeTemplates(): Array<{ id: string; activity: string; type: 'chat' | 'internal'; weight: number; source: string }> {
+    return this.lifeStore.listTemplates();
+  }
+
+  /** 删除生活模板（仅用户指令驱动；删除日志留底） */
+  deleteLifeTemplate(id: string): boolean {
+    const row = this.db.prepare('SELECT activity, source FROM life_templates WHERE id = ?').get(id) as { activity: string; source: string } | undefined;
+    if (!row) return false;
+    this.lifeStore.deleteTemplate(id);
+    logger.info(`[SelfEvolve] life_template- ${id} (source=${row.source}) ${row.activity.slice(0, 60)}`);
+    return true;
   }
 
   /** ★ 标记生活事件已推送（LifeService 推送成功后调用，spec §5 delivered=1） */

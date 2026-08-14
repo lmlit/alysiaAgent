@@ -5,3 +5,4 @@ export { createReminderTool, createListRemindersTool, createCancelReminderTool, 
 export type { ReminderPersist } from './reminder.js';
 export { createShellExecTool } from './shell.js';
 export { createWriteFileTool, createReadFileTool, createListFilesTool } from './filesystem.js';
+export { createSelfEvolveTools } from './self-evolve.js';
