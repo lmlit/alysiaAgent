@@ -121,6 +121,10 @@ export class OpenAIProvider {
     }
   }
 
+  /** ★ 8-15 流式输出（llm-streaming-pipeline）：与 textChat 对等能力补齐——
+   *  sampling 槽位注入、60s 超时 race（fetch 阶段 + 读循环阶段共用 deadline）、
+   *  外部 signal 打断（AbortController 透传）、reasoning_content 透传。
+   *  工具调用仍在 [DONE] 后一次性 yield（流式不改变工具循环语义）。 */
   async *textChatStream(req: ProviderRequest): AsyncGenerator<LLMResponse> {
     const messages = this.buildMessages(req);
     const model = req.model || this.config.model;
@@ -135,88 +139,165 @@ export class OpenAIProvider {
       body.tool_choice = 'auto';
     }
 
+    // ★ 8-15 sampling 槽位注入（与 textChat 同逻辑，undefined 字段不传）
+    if (req.sampling) {
+      for (const [k, v] of Object.entries(req.sampling)) {
+        if (v !== undefined) (body as Record<string, unknown>)[k] = v;
+      }
+    }
+
+    logger.debug(`[LLM stream] request: ${JSON.stringify(messages)}`);
+
+    const controller = new AbortController();
+    // ★ 8-15 外部打断：signal → 同一 controller 透传 fetch（读循环随之抛 AbortError）
+    if (req.signal) {
+      if (req.signal.aborted) controller.abort();
+      else req.signal.addEventListener('abort', () => controller.abort(), { once: true });
+    }
     const start = Date.now();
-    const response = await fetch(`${this.config.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.config.apiKey}`,
-      },
-      body: JSON.stringify(body),
-    });
 
-    if (!response.ok) {
-      const errText = await response.text().catch(() => '');
-      logger.error(`[LLM stream] API error ${response.status}: ${errText.slice(0, 300)} (${Date.now() - start}ms)`);
-      yield { role: 'err', completionText: `API error ${response.status}` };
-      return;
-    }
+    // ★ 8-15 60s 超时 race（同 llm-request-timeout-race 模式）：fetch 阶段与
+    //   流读取阶段共用 deadline——DNS/连接层挂起（abort 传不到）与中途断流都准时超时。
+    const deadline = Date.now() + 60_000;
+    let timeoutTimer: NodeJS.Timeout | undefined;
+    const timeoutErr = () => Object.assign(new Error('LLM stream timed out (60s)'), { name: 'AbortError' as const });
+    const clearTimer = () => { if (timeoutTimer) { clearTimeout(timeoutTimer); timeoutTimer = undefined; } };
+    const raceTimeout = async <T>(p: Promise<T>): Promise<T> => {
+      clearTimer();
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw timeoutErr();
+      return Promise.race([p, new Promise<never>((_, reject) => {
+        timeoutTimer = setTimeout(() => reject(timeoutErr()), remaining);
+      })]);
+    };
 
-    logger.info(`[LLM stream] ${model} start (${Date.now() - start}ms to headers)`);
-    const reader = response.body?.getReader();
-    if (!reader) {
-      logger.error(`[LLM stream] ${model}: no response body`);
-      yield { role: 'err', completionText: 'No response body' };
-      return;
-    }
+    try {
+      const fetchPromise = fetch(`${this.config.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.config.apiKey}`,
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      // 防 unhandledRejection：race 已返回后，挂起 fetch 最终失败时 rejection 必须被消费
+      fetchPromise.catch(() => {});
+      const response = await raceTimeout(fetchPromise) as Response;
 
-    const decoder = new TextDecoder();
-    let buffer = '';
-    const toolCallsAccumulator: Map<number, { name: string; args: string }> = new Map();
+      if (!response.ok) {
+        const errText = await response.text().catch(() => '');
+        logger.error(`[LLM stream] API error ${response.status}: ${errText.slice(0, 300)} (${Date.now() - start}ms)`);
+        yield { role: 'err', completionText: `API error ${response.status}` };
+        return;
+      }
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
+      logger.info(`[LLM stream] ${model} start (${Date.now() - start}ms to headers)`);
+      const reader = response.body?.getReader();
+      if (!reader) {
+        logger.error(`[LLM stream] ${model}: no response body`);
+        yield { role: 'err', completionText: 'No response body' };
+        return;
+      }
 
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        const data = line.slice(6).trim();
-        if (data === '[DONE]') break;
+      const decoder = new TextDecoder();
+      let buffer = '';
+      const toolCallsAccumulator: Map<number, { name: string; args: string }> = new Map();
+
+      while (true) {
+        let result: ReadableStreamReadResult<Uint8Array>;
         try {
-          const parsed = JSON.parse(data);
-          const delta = parsed.choices?.[0]?.delta;
-          if (delta?.content) {
-            yield { role: 'assistant', completionText: delta.content, isChunk: true };
-          }
-          if (delta?.tool_calls) {
-            for (const tc of delta.tool_calls) {
-              const idx = tc.index ?? 0;
-              if (!toolCallsAccumulator.has(idx)) {
-                toolCallsAccumulator.set(idx, { name: tc.function?.name || '', args: '' });
-              }
-              const acc = toolCallsAccumulator.get(idx)!;
-              if (tc.function?.name) acc.name = tc.function.name;
-              if (tc.function?.arguments) acc.args += tc.function.arguments;
-            }
-          }
-        } catch { /* skip malformed chunks */ }
-      }
-    }
+          result = await raceTimeout(reader.read());
+        } finally {
+          clearTimer();
+        }
+        const { done, value } = result;
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
 
-    // Emit final tool calls if any
-    const toolNames: string[] = [];
-    const toolArgs: Record<string, unknown>[] = [];
-    const toolIds: string[] = [];
-    for (const [idx, acc] of toolCallsAccumulator) {
-      toolNames.push(acc.name);
-      toolIds.push(`call_${idx}`);
-      try {
-        toolArgs.push(JSON.parse(acc.args));
-      } catch {
-        toolArgs.push({});
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const data = line.slice(6).trim();
+          if (data === '[DONE]') break;
+          try {
+            const parsed = JSON.parse(data);
+            const delta = parsed.choices?.[0]?.delta;
+            // ★ 8-15 reasoning_content 透传（DeepSeek 思考过程独立字段，调用方决定展示）
+            if (delta?.reasoning_content) {
+              yield { role: 'assistant', completionText: '', reasoningContent: delta.reasoning_content, isChunk: true };
+            }
+            if (delta?.content) {
+              yield { role: 'assistant', completionText: delta.content, isChunk: true };
+            }
+            if (delta?.tool_calls) {
+              for (const tc of delta.tool_calls) {
+                const idx = tc.index ?? 0;
+                if (!toolCallsAccumulator.has(idx)) {
+                  toolCallsAccumulator.set(idx, { name: tc.function?.name || '', args: '' });
+                }
+                const acc = toolCallsAccumulator.get(idx)!;
+                if (tc.function?.name) acc.name = tc.function.name;
+                if (tc.function?.arguments) acc.args += tc.function.arguments;
+              }
+            }
+            // ★ 8-15 usage 透传（DeepSeek 流式末块带 usage）——块顺序在文本之后，runner 累积
+            if (parsed.usage) {
+              yield {
+                role: 'assistant',
+                completionText: '',
+                isChunk: true,
+                usage: {
+                  input: parsed.usage.prompt_tokens,
+                  output: parsed.usage.completion_tokens,
+                  total: parsed.usage.total_tokens,
+                },
+              };
+            }
+          } catch { /* skip malformed chunks */ }
+        }
       }
-    }
-    if (toolNames.length > 0) {
-      yield {
-        role: 'assistant',
-        completionText: '',
-        toolsCallName: toolNames,
-        toolsCallArgs: toolArgs,
-        toolsCallIds: toolIds,
-      };
+
+      // Emit final tool calls if any
+      const toolNames: string[] = [];
+      const toolArgs: Record<string, unknown>[] = [];
+      const toolIds: string[] = [];
+      for (const [idx, acc] of toolCallsAccumulator) {
+        toolNames.push(acc.name);
+        toolIds.push(`call_${idx}`);
+        try {
+          toolArgs.push(JSON.parse(acc.args));
+        } catch {
+          toolArgs.push({});
+        }
+      }
+      if (toolNames.length > 0) {
+        yield {
+          role: 'assistant',
+          completionText: '',
+          toolsCallName: toolNames,
+          toolsCallArgs: toolArgs,
+          toolsCallIds: toolIds,
+        };
+      }
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        if (req.signal?.aborted) {
+          // 外部打断：与 textChat 同锚点（日志可验证打断真到 fetch）
+          logger.info(`[LLM stream] ${model} aborted by signal (${Date.now() - start}ms)`);
+          yield { role: 'err', completionText: 'Request aborted' };
+        } else {
+          // race 超时（fetch 挂起或中途断流）
+          logger.error(`[LLM stream] ${model} timed out after 60s`);
+          yield { role: 'err', completionText: 'Request timed out (60s)' };
+        }
+      } else {
+        logger.error(`[LLM stream] ${model} request error: ${err.message} (${Date.now() - start}ms)`);
+        yield { role: 'err', completionText: `Request error: ${err.message}` };
+      }
+    } finally {
+      clearTimer();
     }
   }
 

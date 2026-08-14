@@ -197,4 +197,190 @@ export class AgentRunner {
       images: toolImages,
     };
   }
+
+  /** ★ 8-15 流式出口（llm-streaming-pipeline）：
+   *  与 run() 同构（截断/工具循环/打断契约/终检全部对齐），仅文本生成阶段改走
+   *  streamWithFallback，文本/reasoning chunk 逐块回调 onChunk。
+   *  打断语义与 §6.1.1 一致：signal 检查点 + 终检；aborted 结果永不发送。
+   *  主路径（QQ 通道 run()）不受影响。 */
+  async runStream(
+    prompt: string,
+    systemPrompt: string,
+    imageUrls: string[] = [],
+    sessionId: string = 'default',
+    sampling?: Partial<SamplingSlot>,
+    signal?: AbortSignal,
+    onChunk?: (chunk: { kind: 'text' | 'reasoning'; text: string }) => void,
+  ): Promise<{
+    chain: MessageChain;
+    tokenUsage: { input: number; output: number; total: number };
+    images: string[];
+    aborted?: boolean;
+  }> {
+    const ctx = new AgentContext();
+    ctx.addMessage({ role: 'system', content: systemPrompt });
+
+    let totalInput = 0;
+    let totalOutput = 0;
+    let stepCount = 0;
+    let finalText = '';
+    const toolImages: string[] = [];
+
+    await this.hooks.onAgentBegin?.(null, ctx.messages);
+
+    while (stepCount < this.maxSteps) {
+      if (signal?.aborted) {
+        logger.info(`[AgentRunner] aborted by signal (${sessionId.slice(-16)})`);
+        return { chain: new MessageChain(), tokenUsage: { input: totalInput, output: totalOutput, total: totalInput + totalOutput }, images: toolImages, aborted: true };
+      }
+      stepCount++;
+
+      const provider = this.providerManager.getDefault();
+      const maxTokens = provider?.config?.maxContextTokens || 16000;
+      ctx.truncate(maxTokens);
+
+      const req = {
+        prompt,
+        sessionId,
+        systemPrompt: '',
+        contexts: ctx.toOpenAIFormat() as Array<{ role: string; content: string }>,
+        imageUrls: stepCount === 1 ? imageUrls : [],
+        funcTool: stepCount < this.maxSteps ? this.toolRegistry.toToolSet() : undefined,
+        sampling,
+        signal,
+      };
+
+      // ── 流式文本生成阶段 ──
+      let stepText = '';
+      let streamErrText: string | null = null;
+      let toolResp: LLMResponse | null = null;
+
+      for await (const chunk of this.providerManager.streamWithFallback(req)) {
+        // ★ 8-15 流循环内 signal 检查：打断后立即停止回调（不消费剩余 chunk）
+        if (signal?.aborted) {
+          logger.info(`[AgentRunner] aborted during stream (${sessionId.slice(-16)})`);
+          return { chain: new MessageChain(), tokenUsage: { input: totalInput, output: totalOutput, total: totalInput + totalOutput }, images: toolImages, aborted: true };
+        }
+        if (chunk.role === 'err') {
+          // 打断：fetch 层 abort 的 err → aborted 标记（不把 'Request aborted' 当回复）
+          if (signal?.aborted) {
+            logger.info(`[AgentRunner] in-flight stream aborted (${sessionId.slice(-16)})`);
+            return { chain: new MessageChain(), tokenUsage: { input: totalInput, output: totalOutput, total: totalInput + totalOutput }, images: toolImages, aborted: true };
+          }
+          // 中途失败：已流文本保留，err 文本作为终止标记
+          streamErrText = chunk.completionText;
+          break;
+        }
+        if (chunk.isChunk) {
+          if (chunk.usage) {
+            totalInput += chunk.usage.input;
+            totalOutput += chunk.usage.output;
+          }
+          if (chunk.reasoningContent) {
+            onChunk?.({ kind: 'reasoning', text: chunk.reasoningContent });
+          }
+          if (chunk.completionText) {
+            stepText += chunk.completionText;
+            onChunk?.({ kind: 'text', text: chunk.completionText });
+          }
+        } else if (chunk.toolsCallName && chunk.toolsCallName.length > 0) {
+          // 工具调用块（流式响应 [DONE] 后一次性）→ 存下，跳出流循环走工具执行
+          toolResp = chunk;
+          break;
+        }
+      }
+
+      if (signal?.aborted) {
+        // 终检前置：流循环期间被打断
+        logger.info(`[AgentRunner] aborted after stream (${sessionId.slice(-16)})`);
+        return { chain: new MessageChain(), tokenUsage: { input: totalInput, output: totalOutput, total: totalInput + totalOutput }, images: toolImages, aborted: true };
+      }
+
+      if (streamErrText !== null) {
+        // provider 全部失败（首 chunk 前 err）或中途失败：已流文本保留，err 文本标记
+        if (!stepText) finalText = streamErrText;
+        else finalText = stepText;
+        break;
+      }
+
+      if (toolResp) {
+        // 工具执行（与 run() 相同）
+        const toolNames: string[] = toolResp.toolsCallName!;
+        const toolArgsList = toolResp.toolsCallArgs ?? [];
+        const toolCallIds = toolResp.toolsCallIds ?? [];
+
+        ctx.addMessage({
+          role: 'assistant',
+          content: stepText || '',
+          toolCalls: toolNames.map((name: string, i: number) => ({
+            id: toolCallIds[i] ?? `call_${i}`,
+            type: 'function' as const,
+            function: {
+              name,
+              arguments: JSON.stringify(toolArgsList[i] ?? {}),
+            },
+          })),
+        });
+
+        for (let i = 0; i < toolNames.length; i++) {
+          const name = toolNames[i];
+          const args = (toolArgsList[i] ?? {}) as Record<string, unknown>;
+          const callId = toolCallIds[i] ?? `call_${i}`;
+
+          await this.hooks.onToolStart?.(null, name, args);
+
+          let result: string;
+          try {
+            const toolResult = await this.toolRegistry.execute(name, args, sessionId);
+            result = typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult);
+            if (result.startsWith('IMG:')) {
+              toolImages.push(result.slice(4));
+            }
+          } catch (err: any) {
+            result = `Error: ${err.message}`;
+          }
+
+          await this.hooks.onToolEnd?.(null, name, args, result);
+
+          ctx.addMessage({ role: 'tool', content: result, toolCallId: callId });
+        }
+        continue; // 工具执行后继续下一轮（流式）
+      }
+
+      // 纯文本：完成
+      finalText = stepText;
+      break;
+    }
+
+    // ★ 8-10 竞态终检（与 run() 一致）：流式完成后返回前被打断 → 丢弃
+    if (signal?.aborted) {
+      logger.info(`[AgentRunner] aborted after final response (${sessionId.slice(-16)})`);
+      return {
+        chain: new MessageChain(),
+        tokenUsage: { input: totalInput, output: totalOutput, total: totalInput + totalOutput },
+        images: toolImages,
+        aborted: true,
+      };
+    }
+
+    if (stepCount >= this.maxSteps) {
+      finalText = finalText || '(达到最大步数限制)';
+    }
+
+    const chain = new MessageChain().message(finalText);
+    await this.hooks.onAgentDone?.(null, {
+      role: 'assistant',
+      completionText: finalText,
+    });
+
+    return {
+      chain,
+      tokenUsage: {
+        input: totalInput,
+        output: totalOutput,
+        total: totalInput + totalOutput,
+      },
+      images: toolImages,
+    };
+  }
 }

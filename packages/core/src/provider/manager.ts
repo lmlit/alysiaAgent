@@ -58,4 +58,36 @@ export class ProviderManager {
 
     return { role: 'err', completionText: 'All providers failed' };
   }
+
+  /** ★ 8-15 流式调用 + fallback（llm-streaming-pipeline）：
+   *  "首 chunk 偷看"模式——首个 chunk 为 err（fetch/headers 阶段失败）才切换
+   *  fallback；已开始出 chunk 后失败 → 不切换（重试会丢前半回复 = 体验断裂），
+   *  err chunk 透出后终止。signal.aborted 时不切 fallback（同 textChatWithFallback 检查点）。 */
+  async *streamWithFallback(req: ProviderRequest, fallbackIds: string[] = []): AsyncGenerator<LLMResponse> {
+    const primary = this.getDefault();
+    const candidates = [primary, ...fallbackIds.map(id => this.getById(id)).filter(Boolean)];
+
+    for (let i = 0; i < candidates.length; i++) {
+      const provider = candidates[i]!;
+      if (req.signal?.aborted) {
+        yield { role: 'err', completionText: 'Request aborted' };
+        return;
+      }
+      // 偷看首个 chunk：决定是否切换
+      const gen = provider.textChatStream(req);
+      const first = await gen.next();
+      if (first.done) continue; // 空流 → 试下一个
+      if (first.value.role === 'err') {
+        if (req.signal?.aborted) { yield first.value; return; }
+        logger.warn(`[Provider] ${provider.config.id} stream failed before first chunk, trying next...`);
+        continue;
+      }
+      if (i > 0) logger.info(`[Provider] stream fallback success via ${provider.config.id}`);
+      yield first.value;
+      for await (const chunk of gen) yield chunk;
+      return;
+    }
+
+    yield { role: 'err', completionText: 'All providers failed' };
+  }
 }

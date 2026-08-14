@@ -549,6 +549,41 @@ fetch 的 DNS/连接建立阶段（libuv getaddrinfo 不可取消）——网络
 挂起 fetch 的最终 rejection 用 `.catch(() => {})` 吞掉防 unhandledRejection；
 外部打断仍走 AbortController（请求已发出后 abort 有效）。
 
+### 6.1.2 流式输出契约（2026-08-15，change: llm-streaming-pipeline）
+
+**能力分层**：OpenAIProvider.textChatStream 与 textChat 对等（此前已实现 SSE 解析 +
+chunk yield + tool_calls 累积，但零调用者）：
+
+- sampling 槽位注入（同 textChat：undefined 字段不传）
+- 60s 超时 race（Promise.race，fetch 阶段 + 流读取阶段共用 deadline；超时 → err
+  chunk + 终止；挂起 fetch 的 rejection 用 .catch(() => {}) 吞掉）
+- 外部 signal → AbortController 透传（abort 后流停止，日志锚点 `aborted by signal`）
+- `reasoning_content` 透传（DeepSeek 思考过程独立字段，调用方决定展示）
+- usage 透传（流式末块带 usage，chunk 块顺序在文本之后，runner 累积）
+- 不与 response_format=json 组合（json_object 仅非流式结构化输出用）
+- 文本块 yield：`{ role:'assistant', completionText, isChunk:true }`
+- 工具调用在流式响应里照旧累积后一次性 yield（非 chunk，流式不改变工具循环语义）
+
+**ProviderManager.streamWithFallback(req, fallbackIds?)**：流式 fallback 路由——
+
+- "首 chunk 偷看"模式：首个 chunk 为 err（fetch/headers 阶段失败）才切换 fallback
+  provider；已开始出 chunk 后失败 → 不切换（重试会丢前半回复 = 体验断裂），
+  err chunk 透出后终止
+- signal.aborted 时不切 fallback（与 textChatWithFallback 同检查点）
+
+**AgentRunner.runStream(prompt, systemPrompt, imageUrls, sessionId, sampling, signal, onChunk)**：
+流式出口——
+
+- 与 run() 同构（截断/工具循环/打断契约/终检全部对齐），仅文本生成阶段走
+  streamWithFallback
+- 文本 chunk 回调 `onChunk({kind:'text', text})`；reasoning 回调 `onChunk({kind:'reasoning', text})`
+- 工具调用阶段无文本流（工具循环保持完整执行，与 §6.1 Tool-Loop 相同）
+- 打断语义与 §6.1.1 一致：流循环内 signal 检查（立即停止回调）+ err 分支 + 终检；
+  aborted 结果永不发送
+- 中途失败（已流部分文本后 err）：已流文本保留为最终回复（体验连续性），
+  首 chunk 前失败：err 文本作为最终回复
+- **主路径不变**：QQ 通道继续 run() + textChatWithFallback 非流式，行为零影响
+
 ### 6.2 内置工具
 
 | 工具 | 描述 | 实现 |

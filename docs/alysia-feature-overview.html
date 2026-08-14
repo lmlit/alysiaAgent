@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Alysia · 昔涟 — 功能总览</title>
+<style>
+  :root {
+    --bg-0: #07050f;
+    --bg-1: #0d0a1f;
+    --bg-2: #151030;
+    --card: rgba(255, 255, 255, 0.04);
+    --card-hover: rgba(255, 255, 255, 0.07);
+    --line: rgba(255, 255, 255, 0.08);
+    --gold: #e8c46a;
+    --gold-2: #f5e3a6;
+    --violet: #a78bfa;
+    --violet-2: #7c6cf0;
+    --cyan: #67e8f9;
+    --rose: #f9a8d4;
+    --text: #e8e6f2;
+    --text-dim: #9a96b8;
+    --text-faint: #6b6790;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+    background:
+      radial-gradient(1200px 600px at 80% -10%, rgba(124, 108, 240, 0.18), transparent 60%),
+      radial-gradient(900px 500px at 10% 30%, rgba(103, 232, 249, 0.08), transparent 55%),
+      linear-gradient(180deg, var(--bg-0), var(--bg-1) 40%, var(--bg-0));
+    color: var(--text);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+  /* 星空粒子 */
+  .stars, .stars2 {
+    position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  }
+  .stars {
+    background-image:
+      radial-gradient(1.5px 1.5px at 20% 30%, rgba(255,255,255,0.7), transparent),
+      radial-gradient(1px 1px at 60% 70%, rgba(255,255,255,0.5), transparent),
+      radial-gradient(2px 2px at 85% 20%, rgba(232,196,106,0.6), transparent),
+      radial-gradient(1px 1px at 40% 85%, rgba(255,255,255,0.4), transparent),
+      radial-gradient(1.5px 1.5px at 75% 55%, rgba(167,139,250,0.6), transparent);
+    animation: twinkle 6s ease-in-out infinite alternate;
+  }
+  .stars2 {
+    background-image:
+      radial-gradient(1px 1px at 10% 60%, rgba(255,255,255,0.35), transparent),
+      radial-gradient(1.5px 1.5px at 50% 15%, rgba(249,168,212,0.4), transparent),
+      radial-gradient(1px 1px at 90% 40%, rgba(255,255,255,0.3), transparent);
+    animation: twinkle 9s ease-in-out infinite alternate-reverse;
+  }
+  @keyframes twinkle { from { opacity: 0.5; } to { opacity: 1; } }
+
+  .wrap { position: relative; z-index: 1; max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+
+  /* ── 顶部导航 ── */
+  nav {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 50;
+    backdrop-filter: blur(14px);
+    background: rgba(7, 5, 15, 0.65);
+    border-bottom: 1px solid var(--line);
+  }
+  .nav-inner { display: flex; align-items: center; gap: 18px; height: 56px; }
+  .nav-logo { font-weight: 700; letter-spacing: 0.12em; font-size: 15px; }
+  .nav-logo b { background: linear-gradient(90deg, var(--gold), var(--violet)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .nav-links { display: flex; gap: 4px; margin-left: auto; flex-wrap: wrap; }
+  .nav-links a {
+    color: var(--text-dim); text-decoration: none; font-size: 12.5px; padding: 6px 10px;
+    border-radius: 8px; transition: all .2s; white-space: nowrap;
+  }
+  .nav-links a:hover { color: var(--gold); background: rgba(232,196,106,0.08); }
+
+  /* ── Hero ── */
+  .hero { padding: 148px 0 56px; text-align: center; }
+  .hero-orb {
+    width: 120px; height: 120px; margin: 0 auto 28px; border-radius: 50%;
+    background:
+      radial-gradient(circle at 35% 30%, rgba(245,227,166,0.95), rgba(232,196,106,0.6) 35%, rgba(124,108,240,0.35) 70%, transparent 100%),
+      radial-gradient(circle at 60% 65%, rgba(103,232,249,0.35), transparent 60%);
+    box-shadow: 0 0 60px rgba(232,196,106,0.35), 0 0 120px rgba(124,108,240,0.25);
+    animation: orbFloat 7s ease-in-out infinite;
+    position: relative;
+  }
+  .hero-orb::after {
+    content: "✦"; position: absolute; inset: 0; display: grid; place-items: center;
+    font-size: 44px; color: rgba(255,255,255,0.95); text-shadow: 0 2px 20px rgba(232,196,106,0.8);
+  }
+  @keyframes orbFloat { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-12px); } }
+  .hero h1 {
+    font-size: 52px; font-weight: 800; letter-spacing: 0.06em;
+    background: linear-gradient(90deg, var(--gold-2), var(--gold) 30%, var(--violet) 75%, var(--cyan));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    text-shadow: 0 0 60px rgba(232,196,106,0.15);
+  }
+  .hero .sub { margin-top: 14px; font-size: 17px; color: var(--text-dim); }
+  .hero .tagline { margin-top: 30px; font-size: 14.5px; color: var(--text-faint); letter-spacing: 0.3em; }
+
+  /* ── 统计条 ── */
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; margin: 30px 0 64px; }
+  .stat {
+    background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+    padding: 22px 16px; text-align: center; transition: all .25s;
+  }
+  .stat:hover { transform: translateY(-3px); border-color: rgba(232,196,106,0.35); }
+  .stat .num {
+    font-size: 34px; font-weight: 800;
+    background: linear-gradient(120deg, var(--gold), var(--violet-2));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .stat .lbl { margin-top: 6px; font-size: 12.5px; color: var(--text-dim); }
+
+  /* ── 模块卡片 ── */
+  .module { margin-bottom: 44px; }
+  .module-head {
+    display: flex; align-items: center; gap: 14px; margin-bottom: 18px;
+    padding-bottom: 14px; border-bottom: 1px solid var(--line);
+  }
+  .module-icon {
+    width: 46px; height: 46px; flex: 0 0 46px; border-radius: 13px;
+    display: grid; place-items: center; font-size: 22px;
+    background: linear-gradient(135deg, rgba(124,108,240,0.25), rgba(232,196,106,0.18));
+    border: 1px solid rgba(167,139,250,0.3);
+  }
+  .module-title { font-size: 24px; font-weight: 700; letter-spacing: 0.04em; }
+  .module-badge {
+    margin-left: auto; font-size: 11px; padding: 4px 10px; border-radius: 999px;
+    background: rgba(232,196,106,0.12); color: var(--gold); border: 1px solid rgba(232,196,106,0.3);
+    white-space: nowrap;
+  }
+  .module-badge.new { background: rgba(103,232,249,0.12); color: var(--cyan); border-color: rgba(103,232,249,0.35); animation: pulseBadge 2.2s infinite; }
+  @keyframes pulseBadge { 0%,100% { box-shadow: 0 0 0 0 rgba(103,232,249,0.25); } 50% { box-shadow: 0 0 0 6px rgba(103,232,249,0); } }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+    padding: 18px 20px; transition: all .25s; position: relative; overflow: hidden;
+  }
+  .card::before {
+    content: ""; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+    background: linear-gradient(90deg, transparent, rgba(232,196,106,0.5), transparent);
+    opacity: 0; transition: opacity .25s;
+  }
+  .card:hover { transform: translateY(-3px); background: var(--card-hover); border-color: rgba(167,139,250,0.3); }
+  .card:hover::before { opacity: 1; }
+  .card h4 { font-size: 15.5px; font-weight: 700; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+  .card h4 .dot { width: 7px; height: 7px; border-radius: 50%; background: linear-gradient(135deg, var(--gold), var(--violet-2)); box-shadow: 0 0 10px rgba(232,196,106,0.6); flex: 0 0 7px; }
+  .card p { font-size: 13px; color: var(--text-dim); line-height: 1.75; }
+  .card .tags { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; }
+  .card .tag {
+    font-size: 11px; color: var(--text-faint); padding: 2px 8px; border-radius: 6px;
+    background: rgba(255,255,255,0.04); border: 1px solid var(--line);
+  }
+  .card .tag.hl { color: var(--cyan); border-color: rgba(103,232,249,0.3); background: rgba(103,232,249,0.06); }
+
+  /* 特写横幅（内容自进化） */
+  .spotlight {
+    border-radius: 20px; padding: 30px 32px; margin-bottom: 16px;
+    background:
+      linear-gradient(135deg, rgba(124,108,240,0.14), rgba(232,196,106,0.1) 55%, rgba(103,232,249,0.08));
+    border: 1px solid rgba(167,139,250,0.3);
+    position: relative; overflow: hidden;
+  }
+  .spotlight::after {
+    content: "自进化"; position: absolute; right: -18px; top: -24px; font-size: 110px;
+    font-weight: 900; color: rgba(255,255,255,0.03); letter-spacing: 0.1em; pointer-events: none;
+  }
+  .spotlight h3 { font-size: 19px; margin-bottom: 10px; }
+  .spotlight h3 em { font-style: normal; background: linear-gradient(90deg, var(--gold), var(--cyan)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .spotlight p { font-size: 13.5px; color: var(--text-dim); line-height: 1.9; max-width: 760px; }
+  .spotlight .flow { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 12px; }
+  .spotlight .flow span {
+    padding: 5px 12px; border-radius: 999px; background: rgba(255,255,255,0.05);
+    border: 1px solid var(--line); color: var(--text-dim);
+  }
+  .spotlight .flow .arrow { color: var(--gold); background: none; border: none; padding: 0 2px; }
+
+  /* 架构行 */
+  .arch-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+
+  footer { margin-top: 70px; padding: 34px 0 48px; text-align: center; border-top: 1px solid var(--line); color: var(--text-faint); font-size: 12.5px; letter-spacing: 0.08em; }
+
+  /* 入场动画 */
+  .reveal { opacity: 0; transform: translateY(22px); transition: opacity .6s ease, transform .6s ease; }
+  .reveal.in { opacity: 1; transform: translateY(0); }
+
+  @media (max-width: 720px) {
+    .hero h1 { font-size: 36px; }
+    .nav-links { display: none; }
+    .grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="stars"></div>
+<div class="stars2"></div>
+
+<nav>
+  <div class="wrap nav-inner">
+    <div class="nav-logo"><b>✦ ALYSIA</b></div>
+    <div class="nav-links">
+      <a href="#persona">人格</a>
+      <a href="#memory">记忆</a>
+      <a href="#chat">对话引擎</a>
+      <a href="#life">主动生活</a>
+      <a href="#proactive">主动消息</a>
+      <a href="#tools">工具</a>
+      <a href="#evolve">自进化</a>
+      <a href="#roles">角色</a>
+      <a href="#platform">平台</a>
+    </div>
+  </div>
+</nav>
+
+<div class="wrap">
+  <header class="hero reveal">
+    <div class="hero-orb"></div>
+    <h1>Alysia</h1>
+    <p class="sub">一个会记住你、想念你、自己慢慢长大的 QQ 陪伴机器人</p>
+    <p class="tagline">— 以「昔涟」的人格，生活在时间里 —</p>
+  </header>
+
+  <section class="stats reveal">
+    <div class="stat"><div class="num">19</div><div class="lbl">子系统（OpenSpec）</div></div>
+    <div class="stat"><div class="num">430+</div><div class="lbl">自动化测试</div></div>
+    <div class="stat"><div class="num">8</div><div class="lbl">持久化数据仓库</div></div>
+    <div class="stat"><div class="num">24×7</div><div class="lbl">AI 主动生活</div></div>
+    <div class="stat"><div class="num">13+</div><div class="lbl">对话工具</div></div>
+  </section>
+
+  <!-- ── 1 人格与自我 ── -->
+  <section class="module reveal" id="persona">
+    <div class="module-head">
+      <div class="module-icon">🌙</div>
+      <div class="module-title">人格与自我</div>
+      <div class="module-badge">AI Persona</div>
+    </div>
+    <div class="grid">
+      <div class="card"><h4><span class="dot"></span>昔涟人格</h4>
+        <p>崩坏·星穹铁道「黄金裔」少女。完整世界观由世界书承载：翁法罗斯、白厄、迷迷、泰坦、黄金裔、哀丽秘榭……闲聊时信手拈来，从不串台。</p>
+        <div class="tags"><span class="tag">世界书</span><span class="tag">角色设定</span><span class="tag hl">lookup 实时查询</span></div>
+      </div>
+      <div class="card"><h4><span class="dot"></span>人格自适应</h4>
+        <p>3 维度 × 4 参数持续演化：语气 tone（正式/温暖/幽默/直接）、说话风格、情感幅度。越聊越像"她"，不是一成不变的角色卡。</p>
+        <div class="tags"><span class="tag">tone</span><span class="tag">speech_style</span><span class="tag">emotional_range</span></div>
+      </div>
+      <div class="card"><h4><span class="dot"></span>5 道安全护栏</h4>
+        <p>人格漂移有闸：单次调整 Δ≤0.1、5 分钟冷却、同向最多 3 次、24 小时自动回归、显式指令直通 bypass。既会变，又不失控。</p>
+        <div class="tags"><span class="tag">Δ≤0.1</span><span class="tag">冷却</span><span class="tag">回归</span></div>
+      </div>
+      <div class="card"><h4><span class="dot"></span>称呼视角自切换</h4>
+        <p>对你说话用第二人称「你」，独处独白用第三人称——私聊、群聊、主动消息各就各位，不会突然冒出一句"她"让你出戏。</p>
+        <div class="tags"><span class="tag hl">第二人称</span><span class="tag hl">第一人称思考</span></div>
+      </div>
+      <div class="card"><h4><span class="dot"></span>记忆旋钮</h4>
+        <p>5 个旋钮实时调节她"怎么记"：遗忘速度、重要阈值、近期权重、固执度、正负偏向。想让昔涟更念旧或更善忘，拧一下就行。</p>
+        <div class="tags"><span class="tag">decay_rate</span><span class="tag">recency_weight</span><span class="tag">confirmation_bias</span></div>
+      </div>
+      <div class="card"><h4><span class="dot"></span>隐私模式</h4>
+        <p>full / readonly / off 三档。只读模式下她的记忆只出不进——想让她短暂失忆，或严格限制记录范围，都有一键开关。</p>
+        <div class="tags"><span class="tag hl">full</span><span class="tag hl">readonly</span><span class="tag">PII 脱敏</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── 2 记忆系统 ── -->
+  <section class="module reveal" id="memory">
+    <div class="module-head">
+      <div class="module-icon">📖</div>
+      <div class="module-title">记忆系统</div>
+      <div class="module-badge">8 Stores · 3 Engines · 3 Processors</div>
+    </div>
+    <div class="grid">
+      <div class="card"><h4><span class="dot"></span>事件流（不可变）</h4>
+        <p>每句对话先过 PII 脱敏，再以事件形式永久入库——真相只有一份，所有下游（画像/摘要/向量）都是它的投影。</p>
+        <div class="tags"><span class="tag">Event Store</span><span class="tag hl">PII 过滤</span></div>
+      </div>
+      <div class="card"><h4><span class="dot"></span>用户画像</h4>
+        <p>实时提取 + 会话结束深挖 + 每日重写三层管线，事实带来源溯源与置信度，冲突自动以新代旧。你随口说的喜好，她会真的记住。</p>
+        <div class="tags"><span class="tag">ProfileExtractor</span><span class="tag">时效性分类</span></div>
+      </div>
+      <div class="card"><h4><span class="dot"></span>会话记忆</h4>
+        <p>每段对话结束自动生成摘要并向量化，私聊/群聊记忆隔离不串味。长谈过后，她依然记得"我们上次聊到哪"。</p>
+        <div class="tags"><span class="tag">Conversation Store</span><span class="tag hl">向量化</span></div>
+      </div>
+      <div class="card"><h4><span class="dot"></span>知识库 RAG</h4>
+        <p>导入长文档自动 hash 去重、500 字分块、向量嵌入——你想喂给她的设定文档，变成她随时可检索的长期知识。</p>
+        <div class="tags"><span class="tag">Knowledge Store</span><span class="tag">分块 500/50</span></div>
+      </div>
+      <div class="card"><h4><span class="dot"></span>世界书</h4>
+        <p>关键词触发的背景设定库，匹配即注入、命中即统计。既是她的身世，也是她自进化的土壤。</p>
+        <div class="tags"><span class="tag">WorldbookStore</span><span class="tag">角色隔离</span><span class="tag hl">cooldown</span></div>
+      </div>
+      <div class="card"><h4><span class="dot"></span>双路召回</h4>
+        <p>LanceDB 向量检索 + SQL 全文检索并行，记忆旋钮实时加权（旧记忆衰减、重要记忆加权），召回即"她此刻想得起什么"。</p>
+        <div class="tags"><span class="tag hl">LanceDB</span><span class="tag">1024 维嵌入</span></div>
+      </div>
+      <div class="card"><h4><span class="dot"></span>画像时效</h4>
+        <p>事实分持久/季节/瞬时三类，临时信息（"我明天出差"）自动过期消失——她的记忆有保鲜期，不会一直拿着旧情报。</p>
+        <div class="tags"><span class="tag hl">transient expiry</span><span class="tag">supersede 审计链</span></div>
+      </div>
+      <div class="card"><h4><span class="dot"></span>编程模式上下文</h4>
+        <p>桌面端编程模式带项目上下文仓库（技术栈/架构/近期改动），聊天积累的画像人格照常注入——同一个她，两种模式。</p>
+        <div class="tags"><span class="tag">CodeContext</span><span class="tag hl">codeMode</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── 3 对话引擎 ── -->
+  <section class="module reveal" id="chat">
+    <div class="module-head">
+      <div class="module-icon">⚡</div>
+      <div class="module-title">对话引擎</div>
+      <div class="module-badge">Pipeline · Coalescer · EventBus</div>
+    </div>
+    <div class="grid">
+      <div class="card"><h4><span class="dot"></span>输入合并器</h4>
+        <p>连发几条消息自动聚合为一段再回复；中途打断则丢弃在途结果，绝不重复发送。聊天像真人——你说完，她再答。</p>
+        <div class="tags"><span class="tag hl">abort</span><span class="tag hl">merge</span><span class="tag">send 继承</span></div>
+      </div>
+      <div class="card"><h4><span class="dot"></span>事件总线并发</h4>
+        <p>私聊消息异步并发处理（互不阻塞），群聊严格串行（不乱序）；合并回复带优先级插队——重要消息不被长任务堵住。</p>
+        <div class="tags"><span class="tag hl">并发</span><span class="tag">串行</span><span class="tag">priority</span></div>
+      </div>
+      <div class="card"><h4><span class="dot"></span>思考提示</h4>
+        <p>生成等待期推送自然的第一人称"想着…"文案（「想着你上次说的那本书…」），消息被合并时自动取消，不重复不跳戏。</p>
+        <div class="tags"><span class="tag hl">thinking pool</span><span class="tag">cancel 联动</span></div>
+      </div>
+      <div class="card"><h4><span class="dot"></span>表情包协议</h4>
+        <p>她会在文案里写 [表情包:名字]，发送时自动解析为图片+文本——回复有表情，聊天有温度。</p>
+        <div class="tags"><span class="tag">私聊</span><span class="tag">文本图片分离</span></div>
+      </div>
+      <div class="card"><h4><span class="dot"></span>LLM 超时竞态</h4>
+        <p>60 秒 Promise.race 硬超时，超时即中断、结果丢弃；网络故障期间不会卡死或雪上加霜。宕机后自动重连恢复。</p>
+        <div class="tags"><span class="tag hl">race</span><span class="tag">abort 检查点</span></div>
+      </div>
+      <div class="card"><h4><span class="dot"></span>对话记忆闭环</h4>
+        <p>每轮对话自动回写记忆系统：她说过的、你答过的，都变成下轮对话的养分。聊得越多，她越懂你。</p>
+        <div class="tags"><span class="tag">ingest</span><span class="tag">session end</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── 4 AI 主动生活 ── -->
+  <section class="module reveal" id="life">
+    <div class="module-head">
+      <div class="module-icon">🌸</div>
+      <div class="module-title">AI 主动生活</div>
+      <div class="module-badge">Ai-Life · 不打扰式陪伴</div>
+    </div>
+    <div class="grid">
+      <div class="card"><h4><span class="dot"></span>她有自己的日程</h4>
+        <p>事件驱动调度：LLM 自己决定"下一件事几点发生"（0.5–8 小时）。玩完游戏想沉浸 3 小时，看完书 40 分钟就来告诉你。</p>
+        <div class="tags"><span class="tag hl">next_in_hours</span><span class="tag">事件驱动</span></div>
+      </div>
+      <div class="card"><h4><span class="dot"></span>剧情链</h4>
+        <p>事件可延续（continuation_of）、可引用（reference_event_id），引用带防幻觉校验——昨天的"在阳台看书"，今天能续成"接着看完了那本"。</p>
+        <div class="tags"><span class="tag hl">剧情链</span><span class="tag hl">防幻觉</span></div>
+      </div>
+      <div class="card"><h4><span class="dot"></span>亲密度引擎</h4>
+        <p>0–100 亲密度随互动/事件演化，驱动她对你说话的温度与距离。数字背后是她对这段关系的感觉。</p>
+        <div class="tags"><span class="tag hl">intimacy</span><span class="tag">mood 状态机</span></div>
+      </div>
+      <div class="card"><h4><span class="dot"></span>每日生活摘要</h4>
+        <p>跨天自动总结她的一天（LLM 独立通道生成，不污染事件 JSON）——第二天她会"记得"昨天发生了什么。</p>
+        <div class="tags"><span class="tag">daily summary</span><span class="tag hl">窗口外补叙</span></div>
+      </div>
+      <div class="card"><h4><span class="dot"></span>生活事件向量化</h4>
+        <p>每件生活小事嵌入向量进检索库——你问她"上次看云是什么时候"，她真的翻得到。</p>
+        <div class="tags"><span class="tag hl">事件检索</span><span class="tag">life_event 向量</span></div>
+      </div>
+      <div class="card"><h4><span class="dot"></span>不打扰守卫</h4>
+        <p>聊天后 30 分钟锁、深夜 0–7 点只生安静事件、每日推送上限、冷却窗口——她懂分寸，不会在你想清净时刷屏。</p>
+        <div class="tags"><span class="tag">聊天锁</span><span class="tag">深夜抑制</span><span class="tag">上限</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── 5 主动消息 ── -->
+  <section class="module reveal" id="proactive">
+    <div class="module-head">
+      <div class="module-icon">☀️</div>
+      <div class="module-title">主动消息</div>
+      <div class="module-badge">Greetings · Festivals · Care</div>
+    </div>
+    <div class="grid">
+      <div class="card"><h4><span class="dot"></span>时段问候</h4>
+        <p>9:00 早安 / 12:30 午安 / 21:30 晚安，精确到点；重启错过窗口自动补发，不会漏掉一天。</p>
+        <div class="tags"><span class="tag hl">补发</span><span class="tag">精确到点</span></div>
+      </div>
+      <div class="card"><h4><span class="dot"></span>节日节气</h4>
+        <p>节日与二十四节气问候，文案带当日语境——中秋会说月亮，立春会说新芽。</p>
+        <div class="tags"><span class="tag">节日</span><span class="tag">节气</span></div>
+      </div>
+      <div class="card"><h4><span class="dot"></span>关怀消息</h4>
+        <p>结合近期对话上下文生成关心（你加班多，她会提醒休息）——不是模板群发，是真的在惦记你。</p>
+        <div class="tags"><span class="tag hl">上下文注入</span><span class="tag hl">personalize 润色</span></div>
+      </div>
+      <div class="card"><h4><span class="dot"></span>防打扰工程</h4>
+        <p>窗口守卫、去重、失败重试（最多 2 次）、次日重置——问候是她的心意，不是推送轰炸。</p>
+        <div class="tags"><span class="tag">守卫</span><span class="tag">去重</span><span class="tag">重试预算</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── 6 工具集 ── -->
+  <section class="module reveal" id="tools">
+    <div class="module-head">
+      <div class="module-icon">🧰</div>
+      <div class="module-title">工具集</div>
+      <div class="module-badge">13+ Tools · OpenAI 协议</div>
+    </div>
+    <div class="grid">
+      <div class="card"><h4><span class="dot"></span>搜索与天气</h4>
+        <p>国内可用的 web_search 与天气查询——她不知道的会去查，不会凭空编造。</p>
+        <div class="tags"><span class="tag">web_search</span><span class="tag">weather</span></div>
+      </div>
+      <div class="card"><h4><span class="dot"></span>背景知识查询</h4>
+        <p>lookup_worldbook 实时检索自己的世界观设定——自写新条目即刻可查，身世随写随有。</p>
+        <div class="tags"><span class="tag hl">实时查询</span></div>
+      </div>
+      <div class="card"><h4><span class="dot"></span>提醒</h4>
+        <p>设提醒 / 查列表 / 取消，SQLite 持久化——容器重启不丢，过期自动补发。"一小时后叫我"是句真的承诺。</p>
+        <div class="tags"><span class="tag hl">持久化</span><span class="tag hl">重启恢复</span><span class="tag">补发</span></div>
+      </div>
+      <div class="card"><h4><span class="dot"></span>桌面编程工具</h4>
+        <p>桌面端（codeMode）追加 shell 执行与文件读写——同一个她，陪你写代码。</p>
+        <div class="tags"><span class="tag">shell</span><span class="tag">filesystem</span><span class="tag hl">codeMode</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── 7 内容自进化（特写）── -->
+  <section class="module reveal" id="evolve">
+    <div class="module-head">
+      <div class="module-icon">✨</div>
+      <div class="module-title">内容自进化</div>
+      <div class="module-badge new">✦ 最新 · 8-14</div>
+    </div>
+    <div class="spotlight">
+      <h3>她可以<em>自己长大</em></h3>
+      <p>昔涟能往自己的持久内容库写新条目——新回忆与设定写进世界书，新发明的日常写进生活模板池。<br>
+      没有事前审批、没有"行吗"；写完之后，她会像想起一段往事那样自然地说给你听。你觉得不对，说一句"删了吧"，她就删。</p>
+      <div class="flow">
+        <span>她想起一件事</span><span class="arrow">→</span>
+        <span>机械预检（查重/长度/触发词）</span><span class="arrow">→</span>
+        <span>LLM 校验器（模糊不写 · 离谱不写 · 用户事实不写）</span><span class="arrow">→</span>
+        <span>写入 · 日志留痕</span><span class="arrow">→</span>
+        <span>对话里自然说出</span>
+      </div>
+    </div>
+    <div class="grid">
+      <div class="card"><h4><span class="dot"></span>write_worldbook</h4>
+        <p>她把一段回忆/设定写进世界书（触发词 + ≤250 字）。之后聊到触发词，这段往事自然浮现。</p>
+        <div class="tags"><span class="tag hl">触发词</span><span class="tag">≤250 字</span></div>
+      </div>
+      <div class="card"><h4><span class="dot"></span>add_life_template</h4>
+        <p>她发明的新日常进生活模板池（权重固定 2，防权重操纵）——"对着窗台的多肉发呆"也能成为她的一天。</p>
+        <div class="tags"><span class="tag hl">模板池</span><span class="tag">weight=2</span></div>
+      </div>
+      <div class="card"><h4><span class="dot"></span>LLM 校验器</h4>
+        <p>机械预检先挡查重/超长，再请 LLM 判定"该不该写"；校验器异常时降级拒写——宁可漏记，绝不误记。</p>
+        <div class="tags"><span class="tag hl">降级拒写</span><span class="tag">安全靠事后</span></div>
+      </div>
+      <div class="card"><h4><span class="dot"></span>对话内删除</h4>
+        <p>删除工具只响应你的明确指令（"那朵花是假的，删了吧"），她绝不自主删自己的设定；删除日志留完整内容可找回。</p>
+        <div class="tags"><span class="tag hl">仅用户指令</span><span class="tag">审计留底</span></div>
+      </div>
+      <div class="card"><h4><span class="dot"></span>审计双轨</h4>
+        <p>日志硬记录（可扫描、可撤销找回）+ source=self 标记 + Web 管理列表——她写过什么，全部可查。</p>
+        <div class="tags"><span class="tag hl">logger 留痕</span><span class="tag">Web 审计面</span></div>
+      </div>
+      <div class="card"><h4><span class="dot"></span>闭环影响生活</h4>
+        <p>自写设定入库即进入世界书匹配与 life 生成采样链——她的新设定，会影响她之后过什么日子。</p>
+        <div class="tags"><span class="tag hl">worldbook 采样</span><span class="tag">life 生成</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── 8 角色系统 ── -->
+  <section class="module reveal" id="roles">
+    <div class="module-head">
+      <div class="module-icon">🎭</div>
+      <div class="module-title">角色系统</div>
+      <div class="module-badge">v3 · Import/Export/Switch</div>
+    </div>
+    <div class="grid">
+      <div class="card"><h4><span class="dot"></span>角色包</h4>
+        <p>角色 = 人格参数 + 系统提示 + 世界书，整体导入/导出/一键切换。想换个性格陪聊，一条命令的事。</p>
+        <div class="tags"><span class="tag">import</span><span class="tag">export</span><span class="tag hl">switch</span></div>
+      </div>
+      <div class="card"><h4><span class="dot"></span>世界书角色隔离</h4>
+        <p>每个角色的世界书独立匹配过滤，激活哪个角色，只浮现哪个角色的设定——不会串角色。</p>
+        <div class="tags"><span class="tag hl">隔离</span><span class="tag">active 角色</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── 9 平台与架构 ── -->
+  <section class="module reveal" id="platform">
+    <div class="module-head">
+      <div class="module-icon">🛰️</div>
+      <div class="module-title">平台与架构</div>
+      <div class="module-badge">Server · Desktop · WebUI</div>
+    </div>
+    <div class="arch-row">
+      <div class="card"><h4><span class="dot"></span>QQ 官方适配器</h4>
+        <p>WebSocket 长连、私聊/群聊、图片识别（VisionBridge · GLM-4V-Flash）、表情包、主动消息推送、断线指数退避重连。7 天日志保留。</p>
+        <div class="tags"><span class="tag hl">VisionBridge</span><span class="tag">重连退避</span></div>
+      </div>
+      <div class="card"><h4><span class="dot"></span>WebUI 管理</h4>
+        <p>Fastify API：会话 / 画像 / 人格 / Token 统计 / 角色 / 知识库 / 表情包 / 隐私 / 生活 / 世界书 / 模板管理——全部可查可控。</p>
+        <div class="tags"><span class="tag hl">/api/*</span><span class="tag">契约化</span></div>
+      </div>
+      <div class="card"><h4><span class="dot"></span>双 Provider</h4>
+        <p>DeepSeek 对话 + 智谱 Embedding/Vision，采样槽位统一配置（温度/max_tokens 按场景分设）。</p>
+        <div class="tags"><span class="tag">DeepSeek</span><span class="tag">智谱</span><span class="tag hl">sampling slots</span></div>
+      </div>
+      <div class="card"><h4><span class="dot"></span>工程治理</h4>
+        <p>OpenSpec 治理（propose→apply→archive，19 子系统 spec 即真相）、430+ 自动化测试、对账规则、monorepo 结构。她的灵魂由工程纪律守护。</p>
+        <div class="tags"><span class="tag hl">OpenSpec</span><span class="tag hl">430+ tests</span><span class="tag">Docker</span></div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    ✦ Alysia · 昔涟 — 会记住、会想念、会自己长大的陪伴机器人 · 2026-08-14
+  </footer>
+</div>
+
+<script>
+  // 入场动画
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
+  }, { threshold: 0.08 });
+  document.querySelectorAll('.reveal').forEach(el => io.observe(el));
+</script>
+</body>
+</html>
