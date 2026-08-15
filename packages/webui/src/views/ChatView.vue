@@ -367,11 +367,11 @@ const chatSessions = computed(() => sessions.value);
 
 <style scoped>
 .chat-shell {
+  /* ★ 沉浸适配:absolute 填充 content(非沉浸受 content padding 约束,沉浸全满) */
+  position: absolute;
+  inset: 0;
   display: grid;
   grid-template-columns: 210px 1fr;
-  gap: 0;
-  height: calc(100vh - var(--aw-topbar-h) - 48px);
-  margin: -24px -28px;
 }
 .session-list {
   border-right: 1px solid var(--aw-border);
