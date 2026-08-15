@@ -1,4 +1,4 @@
-/* 基础样式:重置 + 全局 + 滚动条 + 动效 */
+/* 基础样式:重置 + 全局 + 滚动条 + 动效(design-taste 校准:无霓虹、扩散阴影、暖白文本) */
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 html, body, #app { height: 100%; }
@@ -13,21 +13,21 @@ body {
   transition: background var(--aw-dur) var(--aw-ease), color var(--aw-dur) var(--aw-ease);
 }
 
-/* 背景星空(深色主题下) */
+/* 极淡顶部暖光(非霓虹:低透明度大半径) */
 body::before {
   content: '';
   position: fixed; inset: 0; z-index: 0; pointer-events: none;
   background:
-    radial-gradient(1200px 600px at 80% -10%, rgba(124, 108, 240, 0.12), transparent 60%),
-    radial-gradient(900px 500px at 10% 30%, rgba(103, 232, 249, 0.06), transparent 55%);
+    radial-gradient(1100px 500px at 85% -12%, rgba(201, 160, 92, 0.05), transparent 60%),
+    radial-gradient(900px 420px at 8% 110%, rgba(201, 160, 92, 0.03), transparent 55%);
   transition: opacity var(--aw-dur);
 }
-[data-theme='dawn'] body::before { opacity: 0.4; }
 
-a { color: var(--aw-accent); text-decoration: none; }
+a { color: var(--aw-brand-2); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
 button { font-family: inherit; cursor: pointer; }
+button:active { transform: scale(0.98); } /* 触感反馈 */
 
 /* 滚动条 */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
@@ -35,12 +35,12 @@ button { font-family: inherit; cursor: pointer; }
 ::-webkit-scrollbar-track { background: transparent; }
 
 /* 文本选择 */
-::selection { background: rgba(232, 196, 106, 0.3); }
+::selection { background: rgba(201, 160, 92, 0.28); }
 
 /* 光标颜色跟随主题 */
 input, textarea { caret-color: var(--aw-gold); }
 
-/* 焦点环(craft floor:键盘可访问性) */
+/* 焦点环 */
 :focus-visible {
   outline: 2px solid var(--aw-gold);
   outline-offset: 2px;

@@ -2,7 +2,7 @@
 import { ref } from 'vue';
 import { rolesApi } from '../api/modules';
 import { Clapperboard, Download } from 'lucide-vue-next';
-import { useAsync, SectionCard, Table, Tag, EmptyState } from '../components/common';
+import { useAsync, SectionCard, LoadingBlock, Table, Tag, EmptyState } from '../components/common';
 import { useAppStore } from '../stores/app';
 
 const app = useAppStore();
@@ -39,7 +39,7 @@ async function doImport() {
   <div class="page">
     <SectionCard title="角色" :icon="Clapperboard" hint="角色包 = 人格参数 + 系统提示 + 世界书">
       <template #actions><button class="btn" @click="reload">刷新</button></template>
-      <div v-if="loading" class="hint">加载中…</div>
+      <LoadingBlock v-if="loading" />
       <EmptyState v-else-if="data && !data.roles?.length" text="还没有角色" />
       <Table
         v-else-if="data"

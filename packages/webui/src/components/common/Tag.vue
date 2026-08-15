@@ -15,7 +15,7 @@ withDefaults(defineProps<{ tone?: 'default' | 'gold' | 'cyan' | 'rose' }>(), { t
   color: var(--aw-text-faint);
   white-space: nowrap;
 }
-.gold { color: var(--aw-gold); border-color: rgba(232, 196, 106, 0.3); background: rgba(232, 196, 106, 0.08); }
-.cyan { color: var(--aw-cyan); border-color: rgba(103, 232, 249, 0.3); background: rgba(103, 232, 249, 0.06); }
-.rose { color: var(--aw-rose); border-color: rgba(249, 168, 212, 0.3); background: rgba(249, 168, 212, 0.06); }
+.gold { color: var(--aw-gold-2); border-color: var(--aw-border-gold); background: var(--aw-bg-active); }
+.cyan { color: var(--aw-text); border-color: var(--aw-border-strong); background: var(--aw-bg-hover); }
+.rose { color: var(--aw-danger); border-color: rgba(217, 116, 111, 0.35); background: rgba(217, 116, 111, 0.07); }
 </style>

@@ -1,42 +1,38 @@
-/* Alysia WebUI 设计 token — 星穹紫金主题体系
- * 所有组件只消费语义别名（--aw-*），不写字面颜色——主题切换 = 换一套别名覆盖。
- * 参考:dsh ui-theme 纪律 + feature-overview 星穹视觉 */
+/* Alysia WebUI 设计 token — 星穹金调(design-taste 校准版)
+ * 规则:单一强调色(金,降饱和)、炭灰中性基底(非纯黑/非 AI 紫)、
+ * 无霓虹外发光(用内边框+扩散阴影)、组件只消费 --aw-* 语义别名 */
 
 :root, [data-theme='stardust'] {
-  /* 静态色板 */
-  --aw-gold: #e8c46a;
-  --aw-gold-2: #f5e3a6;
-  --aw-violet: #a78bfa;
-  --aw-violet-2: #7c6cf0;
-  --aw-cyan: #67e8f9;
-  --aw-rose: #f9a8d4;
+  /* 静态色板(降饱和) */
+  --aw-gold: #c9a05c;
+  --aw-gold-2: #e8c78a;
+  --aw-gold-dim: rgba(201, 160, 92, 0.14);
 
   /* 语义别名 */
-  --aw-bg-base: #07050f;
-  --aw-bg-raised: #0d0a1f;
-  --aw-bg-card: rgba(255, 255, 255, 0.04);
-  --aw-bg-card-hover: rgba(255, 255, 255, 0.07);
-  --aw-bg-input: rgba(255, 255, 255, 0.05);
-  --aw-bg-hover: rgba(255, 255, 255, 0.06);
-  --aw-bg-active: rgba(232, 196, 106, 0.1);
-  --aw-border: rgba(255, 255, 255, 0.08);
-  --aw-border-strong: rgba(167, 139, 250, 0.3);
-  --aw-border-gold: rgba(232, 196, 106, 0.35);
+  --aw-bg-base: #0a0c10;
+  --aw-bg-raised: #101319;
+  --aw-bg-card: rgba(255, 255, 255, 0.028);
+  --aw-bg-card-hover: rgba(255, 255, 255, 0.045);
+  --aw-bg-input: rgba(255, 255, 255, 0.045);
+  --aw-bg-hover: rgba(255, 255, 255, 0.05);
+  --aw-bg-active: rgba(201, 160, 92, 0.1);
+  --aw-border: rgba(255, 255, 255, 0.07);
+  --aw-border-strong: rgba(255, 255, 255, 0.14);
+  --aw-border-gold: rgba(201, 160, 92, 0.4);
 
-  --aw-text: #e8e6f2;
-  --aw-text-dim: #9a96b8;
-  --aw-text-faint: #6b6790;
-  --aw-text-invert: #0d0a1f;
+  --aw-text: #e8e6e1;
+  --aw-text-dim: #9a968c;
+  --aw-text-faint: #63605a;
+  --aw-text-invert: #0a0c10;
 
   --aw-brand: var(--aw-gold);
-  --aw-brand-2: var(--aw-violet);
-  --aw-accent: var(--aw-cyan);
-  --aw-danger: #f87171;
-  --aw-success: #4ade80;
-  --aw-warning: #fbbf24;
+  --aw-brand-2: var(--aw-gold-2);
+  --aw-accent: var(--aw-gold-2);
+  --aw-danger: #d9746f;
+  --aw-success: #6fae7e;
+  --aw-warning: #d0a25c;
 
-  --aw-grad-brand: linear-gradient(90deg, var(--aw-gold-2), var(--aw-gold) 30%, var(--aw-violet) 75%, var(--aw-cyan));
-  --aw-grad-card: linear-gradient(135deg, rgba(124, 108, 240, 0.25), rgba(232, 196, 106, 0.18));
+  --aw-grad-brand: linear-gradient(90deg, var(--aw-gold-2), var(--aw-gold));
 
   /* 排版 */
   --aw-font: 'PingFang SC', 'Microsoft YaHei', 'Segoe UI', -apple-system, sans-serif;
@@ -48,15 +44,15 @@
   --aw-fs-xl: 20px;
   --aw-fs-2xl: 26px;
 
-  /* 圆角/阴影/动效 */
+  /* 圆角/阴影(扩散阴影,非霓虹) */
   --aw-radius-sm: 8px;
   --aw-radius-md: 12px;
   --aw-radius-lg: 16px;
   --aw-radius-full: 999px;
-  --aw-shadow-card: 0 2px 16px rgba(0, 0, 0, 0.25);
-  --aw-shadow-glow: 0 0 24px rgba(232, 196, 106, 0.18);
-  --aw-ease: cubic-bezier(0.4, 0, 0.2, 1);
-  --aw-dur: 0.22s;
+  --aw-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 32px -12px rgba(0, 0, 0, 0.4);
+  --aw-shadow-pop: 0 2px 4px rgba(0, 0, 0, 0.3), 0 20px 48px -16px rgba(0, 0, 0, 0.5);
+  --aw-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --aw-dur: 0.2s;
 
   /* 布局 */
   --aw-sidebar-w: 220px;
@@ -65,32 +61,33 @@
 
 /* 浅色主题:dawn(暖白) */
 [data-theme='dawn'] {
-  --aw-bg-base: #f7f4ef;
-  --aw-bg-raised: #ffffff;
-  --aw-bg-card: rgba(255, 255, 255, 0.8);
+  --aw-bg-base: #f6f4ef;
+  --aw-bg-raised: #fcfbf8;
+  --aw-bg-card: rgba(255, 255, 255, 0.75);
   --aw-bg-card-hover: #ffffff;
-  --aw-bg-input: rgba(0, 0, 0, 0.04);
-  --aw-bg-hover: rgba(0, 0, 0, 0.04);
-  --aw-bg-active: rgba(232, 196, 106, 0.18);
-  --aw-border: rgba(20, 15, 40, 0.1);
-  --aw-border-strong: rgba(124, 108, 240, 0.35);
-  --aw-border-gold: rgba(180, 140, 60, 0.4);
-  --aw-text: #1c1830;
-  --aw-text-dim: #5c5775;
-  --aw-text-faint: #8a85a3;
+  --aw-bg-input: rgba(28, 24, 48, 0.045);
+  --aw-bg-hover: rgba(28, 24, 48, 0.05);
+  --aw-bg-active: rgba(201, 160, 92, 0.16);
+  --aw-border: rgba(28, 24, 48, 0.09);
+  --aw-border-strong: rgba(28, 24, 48, 0.18);
+  --aw-border-gold: rgba(170, 132, 66, 0.45);
+  --aw-text: #1d1a15;
+  --aw-text-dim: #5d584e;
+  --aw-text-faint: #8d877c;
   --aw-text-invert: #ffffff;
-  --aw-shadow-card: 0 2px 16px rgba(30, 20, 60, 0.08);
-  --aw-shadow-glow: 0 0 24px rgba(180, 140, 60, 0.15);
+  --aw-shadow-card: 0 1px 2px rgba(28, 20, 10, 0.06), 0 12px 32px -14px rgba(28, 20, 10, 0.14);
+  --aw-shadow-pop: 0 2px 4px rgba(28, 20, 10, 0.08), 0 20px 48px -18px rgba(28, 20, 10, 0.2);
 }
 
-/* 深黑极简:midnight */
+/* 深黑极简:midnight(同色系更低对比) */
 [data-theme='midnight'] {
-  --aw-bg-base: #050507;
-  --aw-bg-raised: #0a0a0e;
-  --aw-bg-card: rgba(255, 255, 255, 0.03);
-  --aw-bg-card-hover: rgba(255, 255, 255, 0.05);
-  --aw-border: rgba(255, 255, 255, 0.06);
-  --aw-brand: #8b8bf5;
-  --aw-brand-2: #5c5cf0;
-  --aw-grad-brand: linear-gradient(90deg, #a5a5ff, #8b8bf5 40%, #5c5cf0);
+  --aw-bg-base: #08090b;
+  --aw-bg-raised: #0d0f12;
+  --aw-bg-card: rgba(255, 255, 255, 0.02);
+  --aw-border: rgba(255, 255, 255, 0.055);
+  --aw-border-strong: rgba(255, 255, 255, 0.11);
+  --aw-text-dim: #8b877e;
+  --aw-text-faint: #56534d;
+  --aw-gold: #a8895a;
+  --aw-gold-2: #c9a76e;
 }

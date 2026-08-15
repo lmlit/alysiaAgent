@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { statsApi } from '../api/modules';
 import { BarChart3 } from 'lucide-vue-next';
-import { useAsync, SectionCard, Table, EmptyState } from '../components/common';
+import { useAsync, SectionCard, LoadingBlock, Table, EmptyState } from '../components/common';
 
 const { data, loading, reload } = useAsync(async () => (await statsApi.get()) as any);
 
@@ -21,7 +21,7 @@ function rowsOf(): Array<Record<string, unknown>> {
   <div class="page">
     <SectionCard title="Token 统计" :icon="BarChart3">
       <template #actions><button class="btn" @click="reload">刷新</button></template>
-      <div v-if="loading" class="hint">加载中…</div>
+      <LoadingBlock v-if="loading" />
       <template v-else-if="data">
         <div class="stats">
           <div class="stat"><div class="stat-num">{{ data.global?.tokens ?? 0 }}</div><div class="stat-lbl">总用量</div></div>

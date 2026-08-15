@@ -4,21 +4,96 @@
  * 表情包标记 [表情包:名字] → 渲染为贴图
  */
 import { computed, nextTick, onMounted, ref } from 'vue';
+import { useRoute } from 'vue-router';
 import { chatApi, sessionApi } from '../api/modules';
 import { streamChat } from '../api/client';
 import { useAppStore } from '../stores/app';
 import Live2DCanvas from '../components/live2d/Live2DCanvas.vue';
+import { Pencil, Trash2, Archive, X } from 'lucide-vue-next';
 
 const showPet = ref(true);
 
 const app = useAppStore();
+const route = useRoute();
 const CURRENT_SESSION_KEY = 'aw-chat-session';
+const NAMES_KEY = 'aw-chat-names';
 
 const sessions = ref<Array<{ sessionId: string; messageCount: number; lastActive: string }>>([]);
 /** ★ 裸会话 id(不含 webui:private: 前缀)——统一约定,避免前缀累积污染 */
 const cleanSid = (id: string) => String(id ?? '').replace(/^(webui:private:)+/, '');
 const currentId = ref(cleanSid(localStorage.getItem(CURRENT_SESSION_KEY) ?? ''));
 const messages = ref<Array<{ role: string; content: string; createdAt?: string }>>([]);
+
+// ── 会话自定义名称(localStorage 映射,跨重启持久)──
+const sessionNames = ref<Record<string, string>>(JSON.parse(localStorage.getItem(NAMES_KEY) ?? '{}'));
+const editingName = ref('');
+const editingId = ref('');
+let nameSeq = 0;
+const saveNames = () => localStorage.setItem(NAMES_KEY, JSON.stringify(sessionNames.value));
+const displayName = (id: string) => sessionNames.value[id] ?? id.replace(/^sess-/, '').slice(0, 10);
+function beginRename(id: string) {
+  editingId.value = id;
+  editingName.value = sessionNames.value[id] ?? '';
+}
+function commitRename() {
+  const name = editingName.value.trim();
+  if (name) sessionNames.value[editingId.value] = name;
+  else delete sessionNames.value[editingId.value];
+  saveNames();
+  editingId.value = '';
+}
+
+/** ★ 会话删除弹窗:归档(软删除,数据保留) / 彻底删除 / 取消 */
+const deleteTarget = ref('');
+const deleteBusy = ref(false);
+
+function openDeleteDialog(id: string) {
+  deleteTarget.value = id;
+}
+function closeDeleteDialog() {
+  deleteTarget.value = '';
+}
+
+async function doArchive() {
+  if (!deleteTarget.value) return;
+  deleteBusy.value = true;
+  try {
+    await sessionApi.archive(deleteTarget.value);
+    afterSessionRemoved(deleteTarget.value);
+  } finally {
+    deleteBusy.value = false;
+    closeDeleteDialog();
+  }
+}
+
+async function doDelete() {
+  if (!deleteTarget.value) return;
+  deleteBusy.value = true;
+  try {
+    await sessionApi.remove(deleteTarget.value);
+    afterSessionRemoved(deleteTarget.value);
+  } finally {
+    deleteBusy.value = false;
+    closeDeleteDialog();
+  }
+}
+
+/** 删除/归档后:清名字映射 + 当前会话则切换 + 刷新列表 */
+async function afterSessionRemoved(id: string) {
+  delete sessionNames.value[id];
+  saveNames();
+  if (currentId.value === cleanSid(id)) {
+    currentId.value = '';
+    localStorage.removeItem(CURRENT_SESSION_KEY);
+    messages.value = [];
+  }
+  await refreshSessions();
+  if (!currentId.value && sessions.value.length > 0) {
+    currentId.value = cleanSid(sessions.value[0].sessionId);
+    localStorage.setItem(CURRENT_SESSION_KEY, currentId.value);
+    await loadMessages();
+  }
+}
 const input = ref('');
 const sending = ref(false);
 const streaming = ref(false);
@@ -39,9 +114,14 @@ let thinkingIdx = 0;
 
 onMounted(async () => {
   await refreshSessions();
-  // ★ 会话复用:优先 localStorage 记住的会话;否则自动选最近的历史会话
-  //   (历史对话可直接继续,不新建)——用户想新开才点"新会话"
-  if (currentId.value) {
+  // ★ 会话复用:优先 route query(?session=,来自会话管理页"继续聊")→
+  //   localStorage 记住的会话 → 自动选最近的历史会话
+  const fromQuery = cleanSid(String(route.query.session ?? ''));
+  if (fromQuery) {
+    currentId.value = fromQuery;
+    localStorage.setItem(CURRENT_SESSION_KEY, fromQuery);
+    await loadMessages();
+  } else if (currentId.value) {
     await loadMessages();
   } else if (sessions.value.length > 0) {
     currentId.value = cleanSid(sessions.value[0].sessionId);
@@ -70,6 +150,8 @@ async function loadMessages() {
 function newSession() {
   currentId.value = `sess-${Date.now()}`;
   localStorage.setItem(CURRENT_SESSION_KEY, currentId.value);
+  sessionNames.value[currentId.value] = `会话 ${++nameSeq}`;
+  saveNames();
   messages.value = [];
   refreshSessions();
 }
@@ -166,17 +248,41 @@ const chatSessions = computed(() => sessions.value);
     <!-- 会话侧栏 -->
     <aside class="session-list">
       <button class="new-btn" @click="newSession">＋ 新会话</button>
+      <div class="sessions-divider"></div>
       <div class="sessions">
-        <button
+        <div
           v-for="s in chatSessions"
           :key="s.sessionId"
           class="session-item"
           :class="{ active: s.sessionId === currentId }"
           @click="switchSession(s.sessionId)"
         >
-          <span class="session-title">{{ s.sessionId.replace('webui:', '').slice(0, 24) }}</span>
-          <span class="session-count">{{ s.messageCount }}</span>
-        </button>
+          <template v-if="editingId === s.sessionId">
+            <input
+              v-model="editingName"
+              class="rename-input"
+              autofocus
+              @click.stop
+              @keydown.enter.stop="commitRename"
+              @keydown.esc.stop="editingId = ''"
+              @blur="commitRename"
+            />
+          </template>
+          <template v-else>
+            <span class="session-title">{{ displayName(s.sessionId) }}</span>
+            <button class="rename-btn" title="重命名" @click.stop="beginRename(s.sessionId)">
+              <Pencil :size="11" stroke-width="2" />
+            </button>
+            <button
+              class="rename-btn del"
+              title="删除会话"
+              @click.stop="openDeleteDialog(s.sessionId)"
+            >
+              <Trash2 :size="11" stroke-width="2" />
+            </button>
+            <span class="session-count">{{ s.messageCount }}</span>
+          </template>
+        </div>
         <div v-if="!chatSessions.length" class="session-empty">还没有 WebUI 会话</div>
       </div>
     </aside>
@@ -232,6 +338,30 @@ const chatSessions = computed(() => sessions.value);
         </div>
       </div>
     </div>
+
+    <!-- ★ 删除会话弹窗:归档(数据保留) / 彻底删除 -->
+    <Teleport to="body">
+      <div v-if="deleteTarget" class="dlg-overlay" @click.self="closeDeleteDialog">
+        <div class="dlg-card">
+          <h3 class="dlg-title">删除会话</h3>
+          <p class="dlg-desc">
+            「{{ displayName(deleteTarget) }}」的对话记录——<br />
+            归档 = 从列表移除但数据保留;彻底删除 = 不可恢复。
+          </p>
+          <div class="dlg-actions">
+            <button class="dlg-btn archive" :disabled="deleteBusy" @click="doArchive">
+              <Archive :size="14" stroke-width="2" /> 删除并归档
+            </button>
+            <button class="dlg-btn danger" :disabled="deleteBusy" @click="doDelete">
+              <Trash2 :size="14" stroke-width="2" /> 彻底删除
+            </button>
+            <button class="dlg-btn cancel" :disabled="deleteBusy" @click="closeDeleteDialog">
+              <X :size="14" stroke-width="2" /> 取消
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -257,6 +387,11 @@ const chatSessions = computed(() => sessions.value);
   transition: all var(--aw-dur) var(--aw-ease);
 }
 .new-btn:hover { background: rgba(232, 196, 106, 0.18); }
+.sessions-divider {
+  height: 1px; flex: 0 0 1px;
+  background: var(--aw-border);
+  margin: 2px 0 8px;
+}
 .sessions { display: flex; flex-direction: column; gap: 4px; }
 .session-item {
   display: flex; align-items: center; gap: 8px;
@@ -268,6 +403,62 @@ const chatSessions = computed(() => sessions.value);
 .session-item.active { background: var(--aw-bg-active); color: var(--aw-gold); border-color: var(--aw-border-gold); }
 .session-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-count { font-size: 11px; color: var(--aw-text-faint); }
+.rename-btn {
+  display: none; align-items: center; justify-content: center;
+  width: 20px; height: 20px; flex: 0 0 20px;
+  border: none; border-radius: 5px; background: none;
+  color: var(--aw-text-faint); cursor: pointer;
+}
+.session-item:hover .rename-btn { display: flex; }
+.rename-btn:hover { color: var(--aw-gold); background: var(--aw-bg-hover); }
+.rename-btn.del:hover { color: var(--aw-danger); }
+
+/* 删除弹窗 */
+.dlg-overlay {
+  position: fixed; inset: 0; z-index: 200;
+  background: rgba(5, 3, 12, 0.6);
+  backdrop-filter: blur(4px);
+  display: grid; place-items: center;
+  animation: dlgIn 0.18s var(--aw-ease);
+}
+@keyframes dlgIn { from { opacity: 0; } }
+.dlg-card {
+  width: min(400px, calc(100vw - 48px));
+  background: var(--aw-bg-raised);
+  border: 1px solid var(--aw-border-strong);
+  border-radius: var(--aw-radius-lg);
+  box-shadow: var(--aw-shadow-pop);
+  padding: 22px 24px;
+  animation: dlgCard 0.2s var(--aw-ease);
+}
+@keyframes dlgCard { from { opacity: 0; transform: translateY(8px) scale(0.98); } }
+.dlg-title { font-size: var(--aw-fs-lg); font-weight: 700; margin-bottom: 10px; }
+.dlg-desc {
+  font-size: var(--aw-fs-sm); color: var(--aw-text-dim); line-height: 1.8;
+  margin-bottom: 18px;
+}
+.dlg-actions { display: flex; flex-direction: column; gap: 8px; }
+.dlg-btn {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 10px 14px; border-radius: var(--aw-radius-md);
+  font-size: var(--aw-fs-md); font-weight: 600;
+  border: 1px solid var(--aw-border); background: var(--aw-bg-input);
+  color: var(--aw-text-dim);
+  transition: all var(--aw-dur) var(--aw-ease);
+}
+.dlg-btn:hover:not(:disabled) { color: var(--aw-text); border-color: var(--aw-border-strong); transform: translateY(-1px); }
+.dlg-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.dlg-btn.archive { color: var(--aw-gold-2); border-color: var(--aw-border-gold); background: var(--aw-bg-active); }
+.dlg-btn.archive:hover:not(:disabled) { background: rgba(201, 160, 92, 0.18); }
+.dlg-btn.danger { color: var(--aw-danger); border-color: rgba(248, 113, 113, 0.4); background: rgba(248, 113, 113, 0.06); }
+.dlg-btn.danger:hover:not(:disabled) { background: rgba(248, 113, 113, 0.14); }
+.rename-input {
+  flex: 1; min-width: 0;
+  background: var(--aw-bg-input); color: var(--aw-text);
+  border: 1px solid var(--aw-border-gold); border-radius: 5px;
+  padding: 3px 6px; font-size: var(--aw-fs-sm); font-family: inherit;
+}
+.rename-input:focus { outline: none; }
 .session-empty { color: var(--aw-text-faint); font-size: var(--aw-fs-sm); text-align: center; padding: 20px 0; }
 
 .chat-main { display: flex; flex-direction: column; min-width: 0; position: relative; }
@@ -301,17 +492,16 @@ const chatSessions = computed(() => sessions.value);
   white-space: pre-wrap;
 }
 .msg.user .bubble {
-  background: linear-gradient(135deg, rgba(124, 108, 240, 0.42), rgba(232, 196, 106, 0.28));
-  border: 1px solid var(--aw-border-strong);
+  background: var(--aw-bg-active);
+  border: 1px solid var(--aw-border-gold);
   border-bottom-right-radius: 6px;
-  box-shadow: 0 2px 12px rgba(124, 108, 240, 0.12);
   color: var(--aw-text);
 }
 .msg.assistant .bubble {
   background: var(--aw-bg-raised);
   border: 1px solid var(--aw-border);
   border-bottom-left-radius: 6px;
-  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--aw-shadow-card);
 }
 .cursor { color: var(--aw-gold); animation: blink 1s step-start infinite; }
 @keyframes blink { 50% { opacity: 0; } }

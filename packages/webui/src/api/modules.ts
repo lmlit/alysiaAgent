@@ -16,6 +16,8 @@ export const sessionApi = {
     api.get<{ messages: Array<{ role: string; content: string; senderName: string; createdAt?: string }>; hasMore: boolean }>(
       `/api/sessions/${encodeURIComponent(id)}/messages?limit=${limit}${before ? `&before=${encodeURIComponent(before)}` : ''}`,
     ),
+  remove: (id: string) => api.del(`/api/sessions/${encodeURIComponent(id)}`),
+  archive: (id: string) => api.post(`/api/sessions/${encodeURIComponent(id)}/archive`),
 };
 
 // ── 画像 ──────────────────────────────────────────────
@@ -54,6 +56,7 @@ export const knowledgeApi = {
 export const lifeApi = {
   snapshot: () => api.get<{ snapshot: { currentActivity: string; mood: string; intimacy: number }; events: Array<Record<string, unknown>> }>('/api/life'),
   templates: () => api.get<{ templates: Array<{ id: string; activity: string; type: string; weight: number; source: string }> }>('/api/life/templates'),
+  addTemplate: (activity: string, type: 'chat' | 'internal') => api.post('/api/life/templates', { activity, type }),
   removeTemplate: (id: string) => api.del(`/api/life/templates/${encodeURIComponent(id)}`),
 };
 

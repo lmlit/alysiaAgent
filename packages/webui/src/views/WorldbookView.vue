@@ -1,9 +1,17 @@
 <script setup lang="ts">
+import { computed } from 'vue';
 import { worldbookApi } from '../api/modules';
 import { BookOpen } from 'lucide-vue-next';
-import { useAsync, SectionCard, Table, EmptyState, Tag, ConfirmButton } from '../components/common';
+import { useAsync, SectionCard, LoadingBlock, Table, EmptyState, Tag, ConfirmButton } from '../components/common';
 
 const { data, loading, reload } = useAsync(async () => (await worldbookApi.list()) as any);
+
+// ★ 过滤表情包条目(contentType='image' 归表情包页,不混进设定列表)
+const textEntries = computed(() =>
+  ((data.value?.entries as Record<string, unknown>[] | undefined) ?? []).filter(
+    (e) => (e.contentType as string) !== 'image',
+  ),
+);
 
 async function remove(id: string) {
   await worldbookApi.remove(id);
@@ -20,11 +28,11 @@ function fmt(iso?: string) {
   <div class="page">
     <SectionCard title="世界书条目" :icon="BookOpen" hint="source=self 为昔涟自写(自进化审计面);删错可凭日志找回">
       <template #actions><button class="btn" @click="reload">刷新</button></template>
-      <div v-if="loading" class="hint">加载中…</div>
-      <EmptyState v-else-if="data && !data.entries?.length" text="世界书是空的" />
+      <LoadingBlock v-if="loading" />
+      <EmptyState v-else-if="!textEntries.length" text="还没有设定条目" />
       <Table
-        v-else-if="data"
-        :rows="(data.entries as Record<string, unknown>[]) ?? []"
+        v-else
+        :rows="textEntries"
         :columns="[{ key: 'triggerKeys', label: '触发词', width: '130px' }, { key: 'content', label: '内容' }, { key: 'source', label: '来源', width: '80px' }, { key: 'createdAt', label: '写入时间', width: '130px' }, { key: 'op', label: '', width: '80px' }]"
       >
         <template #triggerKeys="{ row }">

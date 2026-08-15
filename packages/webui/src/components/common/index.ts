@@ -5,6 +5,7 @@ export { default as ConfirmButton } from './ConfirmButton.vue';
 export { default as EmptyState } from './EmptyState.vue';
 export { default as Tag } from './Tag.vue';
 export { default as Table } from './Table.vue';
+export { default as LoadingBlock } from './LoadingBlock.vue';
 
 /** 数据加载组合式函数:loading/error/data */
 import { ref } from 'vue';

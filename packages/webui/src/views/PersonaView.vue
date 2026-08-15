@@ -2,7 +2,7 @@
 import { reactive } from 'vue';
 import { personaApi } from '../api/modules';
 import { Moon } from 'lucide-vue-next';
-import { useAsync, SectionCard } from '../components/common';
+import { useAsync, SectionCard, LoadingBlock } from '../components/common';
 
 const { data, loading, reload } = useAsync(async () => (await personaApi.get()) as any);
 const toast = reactive({ text: '', show: false });
@@ -25,6 +25,13 @@ async function adjust(param: string, delta: number) {
   }
 }
 
+/** ★ 参数中文展示 */
+const PARAM_NAMES: Record<string, string> = {
+  formality: '正式度', warmth: '温暖度', humor: '幽默感', directness: '直接度',
+  sentence_length: '句子长度', emoji_usage: '表情使用', code_heavy: '代码倾向',
+  expressiveness: '表达力', empathy: '共情力', playfulness: '俏皮度',
+};
+
 const knobMeta: Array<{ key: string; label: string; desc: string }> = [
   { key: 'decay_rate', label: '遗忘速度', desc: '0=不忘, 1=秒忘' },
   { key: 'importance_threshold', label: '重要阈值', desc: '0=什么都记, 1=只记大事' },
@@ -38,13 +45,13 @@ const knobMeta: Array<{ key: string; label: string; desc: string }> = [
   <div class="page">
     <SectionCard title="人格参数" :icon="Moon" hint="3 维度 × 4 参数,5 道护栏保护">
       <template #actions><button class="btn" @click="reload">刷新</button></template>
-      <div v-if="loading" class="hint">加载中…</div>
+      <LoadingBlock v-if="loading" />
       <template v-else-if="data">
         <div class="grid">
           <div v-for="(group, gk) in ({ tone: data.tone, speechStyle: data.speechStyle, emotionalRange: data.emotionalRange } as Record<string, Record<string, number>>)" :key="gk" class="dim-card">
             <h4 class="dim-title">{{ { tone: '语气 tone', speechStyle: '说话风格', emotionalRange: '情感幅度' }[gk] }}</h4>
             <div v-for="(v, pk) in group" :key="pk" class="param-row">
-              <span class="param-name">{{ pk }}</span>
+              <span class="param-name">{{ PARAM_NAMES[pk] ?? pk }}</span>
               <div class="param-bar"><div class="param-fill" :style="{ '--p': Math.max(0.04, Math.min(1, (v + 1) * 0.5)) }"></div></div>
               <span class="param-val">{{ v.toFixed(2) }}</span>
               <button class="mini" @click="adjust(`${gk}.${pk}`, -0.05)">−</button>
@@ -104,7 +111,7 @@ const knobMeta: Array<{ key: string; label: string; desc: string }> = [
   position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%);
   background: var(--aw-bg-raised); border: 1px solid var(--aw-border-gold);
   color: var(--aw-gold); padding: 10px 20px; border-radius: var(--aw-radius-full);
-  box-shadow: var(--aw-shadow-glow); font-size: var(--aw-fs-sm); z-index: 100;
+  box-shadow: var(--aw-shadow-pop); font-size: var(--aw-fs-sm); z-index: 100;
 }
 .fade-enter-active, .fade-leave-active { transition: opacity 0.25s; }
 .fade-enter-from, .fade-leave-to { opacity: 0; }

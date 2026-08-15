@@ -102,15 +102,13 @@ onUnmounted(() => {
 .brand-orb {
   width: 30px; height: 30px; border-radius: 50%;
   display: grid; place-items: center;
-  background: radial-gradient(circle at 35% 30%, var(--aw-gold-2), var(--aw-gold) 40%, var(--aw-violet-2));
+  background: linear-gradient(135deg, var(--aw-gold-2), var(--aw-gold));
   color: var(--aw-text-invert);
-  box-shadow: 0 0 16px rgba(232, 196, 106, 0.4);
   font-size: 14px;
 }
 .brand-name {
   font-weight: 800; letter-spacing: 0.14em; font-size: 15px;
-  background: var(--aw-grad-brand);
-  -webkit-background-clip: text; background-clip: text; color: transparent;
+  color: var(--aw-gold-2);
 }
 
 .nav { display: flex; flex-direction: column; gap: 2px; flex: 1; overflow-y: auto; padding-top: 4px; }
@@ -128,10 +126,9 @@ onUnmounted(() => {
 }
 .nav-item.active::before {
   content: '';
-  position: absolute; left: -10px; top: 20%; bottom: 20%; width: 3px;
-  border-radius: 2px;
-  background: var(--aw-grad-brand);
-  box-shadow: 0 0 8px rgba(232, 196, 106, 0.5);
+  position: absolute; left: -10px; top: 22%; bottom: 22%; width: 2px;
+  border-radius: 1px;
+  background: var(--aw-gold);
 }
 .nav-icon { width: 18px; flex: 0 0 18px; }
 .nav-item.active .nav-icon { color: var(--aw-gold); }
@@ -149,6 +146,7 @@ onUnmounted(() => {
   background: var(--aw-bg-raised);
   border-bottom: 1px solid var(--aw-border);
   backdrop-filter: blur(10px);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04); /* 内顶高光 */
 }
 .topbar-title { font-size: var(--aw-fs-lg); font-weight: 700; }
 .topbar-link { color: var(--aw-text); }

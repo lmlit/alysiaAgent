@@ -1,8 +1,10 @@
 <script setup lang="ts">
+import { useRouter } from 'vue-router';
 import { sessionApi } from '../api/modules';
-import { Clock3 } from 'lucide-vue-next';
-import { useAsync, SectionCard, Table, EmptyState, Tag } from '../components/common';
+import { Clock3, MessageSquare } from 'lucide-vue-next';
+import { useAsync, SectionCard, LoadingBlock, Table, EmptyState, Tag } from '../components/common';
 
+const router = useRouter();
 const { data, loading, reload } = useAsync(async () => (await sessionApi.list()) as any);
 
 function fmt(iso?: string) {
@@ -14,23 +16,34 @@ function fmt(iso?: string) {
 function isWebui(sid: string) {
   return sid.startsWith('webui:');
 }
+
+/** ★ 跳转到聊天视图并选中该会话(会话管理不再是鸡肋——可直达历史对话继续聊) */
+function openChat(sid: string) {
+  const raw = String(sid).replace(/^(webui:private:)+/, '');
+  router.push({ path: '/chat', query: { session: raw } });
+}
 </script>
 
 <template>
   <div class="page">
     <SectionCard title="会话" :icon="Clock3" hint="webui: 前缀为 WebUI 聊天会话,与 QQ 通道隔离">
       <template #actions><button class="btn" @click="reload">刷新</button></template>
-      <div v-if="loading" class="hint">加载中…</div>
+      <LoadingBlock v-if="loading" />
       <EmptyState v-else-if="data && !data.sessions?.length" text="还没有会话" />
       <Table
         v-else-if="data"
         :rows="(data.sessions as Record<string, unknown>[]) ?? []"
-        :columns="[{ key: 'sessionId', label: '会话 ID' }, { key: 'kind', label: '通道', width: '80px' }, { key: 'messageCount', label: '消息数', width: '70px' }, { key: 'lastActive', label: '最近活跃', width: '130px' }]"
+        :columns="[{ key: 'sessionId', label: '会话 ID' }, { key: 'kind', label: '通道', width: '80px' }, { key: 'messageCount', label: '消息数', width: '70px' }, { key: 'lastActive', label: '最近活跃', width: '130px' }, { key: 'op', label: '', width: '90px' }]"
       >
         <template #kind="{ row }">
           <Tag :tone="isWebui(row.sessionId as string) ? 'cyan' : 'default'">{{ isWebui(row.sessionId as string) ? 'WebUI' : 'QQ' }}</Tag>
         </template>
         <template #lastActive="{ row }">{{ fmt(row.lastActive as string) }}</template>
+        <template #op="{ row }">
+          <button class="chat-btn" :disabled="!isWebui(row.sessionId as string)" @click="openChat(row.sessionId as string)">
+            <MessageSquare :size="13" stroke-width="2" /> 继续聊
+          </button>
+        </template>
       </Table>
     </SectionCard>
   </div>
@@ -41,4 +54,13 @@ function isWebui(sid: string) {
 .btn { font-size: var(--aw-fs-sm); padding: 5px 12px; border-radius: var(--aw-radius-sm); border: 1px solid var(--aw-border); background: var(--aw-bg-input); color: var(--aw-text-dim); }
 .btn:hover { color: var(--aw-text); border-color: var(--aw-border-strong); }
 .hint { color: var(--aw-text-faint); padding: 12px 0; }
+.chat-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: var(--aw-fs-xs); padding: 4px 10px;
+  border-radius: var(--aw-radius-sm);
+  border: 1px solid var(--aw-border-gold); background: rgba(232, 196, 106, 0.1);
+  color: var(--aw-gold); cursor: pointer;
+}
+.chat-btn:hover:not(:disabled) { background: rgba(232, 196, 106, 0.2); }
+.chat-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 </style>

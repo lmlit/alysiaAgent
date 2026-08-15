@@ -13,7 +13,8 @@ export function initializeDatabase(db: Database.Database): void {
       payload     TEXT NOT NULL,
       importance  REAL DEFAULT 0.0,
       created_at  TEXT NOT NULL,
-      processed   INTEGER DEFAULT 0
+      processed   INTEGER DEFAULT 0,
+      archived    INTEGER DEFAULT 0   -- ★ 8-15 会话归档(软删除):归档会话从列表消失,数据保留
     );
 
     CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id);
@@ -186,6 +187,13 @@ export function initializeDatabase(db: Database.Database): void {
   // ★ 8-14 内容自进化：条目来源标记（seed=角色包导入/seed，self=昔涟自写）
   if (!wbColNames.has('source')) {
     db.exec(`ALTER TABLE worldbook_entries ADD COLUMN source TEXT DEFAULT 'seed'`);
+  }
+
+  // ★ 8-15 会话归档：events 加 archived 列（软删除标记,旧库迁移）
+  const evCols = db.prepare(`PRAGMA table_info(events)`).all() as Array<{ name: string }>;
+  const evColNames = new Set(evCols.map(c => c.name));
+  if (!evColNames.has('archived')) {
+    db.exec(`ALTER TABLE events ADD COLUMN archived INTEGER DEFAULT 0`);
   }
 
   // Seed default singleton rows

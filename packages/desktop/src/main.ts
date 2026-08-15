@@ -58,7 +58,11 @@ function createMainWindow() {
     webPreferences: { contextIsolation: true, nodeIntegration: false },
   });
   mainWindow.loadURL(`${BACKEND_URL}/#/chat`);
-  mainWindow.on('closed', () => { mainWindow = null; });
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+    // ★ 主窗口 = 应用主入口:关闭即退出全部(桌宠 + 后端一并回收),不留残影进程
+    app.quit();
+  });
 }
 
 /** 桌宠窗口:照抄 Cyrene(透明/无边框/置顶/穿透/跳过任务栏) */

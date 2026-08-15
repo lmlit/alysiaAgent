@@ -78,11 +78,17 @@ export class EventStore {
     const rows = this.db.prepare(`
       SELECT session_id, COUNT(*) as count, MAX(created_at) as last_active
       FROM events
+      WHERE archived = 0
       GROUP BY session_id
       ORDER BY last_active DESC
       LIMIT ?
     `).all(limit) as Array<{ session_id: string; count: number; last_active: string }>;
     return rows;
+  }
+
+  /** ★ 8-15 会话归档(软删除):标记 archived=1——列表消失,数据保留可恢复 */
+  archiveBySession(sessionId: string): void {
+    this.db.prepare('UPDATE events SET archived = 1 WHERE session_id = ?').run(sessionId);
   }
 
   /** ★ 8-15 WebUI 会话历史分页（webui-chat-endpoints）：created_at 游标向下翻页。
@@ -112,6 +118,11 @@ export class EventStore {
         createdAt: r.created_at,
       };
     });
+  }
+
+  /** ★ 8-15 WebUI 会话删除:清空该会话全部事件(消息/画像输入源) */
+  deleteBySession(sessionId: string): void {
+    this.db.prepare('DELETE FROM events WHERE session_id = ?').run(sessionId);
   }
 
   /** 获取某个会话最近的消息（用于短期上下文） */

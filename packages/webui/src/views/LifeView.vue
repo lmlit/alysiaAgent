@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { lifeApi } from '../api/modules';
 import { Sparkles, ScrollText } from 'lucide-vue-next';
-import { useAsync, SectionCard, Table, EmptyState, Tag } from '../components/common';
+import { useAsync, SectionCard, LoadingBlock, Table, EmptyState, Tag } from '../components/common';
 
 const { data, loading, reload } = useAsync(async () => (await lifeApi.snapshot()) as any);
 
@@ -16,7 +16,7 @@ function fmt(iso?: string) {
   <div class="page">
     <SectionCard title="她现在" :icon="Sparkles">
       <template #actions><button class="btn" @click="reload">刷新</button></template>
-      <div v-if="loading" class="hint">加载中…</div>
+      <LoadingBlock v-if="loading" />
       <template v-else-if="data">
         <div class="stats">
           <div class="stat"><div class="stat-num">{{ data.snapshot?.intimacy ?? '—' }}</div><div class="stat-lbl">亲密度</div></div>

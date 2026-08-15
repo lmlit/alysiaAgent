@@ -25,25 +25,18 @@ defineProps<{ title: string; icon?: Component; hint?: string }>();
   overflow: hidden;
   transition: border-color var(--aw-dur) var(--aw-ease), box-shadow var(--aw-dur) var(--aw-ease), transform var(--aw-dur) var(--aw-ease);
 }
-.card::before {
+.card::after {
+  /* 内顶高光(液态玻璃折射感,非霓虹) */
   content: '';
-  position: absolute; inset: 0;
-  border-radius: inherit;
-  padding: 1px;
-  background: linear-gradient(160deg, var(--aw-border-gold), transparent 30%, transparent 70%, var(--aw-border-strong));
-  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  opacity: 0;
-  transition: opacity var(--aw-dur) var(--aw-ease);
+  position: absolute; inset: 0 0 auto 0; height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.09), transparent);
   pointer-events: none;
 }
 .card:hover {
   border-color: var(--aw-border-strong);
-  box-shadow: var(--aw-shadow-card), var(--aw-shadow-glow);
+  box-shadow: var(--aw-shadow-pop);
   transform: translateY(-1px);
 }
-.card:hover::before { opacity: 1; }
 .card-head {
   display: flex; align-items: center; gap: 10px;
   padding: 14px 18px;

@@ -80,6 +80,26 @@ export function createWebuiApp(core: AlysiaCore) {
     return { sessions };
   });
 
+  // ★ 8-15 会话归档(软删除:列表消失,数据保留)——仅 webui 会话
+  app.post('/api/sessions/:id/archive', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    if (!String(id).startsWith('webui:')) {
+      return reply.code(403).send({ ok: false, error: 'QQ 会话不可归档' });
+    }
+    core.memoryManager.archiveSession(id);
+    return { ok: true };
+  });
+
+  // ★ 8-15 会话彻底删除（清空数据;仅 webui 会话,QQ 会话不允许）
+  app.delete('/api/sessions/:id', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    if (!String(id).startsWith('webui:')) {
+      return reply.code(403).send({ ok: false, error: 'QQ 会话不可删除' });
+    }
+    core.memoryManager.deleteSession(id);
+    return { ok: true };
+  });
+
   app.post('/api/sessions/:id/extract', async (req) => {
     const { id } = req.params as { id: string };
     const result = await core.memoryManager.extractProfile(id);
@@ -198,6 +218,17 @@ export function createWebuiApp(core: AlysiaCore) {
   });
 
   app.get('/api/life/templates', async () => ({ templates: core.memoryManager.listLifeTemplates() }));
+
+  // ★ 8-15 手动新增生活模板(走 addLifeTemplate 全流程:机械预检 + LLM 校验,weight 固定 2)
+  app.post('/api/life/templates', async (req, reply) => {
+    const { activity, type } = (req.body ?? {}) as { activity?: string; type?: string };
+    if (!activity?.trim()) return reply.code(400).send({ ok: false, error: 'activity 为空' });
+    const result = await core.memoryManager.addLifeTemplate({
+      activity: activity.trim(),
+      type: type === 'chat' ? 'chat' : 'internal',
+    });
+    return result;
+  });
 
   app.delete('/api/life/templates/:id', async (req) => {
     const ok = core.memoryManager.deleteLifeTemplate((req.params as any).id);

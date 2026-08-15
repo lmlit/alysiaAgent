@@ -36,6 +36,11 @@ export class ConversationStore {
     return rows.map(r => this.rowToConv(r));
   }
 
+  /** ★ 8-15 WebUI 会话删除:清空该会话摘要 */
+  deleteBySession(sessionId: string): void {
+    this.db.prepare('DELETE FROM conversations WHERE session_id = ?').run(sessionId);
+  }
+
   /** ★ 8-09：session 最新摘要（定期归档的 since 锚点） */
   getLatestBySession(sessionId: string): Conversation | null {
     const row = this.db.prepare(

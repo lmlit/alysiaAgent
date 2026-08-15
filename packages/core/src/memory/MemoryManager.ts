@@ -248,6 +248,24 @@ export class MemoryManager {
     return this.eventStore.getMessagesBySession(sessionId, limit, before);
   }
 
+  /** ★ 8-15 WebUI 会话归档(软删除)：列表消失,数据保留(events archived=1) */
+  archiveSession(sessionId: string): boolean {
+    const origin = sessionId.startsWith('webui:private:') ? sessionId : `webui:private:${sessionId}`;
+    this.eventStore.archiveBySession(origin);
+    logger.info(`[Session] archived ${origin}`);
+    return true;
+  }
+
+  /** ★ 8-15 WebUI 会话删除（彻底）：清空该会话的事件流与摘要（用户主动删除,日志留痕） */
+  deleteSession(sessionId: string): boolean {
+    const origin = sessionId.startsWith('webui:private:') ? sessionId : `webui:private:${sessionId}`;
+    const before = (this.db.prepare('SELECT COUNT(*) c FROM events WHERE session_id = ?').get(origin) as any)?.c ?? 0;
+    this.eventStore.deleteBySession(origin);
+    this.conversationStore.deleteBySession(origin);
+    logger.info(`[Session] deleted ${origin} (${before} events)`);
+    return true;
+  }
+
   /** ★ 8-09：最近对话注入块（主动消息生成器用——问候/Life 事件也吃对话上下文）。
    *  格式与 memory-retrieval 的 [最近对话] 一致："[HH:MM] 你/昔涟: 内容"，24h 窗口 + limit 条。
    *  无消息返回 ''。 */
@@ -474,17 +492,18 @@ export class MemoryManager {
     return { ok: true, id };
   }
 
-  /** 自写世界书条目列表（Web 审计面；source 区分 seed/self） */
-  listWorldbookEntries(): Array<{ id: string; triggerKeys: string[]; content: string; source: string; createdAt: string }> {
+  /** 自写世界书条目列表（Web 审计面；source 区分 seed/self；contentType 供前端过滤表情包） */
+  listWorldbookEntries(): Array<{ id: string; triggerKeys: string[]; content: string; source: string; createdAt: string; contentType: string }> {
     const rows = this.db.prepare(
-      'SELECT id, trigger_keys, content, source, created_at FROM worldbook_entries ORDER BY created_at DESC'
-    ).all() as Array<{ id: string; trigger_keys: string; content: string; source: string; created_at: string }>;
+      'SELECT id, trigger_keys, content, source, created_at, content_type FROM worldbook_entries ORDER BY created_at DESC'
+    ).all() as Array<{ id: string; trigger_keys: string; content: string; source: string; created_at: string; content_type: string }>;
     return rows.map(r => ({
       id: r.id,
       triggerKeys: JSON.parse(r.trigger_keys) as string[],
       content: r.content,
       source: r.source ?? 'seed',
       createdAt: r.created_at,
+      contentType: r.content_type ?? 'text',
     }));
   }
 
@@ -970,8 +989,16 @@ export class MemoryManager {
       is_active: pkg.activate ?? false,
     });
 
-    // 2. Worldbook 条目（先删旧角色条目再插入，保证幂等）
-    this.db.prepare('DELETE FROM worldbook_entries WHERE role = ?').run(pkg.role);
+    // 2. Worldbook 条目（幂等替换：只删"本次包生成的 id"，不动同 role 的其他来源——
+    //   seed 世界书(66 条)与自写条目(sourse=self)都挂 role='alysia'，
+    //   原 DELETE WHERE role=? 会把它们误删，表情包角色包曾把全部文本设定清空）
+    const newIds = (pkg.worldbook ?? []).map((entry) => {
+      const keys = Array.isArray(entry.trigger_keys) ? JSON.stringify(entry.trigger_keys) : entry.trigger_keys;
+      return `wb_${pkg.role}_${this.hashStr(keys + entry.content)}`;
+    });
+    for (const id of newIds) {
+      this.worldbookStore.deleteEntry(id);
+    }
     let count = 0;
     for (const entry of pkg.worldbook ?? []) {
       const keys = Array.isArray(entry.trigger_keys) ? JSON.stringify(entry.trigger_keys) : entry.trigger_keys;
