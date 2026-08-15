@@ -9,7 +9,8 @@ import { chatApi, sessionApi } from '../api/modules';
 import { streamChat } from '../api/client';
 import { useAppStore } from '../stores/app';
 import Live2DCanvas from '../components/live2d/Live2DCanvas.vue';
-import { Pencil, Trash2, Archive, X } from 'lucide-vue-next';
+import { Pencil, Trash2, Archive, X, Smile } from 'lucide-vue-next';
+import { stickersApi } from '../api/modules';
 
 const showPet = ref(true);
 
@@ -100,6 +101,30 @@ const streaming = ref(false);
 const listEl = ref<HTMLElement | null>(null);
 const error = ref('');
 const abortCtrl = ref<AbortController | null>(null);
+
+// ── ★ 表情面板(Cyrene sticker-picker 思路):点选插入 [表情包:名字] ──
+const stickerPanel = ref(false);
+const stickers = ref<Array<{ name: string; path: string }>>([]);
+const panelBusy = ref(false);
+
+async function toggleStickerPanel() {
+  stickerPanel.value = !stickerPanel.value;
+  if (stickerPanel.value && !stickers.value.length) {
+    panelBusy.value = true;
+    try {
+      const r = await stickersApi.list();
+      stickers.value = r.stickers ?? [];
+    } catch { /* 静默 */ }
+    finally {
+      panelBusy.value = false;
+    }
+  }
+}
+
+function insertSticker(name: string) {
+  input.value += (input.value ? ' ' : '') + `[表情包:${name}]`;
+  stickerPanel.value = false;
+}
 
 // ★ 8-15 思考区:reasoning 块不输出正文,进"思考中"折叠条(默认隐藏内容,复用 QQ thinking 文案风格)
 const THINKING_LINES = [
@@ -333,6 +358,25 @@ const chatSessions = computed(() => sessions.value);
           @keydown.enter.exact.prevent="send"
         ></textarea>
         <div class="composer-actions">
+          <!-- ★ 表情面板按钮 -->
+          <div class="sticker-wrap">
+            <button class="btn sticker-btn" :class="{ on: stickerPanel }" title="表情包" @click="toggleStickerPanel">
+              <Smile :size="16" stroke-width="1.8" />
+            </button>
+            <div v-if="stickerPanel" class="sticker-panel">
+              <div v-if="panelBusy" class="panel-hint">加载中…</div>
+              <div v-else-if="!stickers.length" class="panel-hint">还没有表情包</div>
+              <button
+                v-for="s in stickers"
+                :key="s.name"
+                class="sticker-item"
+                :title="s.name"
+                @click="insertSticker(s.name)"
+              >
+                <img :src="`/api/stickers/file/${encodeURIComponent(s.name)}`" :alt="s.name" loading="lazy" />
+              </button>
+            </div>
+          </div>
           <button v-if="streaming" class="btn stop" @click="stop">■ 停止</button>
           <button v-else class="btn send" :disabled="!input.trim() || sending" @click="send">发送 ↵</button>
         </div>
@@ -549,7 +593,36 @@ const chatSessions = computed(() => sessions.value);
   resize: none; max-height: 120px;
 }
 .composer-input:focus { outline: none; border-color: var(--aw-border-gold); }
-.composer-actions { display: flex; gap: 8px; }
+.composer-actions { display: flex; gap: 8px; align-items: center; position: relative; }
+.sticker-wrap { position: relative; }
+.sticker-btn { display: grid; place-items: center; width: 38px; height: 38px; padding: 0; }
+.sticker-btn.on { color: var(--aw-pink-2); border-color: var(--aw-border-gold); background: var(--aw-bg-active); }
+.sticker-panel {
+  position: absolute; bottom: 46px; right: 0; z-index: 30;
+  width: 264px;
+  background: var(--aw-bg-elevated);
+  border: 1px solid var(--aw-border-strong);
+  border-radius: var(--aw-radius-lg);
+  box-shadow: var(--aw-shadow-pop);
+  padding: 10px;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.panel-hint { grid-column: 1 / -1; text-align: center; color: var(--aw-text-faint); font-size: var(--aw-fs-sm); padding: 14px 0; }
+.sticker-item {
+  aspect-ratio: 1;
+  display: grid; place-items: center;
+  background: var(--aw-bg-input);
+  border: 1px solid var(--aw-border);
+  border-radius: var(--aw-radius-md);
+  padding: 4px;
+  transition: all var(--aw-dur) var(--aw-ease);
+}
+.sticker-item:hover { border-color: var(--aw-border-gold); background: var(--aw-bg-active); transform: translateY(-1px); }
+.sticker-item img { width: 100%; height: 100%; object-fit: contain; }
 .btn {
   padding: 9px 18px; border-radius: var(--aw-radius-md);
   font-size: var(--aw-fs-md); font-weight: 600;

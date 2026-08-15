@@ -6,30 +6,95 @@
  *  - 聊天页沉浸:Dock 自动收起,chat 视图占满全屏(自带会话列表)
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue';
-import { useRoute } from 'vue-router';
 import { useAppStore, THEMES } from './stores/app';
 import { modules } from './modules';
-import { Heart, Sparkle, Clapperboard } from 'lucide-vue-next';
+import { Heart, Sparkle, Clapperboard, Minus, X } from 'lucide-vue-next';
 
 const app = useAppStore();
-const route = useRoute();
 const online = ref(false);
 const dockOpen = ref(false);
-/** ★ 昔涟形象位:public/portrait.png(用户可放喜欢的图),存在则显示为头像 */
+/** ★ 昔涟形象位:GET /api/portrait(服务端 data/portrait.<ext>),hover 可图形化更换 */
 const portraitSrc = ref('');
+const portraitBusy = ref(false);
+const fileInput = ref<HTMLInputElement | null>(null);
 
-// 聊天页沉浸:Dock 收起
-const isChat = computed(() => route.path === '/chat');
+function pickPortrait() {
+  fileInput.value?.click();
+}
+
+// ── ★ 顶栏拖窗(照抄 Cyrene:pointerdown 记录 → rAF 节流增量 moveBy)──
+let dragLast = { x: 0, y: 0 };
+let dragRaf: number | null = null;
+let dragPending = { dx: 0, dy: 0 };
+
+function onTopbarDown(e: PointerEvent) {
+  const aw = (window as any).appWindow;
+  if (!aw?.moveBy) return; // 浏览器形态不拖
+  const target = e.target as HTMLElement;
+  if (target.closest('.win-btns, .theme-select')) return; // 交互元素不拖
+  dragLast = { x: e.screenX, y: e.screenY };
+  dragPending = { dx: 0, dy: 0 };
+  (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+}
+
+function onTopbarMove(e: PointerEvent) {
+  const aw = (window as any).appWindow;
+  if (!aw?.moveBy) return;
+  if (!dragLast.x && !dragLast.y && e.screenX === 0) return;
+  dragPending.dx += e.screenX - dragLast.x;
+  dragPending.dy += e.screenY - dragLast.y;
+  dragLast = { x: e.screenX, y: e.screenY };
+  if (dragRaf) return;
+  dragRaf = requestAnimationFrame(() => {
+    aw.moveBy(dragPending.dx, dragPending.dy);
+    dragPending = { dx: 0, dy: 0 };
+    dragRaf = null;
+  });
+}
+
+function onTopbarUp() {
+  if (dragRaf) cancelAnimationFrame(dragRaf);
+  dragRaf = null;
+  dragPending = { dx: 0, dy: 0 };
+  dragLast = { x: 0, y: 0 };
+}
+
+async function onPortraitFile(e: Event) {
+  const input = e.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = '';
+  if (!file || !/^image\/(png|jpe?g|webp|gif)$/.test(file.type)) return;
+  portraitBusy.value = true;
+  try {
+    const base64 = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(new Error('read failed'));
+      reader.readAsDataURL(file);
+    });
+    const r = (await fetch('/api/portrait', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data: base64, ext: file.type.replace('image/', '') }),
+    }).then(res => res.json())) as { ok: boolean; url?: string };
+    if (r.ok && r.url) portraitSrc.value = r.url;
+  } catch { /* 静默 */ }
+  finally {
+    portraitBusy.value = false;
+  }
+}
+
+// ★ Dock 全页面保持可见(聊天页也不例外——导航可访问性优先;
+//   "沉浸"由 chat 视图内部双栏实现)
 const shellClass = computed(() => ({
-  'dock-open': dockOpen.value && !isChat.value,
-  'chat-immersive': isChat.value,
+  'dock-open': dockOpen.value,
 }));
 
 let pingTimer: ReturnType<typeof setInterval> | null = null;
 
 onMounted(() => {
-  fetch('/portrait.png', { method: 'HEAD' })
-    .then(r => { if (r.ok) portraitSrc.value = '/portrait.png'; })
+  fetch('/api/portrait', { method: 'HEAD' })
+    .then(r => { if (r.ok) portraitSrc.value = '/api/portrait?v=' + Date.now(); })
     .catch(() => {});
   app.ping().then(ok => { online.value = ok; });
   app.refreshMeta();
@@ -47,12 +112,16 @@ onUnmounted(() => {
   <div class="shell" :class="shellClass">
     <!-- ★ Dock 侧栏:56px 图标条,悬停展开;聊天页收起 -->
     <aside class="dock" @mouseenter="dockOpen = true" @mouseleave="dockOpen = false">
-      <!-- 昔涟头像位:public/portrait.png(用户可替换),无则金 orb -->
-      <RouterLink to="/chat" class="dock-avatar" :title="'昔涟'">
+      <!-- 昔涟头像位:图形化更换(hover 出现按钮);展开时显示完整名字 -->
+      <div class="dock-avatar" :title="'昔涟'">
         <img v-if="portraitSrc" :src="portraitSrc" class="avatar-img" alt="昔涟" />
         <span v-else class="avatar-orb"><Sparkle :size="15" stroke-width="2" /></span>
-        <span class="dock-label">{{ dockOpen ? '昔涟' : '' }}</span>
-      </RouterLink>
+        <button class="avatar-edit" :disabled="portraitBusy" @click.prevent="pickPortrait">
+          {{ portraitBusy ? '…' : '换图' }}
+        </button>
+        <input ref="fileInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif" class="hidden-input" @change="onPortraitFile" />
+        <span v-if="dockOpen" class="avatar-name">昔涟</span>
+      </div>
 
       <div class="dock-divider"></div>
 
@@ -75,8 +144,13 @@ onUnmounted(() => {
       </div>
     </aside>
 
-    <!-- 顶栏:Cyrene 式胶囊元信息 -->
-    <header class="topbar">
+    <!-- 顶栏:Cyrene 式胶囊元信息 + 手动拖窗 -->
+    <header
+      class="topbar"
+      @pointerdown="onTopbarDown"
+      @pointermove="onTopbarMove"
+      @pointerup="onTopbarUp"
+    >
       <div class="title-capsule">
         <span class="capsule-name">昔涟</span>
         <span class="capsule-sep"></span>
@@ -96,6 +170,15 @@ onUnmounted(() => {
             {{ { stardust: '星穹', dawn: '晨光', midnight: '午夜' }[t] }}
           </option>
         </select>
+        <!-- ★ 自定义标题栏窗口按钮(Electron 渲染层经 preload IPC) -->
+        <div class="win-btns">
+          <button class="win-btn" title="最小化" @click="(window as any).appWindow?.minimize()">
+            <Minus :size="14" stroke-width="2" />
+          </button>
+          <button class="win-btn close" title="关闭" @click="(window as any).appWindow?.close()">
+            <X :size="14" stroke-width="2" />
+          </button>
+        </div>
       </div>
     </header>
 
@@ -118,8 +201,6 @@ onUnmounted(() => {
 }
 .shell.dock-open { grid-template-columns: 190px 1fr; }
 /* 聊天页沉浸:Dock 收起 */
-.shell.chat-immersive { grid-template-columns: 0px 1fr; }
-.shell.chat-immersive .dock { opacity: 0; pointer-events: none; }
 
 /* ── Dock ── */
 .dock {
@@ -136,22 +217,36 @@ onUnmounted(() => {
 }
 .dock-avatar {
   position: relative;
+  display: flex; align-items: center; gap: 10px;
+  height: 40px;
+  padding: 0 4px;
+}
+.dock-avatar .avatar-img, .dock-avatar .avatar-orb {
   width: 40px; height: 40px; flex: 0 0 40px;
   border-radius: 50%;
-  display: grid; place-items: center;
-  overflow: hidden;
-  border: 1px solid var(--aw-border-gold);
-  transition: all var(--aw-dur) var(--aw-ease);
 }
-.dock-avatar:hover { border-color: var(--aw-gold-2); }
-.avatar-img { width: 100%; height: 100%; object-fit: cover; }
-.avatar-orb {
-  width: 100%; height: 100%;
-  display: grid; place-items: center;
-  background: linear-gradient(135deg, var(--aw-gold-2), var(--aw-gold));
-  color: var(--aw-text-invert);
+.avatar-img { object-fit: cover; display: block; }
+.avatar-orb { display: grid; place-items: center; }
+.avatar-name {
+  font-weight: 600; font-size: var(--aw-fs-md);
+  letter-spacing: var(--aw-letter-spacing);
+  color: var(--aw-text-strong);
+  text-shadow: 0 0 16px rgba(236, 72, 153, 0.35);
+  white-space: nowrap;
 }
-.dock-label { font-size: var(--aw-fs-sm); color: var(--aw-text-dim); }
+.avatar-edit {
+  position: absolute; left: 4px; top: 0;
+  width: 40px; height: 40px;
+  display: grid; place-items: center;
+  font-size: 10px; font-weight: 700;
+  background: rgba(8, 10, 12, 0.62);
+  color: var(--aw-pink-2);
+  border: none; border-radius: 50%;
+  opacity: 0;
+  transition: opacity var(--aw-dur) var(--aw-ease);
+}
+.dock-avatar:hover .avatar-edit { opacity: 1; }
+.hidden-input { display: none; }
 
 .dock-divider {
   width: 28px; height: 1px;
@@ -170,12 +265,16 @@ onUnmounted(() => {
   transition: all var(--aw-dur) var(--aw-ease);
 }
 .dock-item:hover { background: var(--aw-bg-hover); color: var(--aw-text); text-decoration: none; }
-.dock-item.active { background: var(--aw-bg-active); color: var(--aw-gold-2); }
+.dock-item.active {
+  background: var(--aw-bg-active);
+  color: var(--aw-pink-2);
+  box-shadow: var(--aw-glow-soft);
+}
 .dock-item.active::before {
   content: '';
   position: absolute; left: -8px; top: 28%; bottom: 28%; width: 2px;
   border-radius: 1px;
-  background: var(--aw-gold);
+  background: var(--aw-grad-brand);
 }
 .dock-icon { flex: 0 0 18px; }
 .dock-label { flex: 1; text-align: left; overflow: hidden; }
@@ -192,19 +291,25 @@ onUnmounted(() => {
   padding: 0 18px 0 22px;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.015));
   border-bottom: 1px solid var(--aw-border);
-  -webkit-app-region: drag; /* Electron 窗口可拖拽 */
   user-select: none;
+  cursor: grab; /* 拖拽手感提示 */
 }
+.topbar:active { cursor: grabbing; }
 .title-capsule {
   display: inline-flex; align-items: center; gap: 8px;
   padding: 5px 14px;
   border-radius: var(--aw-radius-full);
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid var(--aw-border);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--aw-border-strong);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), var(--aw-glow-soft);
   white-space: nowrap;
 }
-.capsule-name { font-weight: 700; font-size: var(--aw-fs-md); letter-spacing: 0.04em; color: var(--aw-gold-2); }
+.capsule-name {
+  font-weight: 600; font-size: var(--aw-fs-md);
+  letter-spacing: var(--aw-letter-spacing);
+  color: var(--aw-text-strong);
+  text-shadow: 0 0 16px rgba(236, 72, 153, 0.35); /* Cyrene 名字发光 */
+}
 .capsule-sep { width: 1px; height: 12px; background: var(--aw-border-strong); }
 .capsule-state { font-size: var(--aw-fs-xs); color: var(--aw-text-dim); }
 .capsule-state.up { color: var(--aw-success); }
@@ -213,12 +318,23 @@ onUnmounted(() => {
   display: inline-flex; align-items: center; gap: 4px;
   font-size: var(--aw-fs-xs); color: var(--aw-text-dim);
 }
-.topbar-right { margin-left: auto; -webkit-app-region: no-drag; }
+.topbar-right { margin-left: auto; -webkit-app-region: no-drag; display: flex; align-items: center; gap: 10px; }
 .theme-select {
   background: var(--aw-bg-input); color: var(--aw-text);
   border: 1px solid var(--aw-border); border-radius: var(--aw-radius-sm);
   padding: 4px 10px; font-size: var(--aw-fs-sm); font-family: inherit;
 }
+/* 自定义标题栏窗口按钮(Cyrene 式) */
+.win-btns { display: flex; gap: 2px; }
+.win-btn {
+  width: 34px; height: 28px;
+  display: grid; place-items: center;
+  background: none; border: none; border-radius: 6px;
+  color: var(--aw-text-dim);
+  transition: all var(--aw-dur) var(--aw-ease);
+}
+.win-btn:hover { background: var(--aw-bg-hover); color: var(--aw-text); }
+.win-btn.close:hover { background: rgba(248, 113, 113, 0.16); color: var(--aw-danger); }
 
 .content {
   grid-area: content;
@@ -226,5 +342,4 @@ onUnmounted(() => {
   overflow-y: auto;
   padding: 24px 28px;
 }
-.chat-immersive .content { padding: 0; overflow: hidden; }
 </style>

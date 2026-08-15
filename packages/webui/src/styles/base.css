@@ -13,15 +13,14 @@ body {
   transition: background var(--aw-dur) var(--aw-ease), color var(--aw-dur) var(--aw-ease);
 }
 
-/* 极淡顶部暖光(非霓虹:低透明度大半径) */
+/* 顶部紫色光晕(Cyrene --rb-grad-bg 风格) */
 body::before {
   content: '';
   position: fixed; inset: 0; z-index: 0; pointer-events: none;
-  background:
-    radial-gradient(1100px 500px at 85% -12%, rgba(201, 160, 92, 0.05), transparent 60%),
-    radial-gradient(900px 420px at 8% 110%, rgba(201, 160, 92, 0.03), transparent 55%);
+  background: radial-gradient(ellipse at top, rgba(24, 20, 50, 0.9), transparent 62%);
   transition: opacity var(--aw-dur);
 }
+[data-theme='dawn'] body::before { opacity: 0.35; }
 
 a { color: var(--aw-brand-2); text-decoration: none; }
 a:hover { text-decoration: underline; }

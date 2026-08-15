@@ -30,9 +30,10 @@
  */
 import Fastify from 'fastify';
 import type { AlysiaCore } from '@alysia/core';
+import { logger } from '@alysia/core';
 import { registerChatRoutes } from './chat.js';
-import { existsSync, readFileSync, statSync } from 'fs';
-import { dirname, join, resolve } from 'path';
+import { existsSync, readFileSync, statSync, writeFileSync, unlinkSync } from 'fs';
+import { basename, dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 
 export function createWebuiApp(core: AlysiaCore) {
@@ -42,6 +43,41 @@ export function createWebuiApp(core: AlysiaCore) {
 
   // ── 系统 ──────────────────────────────────────────
   app.get('/api/health', async () => ({ status: 'ok', uptime: process.uptime() }));
+
+  // ★ 8-15 昔涟形象位:图形化上传/读取(存 server data/portrait.<ext>,不被 build 覆盖)
+  const portraitDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../data');
+  const PORTRAIT_EXTS = ['png', 'jpg', 'jpeg', 'webp', 'gif'];
+  const findPortrait = (): { path: string; ext: string } | null => {
+    for (const ext of PORTRAIT_EXTS) {
+      const p = resolve(portraitDir, `portrait.${ext}`);
+      if (existsSync(p)) return { path: p, ext };
+    }
+    return null;
+  };
+  app.get('/api/portrait', async (_req: unknown, reply: any) => {
+    const found = findPortrait();
+    if (!found) return reply.code(404).send({ ok: false });
+    reply.type({ png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif' }[found.ext] ?? 'image/png');
+    reply.header('Cache-Control', 'public, max-age=3600');
+    return reply.send(readFileSync(found.path));
+  });
+  app.post('/api/portrait', async (req: any, reply: any) => {
+    const { data, ext } = (req.body ?? {}) as { data?: string; ext?: string };
+    if (!data || !/^data:image\/(png|jpe?g|webp|gif);base64,/.test(String(data))) {
+      return reply.code(400).send({ ok: false, error: '无效图片数据' });
+    }
+    const buf = Buffer.from(String(data).split(',')[1], 'base64');
+    if (buf.length > 8 * 1024 * 1024) return reply.code(400).send({ ok: false, error: '图片超过 8MB' });
+    const extName = PORTRAIT_EXTS.includes(String(ext)) ? String(ext) : 'png';
+    // 清掉旧格式,写新格式
+    for (const e of PORTRAIT_EXTS) {
+      const p = resolve(portraitDir, `portrait.${e}`);
+      if (e !== extName && existsSync(p)) unlinkSync(p);
+    }
+    writeFileSync(resolve(portraitDir, `portrait.${extName}`), buf);
+    logger.info(`[Portrait] updated (${buf.length} bytes, .${extName})`);
+    return { ok: true, url: `/api/portrait?v=${Date.now()}` };
+  });
 
   // ★ 8-15 WebUI 静态托管(生产形态:同源 serve 整个 dist——assets/模型/pet.html 全量;
   //   未知路径回退 index.html(hash 路由);dev 用 vite dev server 5173 代理 /api)
@@ -176,16 +212,42 @@ export function createWebuiApp(core: AlysiaCore) {
   });
 
   // ── 表情包 ─────────────────────────────────────────
-  app.get('/api/stickers', async () => core.memoryManager.listStickers());
+  app.get('/api/stickers', async () => {
+    const all = core.memoryManager.listStickers();
+    // 过滤文件缺失的条目(角色包条目可能比实际文件多——缺失的图无法展示,
+    // 只显示真实存在的;日志提示便于补文件)
+    const stickers = all.filter(s => resolveSticker(s.path) !== null);
+    const missing = all.length - stickers.length;
+    if (missing > 0) {
+      logger.warn(`[Stickers] ${missing}/${all.length} 个条目文件缺失(已从列表过滤): ` +
+        all.filter(s => resolveSticker(s.path) === null).map(s => s.name).join(', '));
+    }
+    return { stickers };
+  });
 
   // ★ 8-15 表情包文件（聊天视图 [表情包:名字] 渲染用）
+  //   路径兼容:db 里存 /data/stickers/x.png(容器绝对路径)——Windows 桌面端需
+  //   回退到 server data 目录解析
+  const stickerDataDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../data/stickers');
+  const resolveSticker = (content: string): string | null => {
+    const candidates = [
+      content,
+      content.replace(/^\/+/, ''),
+      resolve(stickerDataDir, basename(content)),
+    ];
+    for (const c of candidates) {
+      try { if (existsSync(c)) return c; } catch { /* 非法路径跳过 */ }
+    }
+    return null;
+  };
   app.get('/api/stickers/file/:name', async (req, reply) => {
     const s = core.memoryManager.findSticker((req.params as any).name);
     if (!s?.content) return reply.code(404).send({ ok: false, error: 'sticker not found' });
+    const resolved = resolveSticker(s.content);
+    if (!resolved) return reply.code(404).send({ ok: false, error: 'sticker file missing' });
     try {
-      const { readFileSync } = await import('fs');
-      const data = readFileSync(s.content);
-      const ext = s.content.split('.').pop()?.toLowerCase() ?? '';
+      const data = readFileSync(resolved);
+      const ext = resolved.split('.').pop()?.toLowerCase() ?? '';
       const mime: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp' };
       reply.header('Content-Type', mime[ext] ?? 'application/octet-stream');
       reply.header('Cache-Control', 'public, max-age=86400');

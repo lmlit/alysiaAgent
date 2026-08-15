@@ -1,42 +1,58 @@
-/* Alysia WebUI 设计 token — 星穹金调(design-taste 校准版)
- * 规则:单一强调色(金,降饱和)、炭灰中性基底(非纯黑/非 AI 紫)、
- * 无霓虹外发光(用内边框+扩散阴影)、组件只消费 --aw-* 语义别名 */
+/* Alysia WebUI 设计 token — Cyrene 科技粉紫版(用户指定学习 Cyrene-Agent)
+ * 设计语言:深紫黑背景层级 + 品牌粉 #ec4899 + 粉紫渐变 + 粉调发光 + 大圆角 */
 
 :root, [data-theme='stardust'] {
-  /* 静态色板(降饱和) */
-  --aw-gold: #c9a05c;
-  --aw-gold-2: #e8c78a;
-  --aw-gold-dim: rgba(201, 160, 92, 0.14);
+  /* 背景层级(紫黑) */
+  --aw-bg-base: #08070f;
+  --aw-bg-raised: #0f0d1f;
+  --aw-bg-elevated: #181432;
+  --aw-bg-card: rgba(255, 255, 255, 0.03);
+  --aw-bg-card-hover: rgba(255, 255, 255, 0.055);
+  --aw-bg-input: rgba(255, 255, 255, 0.06);
+  --aw-bg-hover: rgba(255, 255, 255, 0.06);
+  --aw-bg-active: rgba(236, 72, 153, 0.14);
+
+  /* 品牌粉 + 渐变 */
+  --aw-pink: #ec4899;
+  --aw-pink-2: #f472b6;
+  --aw-pink-glow: #ff6ec7;
+  --aw-violet: #9f7aea;
+  --aw-violet-2: #7c5fcc;
+  --aw-cyan: #22d3ee;
+  --aw-grad-brand: linear-gradient(135deg, #ec4899 0%, #9f7aea 100%);
+  --aw-grad-bg: radial-gradient(ellipse at top, #181432 0%, #08070f 60%);
 
   /* 语义别名 */
-  --aw-bg-base: #0a0c10;
-  --aw-bg-raised: #101319;
-  --aw-bg-card: rgba(255, 255, 255, 0.028);
-  --aw-bg-card-hover: rgba(255, 255, 255, 0.045);
-  --aw-bg-input: rgba(255, 255, 255, 0.045);
-  --aw-bg-hover: rgba(255, 255, 255, 0.05);
-  --aw-bg-active: rgba(201, 160, 92, 0.1);
-  --aw-border: rgba(255, 255, 255, 0.07);
-  --aw-border-strong: rgba(255, 255, 255, 0.14);
-  --aw-border-gold: rgba(201, 160, 92, 0.4);
+  --aw-gold: var(--aw-pink);
+  --aw-gold-2: var(--aw-pink-2);
+  --aw-gold-dim: rgba(236, 72, 153, 0.14);
+  --aw-brand: var(--aw-pink);
+  --aw-brand-2: var(--aw-pink-2);
+  --aw-accent: var(--aw-cyan);
+  --aw-danger: #f87171;
+  --aw-success: #4ade80;
+  --aw-warning: #fbbf24;
 
-  --aw-text: #e8e6e1;
-  --aw-text-dim: #9a968c;
-  --aw-text-faint: #63605a;
-  --aw-text-invert: #0a0c10;
+  --aw-border: rgba(236, 72, 153, 0.08);
+  --aw-border-strong: rgba(236, 72, 153, 0.4);
+  --aw-border-gold: rgba(236, 72, 153, 0.45);
+  --aw-border-grid: rgba(157, 127, 234, 0.12);
 
-  --aw-brand: var(--aw-gold);
-  --aw-brand-2: var(--aw-gold-2);
-  --aw-accent: var(--aw-gold-2);
-  --aw-danger: #d9746f;
-  --aw-success: #6fae7e;
-  --aw-warning: #d0a25c;
+  --aw-text: #ebe5f5;
+  --aw-text-dim: #a094c1;
+  --aw-text-faint: #6b6388;
+  --aw-text-strong: #fef7ff;
+  --aw-text-invert: #ffffff;
 
-  --aw-grad-brand: linear-gradient(90deg, var(--aw-gold-2), var(--aw-gold));
+  /* 发光(科技感,Cyrene 流派) */
+  --aw-glow-pink: 0 0 20px rgba(236, 72, 153, 0.35);
+  --aw-glow-soft: 0 0 12px rgba(236, 72, 153, 0.18);
+  --aw-glow-violet: 0 0 24px rgba(157, 127, 234, 0.28);
 
-  /* 排版 */
-  --aw-font: 'PingFang SC', 'Microsoft YaHei', 'Segoe UI', -apple-system, sans-serif;
+  /* 排版(Cyrene 字距 0.7px) */
+  --aw-font: 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', 'Segoe UI', -apple-system, sans-serif;
   --aw-font-code: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+  --aw-letter-spacing: 0.7px;
   --aw-fs-xs: 11px;
   --aw-fs-sm: 12.5px;
   --aw-fs-md: 14px;
@@ -44,50 +60,50 @@
   --aw-fs-xl: 20px;
   --aw-fs-2xl: 26px;
 
-  /* 圆角/阴影(扩散阴影,非霓虹) */
+  /* 大圆角(Cyrene:12-32px) */
   --aw-radius-sm: 8px;
   --aw-radius-md: 12px;
   --aw-radius-lg: 16px;
-  --aw-radius-full: 999px;
-  --aw-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 32px -12px rgba(0, 0, 0, 0.4);
-  --aw-shadow-pop: 0 2px 4px rgba(0, 0, 0, 0.3), 0 20px 48px -16px rgba(0, 0, 0, 0.5);
+  --aw-radius-xl: 20px;
+  --aw-radius-hero: 32px;
+  --aw-radius-full: 9999px;
+
+  /* 阴影 */
+  --aw-shadow-card: 0 4px 16px rgba(0, 0, 0, 0.35), 0 1px 2px rgba(0, 0, 0, 0.25);
+  --aw-shadow-pop: 0 12px 40px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(236, 72, 153, 0.1);
+  --aw-shadow-pink: 0 8px 32px rgba(236, 72, 153, 0.35);
   --aw-ease: cubic-bezier(0.16, 1, 0.3, 1);
   --aw-dur: 0.2s;
 
   /* 布局 */
   --aw-sidebar-w: 220px;
-  --aw-topbar-h: 56px;
+  --aw-topbar-h: 58px;
 }
 
-/* 浅色主题:dawn(暖白) */
+/* 浅色主题:dawn(珍珠白) */
 [data-theme='dawn'] {
-  --aw-bg-base: #f6f4ef;
-  --aw-bg-raised: #fcfbf8;
-  --aw-bg-card: rgba(255, 255, 255, 0.75);
-  --aw-bg-card-hover: #ffffff;
-  --aw-bg-input: rgba(28, 24, 48, 0.045);
-  --aw-bg-hover: rgba(28, 24, 48, 0.05);
-  --aw-bg-active: rgba(201, 160, 92, 0.16);
-  --aw-border: rgba(28, 24, 48, 0.09);
-  --aw-border-strong: rgba(28, 24, 48, 0.18);
-  --aw-border-gold: rgba(170, 132, 66, 0.45);
-  --aw-text: #1d1a15;
-  --aw-text-dim: #5d584e;
-  --aw-text-faint: #8d877c;
-  --aw-text-invert: #ffffff;
-  --aw-shadow-card: 0 1px 2px rgba(28, 20, 10, 0.06), 0 12px 32px -14px rgba(28, 20, 10, 0.14);
-  --aw-shadow-pop: 0 2px 4px rgba(28, 20, 10, 0.08), 0 20px 48px -18px rgba(28, 20, 10, 0.2);
+  --aw-bg-base: #faf8fc;
+  --aw-bg-raised: #ffffff;
+  --aw-bg-card: rgba(255, 255, 255, 0.85);
+  --aw-bg-input: rgba(20, 10, 30, 0.05);
+  --aw-bg-hover: rgba(20, 10, 30, 0.05);
+  --aw-bg-active: rgba(236, 72, 153, 0.12);
+  --aw-border: rgba(236, 72, 153, 0.16);
+  --aw-border-strong: rgba(236, 72, 153, 0.4);
+  --aw-text: #2a1f38;
+  --aw-text-dim: #6f5f8c;
+  --aw-text-faint: #a094b8;
+  --aw-shadow-card: 0 4px 16px rgba(40, 20, 60, 0.08), 0 1px 2px rgba(40, 20, 60, 0.06);
+  --aw-shadow-pop: 0 12px 40px rgba(40, 20, 60, 0.14);
 }
 
-/* 深黑极简:midnight(同色系更低对比) */
+/* 深黑极简:midnight */
 [data-theme='midnight'] {
-  --aw-bg-base: #08090b;
-  --aw-bg-raised: #0d0f12;
-  --aw-bg-card: rgba(255, 255, 255, 0.02);
-  --aw-border: rgba(255, 255, 255, 0.055);
-  --aw-border-strong: rgba(255, 255, 255, 0.11);
-  --aw-text-dim: #8b877e;
-  --aw-text-faint: #56534d;
-  --aw-gold: #a8895a;
-  --aw-gold-2: #c9a76e;
+  --aw-bg-base: #050508;
+  --aw-bg-raised: #0a0a12;
+  --aw-bg-elevated: #12101f;
+  --aw-border: rgba(236, 72, 153, 0.06);
+  --aw-border-strong: rgba(236, 72, 153, 0.32);
+  --aw-text-dim: #8f82ad;
+  --aw-text-faint: #575070;
 }

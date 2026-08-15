@@ -6,7 +6,7 @@
  *  - 主窗口:SPA(管理面板 + 聊天 + 内嵌小人)
  *  - 桌宠窗口:透明/无边框/置顶/点击穿透,加载 pet.html(照抄 Cyrene)
  */
-import { app, BrowserWindow, screen } from 'electron';
+import { app, BrowserWindow, ipcMain, screen } from 'electron';
 import { fork, type ChildProcess } from 'child_process';
 import { resolve } from 'path';
 import { logger } from '@alysia/core';
@@ -54,8 +54,15 @@ function createMainWindow() {
     minWidth: 960,
     minHeight: 640,
     title: 'Alysia · 昔涟',
-    backgroundColor: '#07050f',
-    webPreferences: { contextIsolation: true, nodeIntegration: false },
+    backgroundColor: '#08070f',
+    // ★ 自定义标题栏:去系统边框 + 隐藏默认菜单(File/Edit/View),窗口按钮走 IPC
+    frame: false,
+    autoHideMenuBar: true,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      preload: resolve(import.meta.dirname, 'preload.cjs'),
+    },
   });
   mainWindow.loadURL(`${BACKEND_URL}/#/chat`);
   mainWindow.on('closed', () => {
@@ -88,6 +95,20 @@ function createPetWindow() {
 }
 
 app.whenReady().then(async () => {
+  // ★ 自定义标题栏窗口控制(渲染层按钮 → IPC)
+  ipcMain.on('window:minimize', () => { mainWindow?.minimize(); });
+  ipcMain.on('window:close', () => { mainWindow?.close(); });
+  // ★ 拖窗:增量移动(照抄 Cyrene PetWindowMoveController 思路,坐标钳制屏幕内)
+  ipcMain.on('window:move-by', (_e, dx: number, dy: number) => {
+    if (!mainWindow) return;
+    const [x, y] = mainWindow.getPosition();
+    const { workArea } = screen.getPrimaryDisplay();
+    const [w, h] = mainWindow.getSize();
+    const nx = Math.min(Math.max(x + dx, workArea.x - w + 80), workArea.x + workArea.width - 80);
+    const ny = Math.min(Math.max(y + dy, workArea.y), workArea.y + workArea.height - 40);
+    mainWindow.setPosition(Math.round(nx), Math.round(ny));
+  });
+
   try {
     startBackend();
     await waitForBackend();
