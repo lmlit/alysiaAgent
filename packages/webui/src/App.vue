@@ -22,8 +22,20 @@ function pickPortrait() {
   fileInput.value?.click();
 }
 
-// ── ★ 顶栏拖窗(照抄 Cyrene:pointerdown 记录 → rAF 节流增量 moveBy)──
-let dragLast = { x: 0, y: 0 };
+// ── 窗口控制(模板里不能写 TS 断言,统一走方法)──
+function winMinimize() {
+  (window as any).appWindow?.minimize();
+}
+function winClose() {
+  (window as any).appWindow?.close();
+}
+
+// ── ★ 顶栏拖窗(照抄 Cyrene:pointerdown 记录 → rAF 节流增量 moveBy)
+//   不用 setPointerCapture(Windows 上 pointerup 丢失会导致 capture 泄漏拦截点击);
+//   加 4px 位移阈值,区分点击与拖动
+let dragLast: { x: number; y: number } | null = null;
+let dragStart: { x: number; y: number } | null = null;
+let dragActive = false;
 let dragRaf: number | null = null;
 let dragPending = { dx: 0, dy: 0 };
 
@@ -33,14 +45,28 @@ function onTopbarDown(e: PointerEvent) {
   const target = e.target as HTMLElement;
   if (target.closest('.win-btns, .theme-select')) return; // 交互元素不拖
   dragLast = { x: e.screenX, y: e.screenY };
-  dragPending = { dx: 0, dy: 0 };
-  (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+  dragStart = { x: e.screenX, y: e.screenY };
+  dragActive = false;
 }
 
 function onTopbarMove(e: PointerEvent) {
   const aw = (window as any).appWindow;
   if (!aw?.moveBy) return;
-  if (!dragLast.x && !dragLast.y && e.screenX === 0) return;
+  // ★ 关键:没按住左键绝不拖——pointerup 丢失(移出窗口松开)后 dragLast 残留,
+  //   纯 hover 的 pointermove 会把窗口拖飞(用户实测:鼠标移上去窗口就往屏幕外跑)
+  if (!(e.buttons & 1)) {
+    dragLast = null;
+    dragStart = null;
+    dragActive = false;
+    return;
+  }
+  if (!dragLast || !dragStart) return;
+  // 位移超过阈值才开始拖(点击不触发)
+  if (!dragActive) {
+    const dist = Math.hypot(e.screenX - dragStart.x, e.screenY - dragStart.y);
+    if (dist < 4) return;
+    dragActive = true;
+  }
   dragPending.dx += e.screenX - dragLast.x;
   dragPending.dy += e.screenY - dragLast.y;
   dragLast = { x: e.screenX, y: e.screenY };
@@ -55,8 +81,10 @@ function onTopbarMove(e: PointerEvent) {
 function onTopbarUp() {
   if (dragRaf) cancelAnimationFrame(dragRaf);
   dragRaf = null;
+  dragLast = null;
+  dragStart = null;
+  dragActive = false;
   dragPending = { dx: 0, dy: 0 };
-  dragLast = { x: 0, y: 0 };
 }
 
 async function onPortraitFile(e: Event) {
@@ -150,6 +178,7 @@ onUnmounted(() => {
       @pointerdown="onTopbarDown"
       @pointermove="onTopbarMove"
       @pointerup="onTopbarUp"
+      @pointerleave="onTopbarUp"
     >
       <div class="title-capsule">
         <span class="capsule-name">昔涟</span>
@@ -172,10 +201,10 @@ onUnmounted(() => {
         </select>
         <!-- ★ 自定义标题栏窗口按钮(Electron 渲染层经 preload IPC) -->
         <div class="win-btns">
-          <button class="win-btn" title="最小化" @click="(window as any).appWindow?.minimize()">
+          <button class="win-btn" title="最小化" @click="winMinimize">
             <Minus :size="14" stroke-width="2" />
           </button>
-          <button class="win-btn close" title="关闭" @click="(window as any).appWindow?.close()">
+          <button class="win-btn close" title="关闭" @click="winClose">
             <X :size="14" stroke-width="2" />
           </button>
         </div>
@@ -318,7 +347,7 @@ onUnmounted(() => {
   display: inline-flex; align-items: center; gap: 4px;
   font-size: var(--aw-fs-xs); color: var(--aw-text-dim);
 }
-.topbar-right { margin-left: auto; -webkit-app-region: no-drag; display: flex; align-items: center; gap: 10px; }
+.topbar-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
 .theme-select {
   background: var(--aw-bg-input); color: var(--aw-text);
   border: 1px solid var(--aw-border); border-radius: var(--aw-radius-sm);
