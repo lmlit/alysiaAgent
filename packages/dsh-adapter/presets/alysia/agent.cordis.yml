@@ -1,0 +1,5 @@
+# alysia chat preset(一期 MVP):挂载昔涟适配插件,纯聊天
+# 插件用相对路径引用(相对本 composition 文件目录 → packages/dsh-adapter/src/index.ts),
+# Include 以文件 URL 加载,Windows drive-letter 安全;插件注册落入本 agent 的 scoped layer。
+- id: alysia-adapter
+  name: ../../src/index.ts

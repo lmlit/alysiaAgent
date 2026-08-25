@@ -1,0 +1,13 @@
+# dev 验证用 patch:headless 模式挂载 alysia-adapter 插件
+# 用法:dsh --profile headless --patch dev/headless-alysia.patch.yml "<task>"
+# ★ 坑1:host 平面 Include 不支持 Windows 裸绝对路径 → 必须 file:// URL
+#   (agent-presets 平面的 composition 才支持裸路径,PresetTree 会转 file URL)
+# ★ 坑2:不能 disabled system-prompt 行 —— agent-loop 的 static inject 依赖
+#   systemPrompt 服务,它缺服务就不激活,agent factory 不注册(headless 报
+#   "no agent factory registered")。headless 全局平面已有 deployment:persona,
+#   插件再注册同名 section 会冲突 → 插件 config.persona: false(只挂工具/事件)
+- insert:
+    - id: alysia-adapter
+      name: 'file:///E:/workSpace/alysiaAgent/packages/dsh-adapter/src/index.ts'
+      config:
+        persona: false

@@ -26,6 +26,7 @@
 | vision-bridge | 图片识别（GLM-4V-Flash 描述） | frozen | （无旧文档，2026-08-07 补） | 2026-08-07 新建 |
 | webui-system | WebUI 前端（Vue SPA/主题/管理面板/聊天视图） | active | （无旧文档，2026-08-15 补） | 2026-08-15 一期完成（M1-M3 前端 + M4 Electron 壳 + Live2D 桌宠） |
 | reminder-tool | 提醒工具（set/list/cancel + 推送） | active | （无旧文档，2026-08-07 补） | 2026-08-12 SQLite 持久化（重启恢复，过期补发） |
+| dsh-adapter | DSH 插件适配层（昔涟人格/记忆接入 DeepSeek Harness） | active | （无旧文档，2026-08-25 补） | 2026-08-25 MVP 验证闭环（插件生命周期/工具链路/roster 挂载，数据层二期） |
 
 ## 📌 Backlog（doc 已声明、impl 未接，记录在案不隐形）
 
