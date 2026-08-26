@@ -1,0 +1,8 @@
+# 昔涟控制台 — 标准 dsh bundle 挂载声明(仿 dsh-whale-widget)
+# 通过 profile 的 dsh.profile.bundles 加载本包;行配置覆盖默认值
+- insert:
+    - id: alysia-console
+      name: '@alysia/dsh-console'
+      config:
+        serverBaseUrl: 'http://127.0.0.1:6185'
+        mountPath: '/alysia-console'
