@@ -60,6 +60,9 @@ describe('alysia-console 插件', () => {
     expect(js).toContain('window.__alysiaConsole')
     expect(js).toContain('alysia-fab')
     expect(js).toContain('alysia-console-panel')
+    // ★ 语法校验:注入脚本任何引号/模板事故都会让整段脚本挂掉(历史事故:onerror 内联
+    //   单引号与外层字符串冲突 → 悬浮球完全不渲染)。new Function 抛错即语法错误。
+    expect(() => new Function(js)).not.toThrow()
   })
 })
 

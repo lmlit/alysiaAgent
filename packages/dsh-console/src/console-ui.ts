@@ -90,7 +90,7 @@ export function buildConsoleWidgetJs(mountPath: string): string {
   root.id = 'alysia-console-root'
   root.innerHTML =
     '<div class="alysia-fab" title="昔涟">' +
-      '<img src="/alysia-api/portrait" alt="昔涟" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'grid\'">' +
+      '<img src="/alysia-api/portrait" alt="昔涟">' +
       '<span class="fallback" style="display:none">昔</span>' +
       '<button class="alysia-menu-btn" title="菜单">···</button>' +
     '</div>' +
@@ -112,6 +112,11 @@ export function buildConsoleWidgetJs(mountPath: string): string {
   document.body.appendChild(root)
 
   var fab = root.querySelector('.alysia-fab')
+  // 头像加载失败 → 回退「昔」字(事件监听,不用 inline onerror 防引号冲突)
+  fab.querySelector('img').addEventListener('error', function () {
+    fab.querySelector('img').style.display = 'none'
+    fab.querySelector('.fallback').style.display = 'grid'
+  })
   var menuBtn = root.querySelector('.alysia-menu-btn')
   var menu = root.querySelector('.alysia-menu')
   var bubble = root.querySelector('.alysia-bubble')
