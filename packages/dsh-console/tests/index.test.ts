@@ -58,7 +58,8 @@ describe('alysia-console 插件', () => {
     expect(res.writeHead).toHaveBeenCalledWith(200, expect.objectContaining({ 'content-type': 'application/javascript; charset=utf-8' }))
     const js = res.end.mock.calls[0][0] as string
     expect(js).toContain('window.__alysiaConsole')
-    expect(js).toContain('alysia-console-fab')
+    expect(js).toContain('alysia-fab')
+    expect(js).toContain('alysia-console-panel')
   })
 })
 
