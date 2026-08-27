@@ -68,8 +68,8 @@ CREATE TABLE events (
     created_at  TEXT NOT NULL,             -- ISO 8601
     processed   INTEGER DEFAULT 0          -- 位掩码: 1=画像, 2=摘要, 4=人格, 8=知识
 );
--- ★ 8-28 视角标记（memory-character-perspective）：'interaction'(与用户互动) | 'self'(昔涟自己的生活)
--- ALTER TABLE events ADD COLUMN perspective TEXT DEFAULT 'interaction';
++ -- ★ 8-28 视角标记（memory-character-perspective）：'interaction'(与用户互动) | 'self'(昔涟自己的生活)
++ -- ALTER TABLE events ADD COLUMN perspective TEXT DEFAULT 'interaction';
 
 CREATE INDEX idx_events_session ON events(session_id);
 CREATE INDEX idx_events_created ON events(created_at);
@@ -87,9 +87,9 @@ CREATE TABLE user_profile (
                                                  --   updated_at, source, valid_from, valid_until, status}]
     updated_at  TEXT NOT NULL
 );
--- ★ 8-28 角色事实（memory-character-perspective）：昔涟自己的事（与 facts 用户事实并列，
---   同 ProfileFact 结构含分类/TTL/确认机制）——"她最近在学什么/讨厌什么/对某事的看法"
--- ALTER TABLE user_profile ADD COLUMN character_facts TEXT NOT NULL DEFAULT '[]';
++ -- ★ 8-28 角色事实（memory-character-perspective）：昔涟自己的事（与 facts 用户事实并列，
++ --   同 ProfileFact 结构含分类/TTL/确认机制）——"她最近在学什么/讨厌什么/对某事的看法"
++ -- ALTER TABLE user_profile ADD COLUMN character_facts TEXT NOT NULL DEFAULT '[]';
 ```
 
 单行记录，facts 带来源追溯、有效期限和状态标记。
@@ -132,17 +132,17 @@ CREATE TABLE user_profile (
   时间基准 = valid_from/updated_at 较新者（"用户正在玩绝区零" 8-01 提取、8-02 被替代更新 → 显示 8-02 更贴近当前认知）
 - getProfileSnapshot 返回 facts 增量加 `updatedAt`/`validFrom`（Web 画像页展示时间列，不破坏现有字段）
 
-**★ 8-28 角色事实（memory-character-perspective）**：
-- `character_facts` 与 `facts` 并列，**结构完全复用 ProfileFact**（含 8-28 分类/TTL/过期确认机制）——
-  用户事实 + 角色事实各一套，互不混淆
-- 来源：ProfileExtractor 同一次 LLM 调用双输出（用户 facts + 角色 facts）；生活事件回写
-  （ingest perspective='self'）走同一提取器 → **生活累积自动进角色事实**（"最近在学做点心"等）
-- 视角标记：events.perspective 默认 'interaction'，生活事件回写标 'self'；read() 可按
-  perspective 过滤——召回"昔涟自己的经历"与"和用户的互动"分开
-- retention_bias 语义转向角色性格（8-28）：从"微微偏向正面(讨好)"改为"昔涟作为三千万世的
-  人对什么记忆更深"——默认值 0.2 不变，PersonaAdapter prompt/spec 描述更新
-- 摘要角色视角：conversations 加 character_perspective 列（ALTER + try-catch）——
-  SessionEndProcessor prompt 要求"同时总结昔涟在这段对话中的感受/变化"
++ **★ 8-28 角色事实（memory-character-perspective）**：
++ - `character_facts` 与 `facts` 并列，**结构完全复用 ProfileFact**（含 8-28 分类/TTL/过期确认机制）——
++   用户事实 + 角色事实各一套，互不混淆
++ - 来源：ProfileExtractor 同一次 LLM 调用双输出（用户 facts + 角色 facts）；生活事件回写
++   （ingest perspective='self'）走同一提取器 → **生活累积自动进角色事实**（"最近在学做点心"等）
++ - 视角标记：events.perspective 默认 'interaction'，生活事件回写标 'self'；read() 可按
++   perspective 过滤——召回"昔涟自己的经历"与"和用户的互动"分开
++ - retention_bias 语义转向角色性格（8-28）：从"微微偏向正面(讨好)"改为"昔涟作为三千万世的
++   人对什么记忆更深"——默认值 0.2 不变，PersonaAdapter prompt/spec 描述更新
++ - 摘要角色视角：conversations 加 character_perspective 列（ALTER + try-catch）——
++   SessionEndProcessor prompt 要求"同时总结昔涟在这段对话中的感受/变化"
 
 ### 2.3 Persona Store（AI 人格参数）— SQLite
 
@@ -331,11 +331,11 @@ interface IVectorStore {
 - 用户直接反馈（"你太啰嗦了"）
 - 行为隐式信号（反复打断、话题频繁跳转）
 - 对话模式变化（技术讨论 → 闲聊）
-- ★ 8-28 情绪惯性漂移（memory-character-perspective）：生活事件累积 mood_value 驱动
-  自然漂移——连续开心（mood_value≥15 正向）→ playfulness 微升；连续低落（≤-15 负向）→
-  empathy 微升；Δ=0.05，走 apply 5 道护栏（|Δ|≤0.1/冷却/同向次数/24h 回归/显式指令 bypass）。
-  触发点：LifeService.updateMoodValue 极性跨 ±15 阈值时（经 MemoryManager 暴露调用）——
-  人格来源从"只有用户反馈"变成"用户反馈 + 情绪累积"
++ - ★ 8-28 情绪惯性漂移（memory-character-perspective）：生活事件累积 mood_value 驱动
++   自然漂移——连续开心（mood_value≥15 正向）→ playfulness 微升；连续低落（≤-15 负向）→
++   empathy 微升；Δ=0.05，走 apply 5 道护栏（|Δ|≤0.1/冷却/同向次数/24h 回归/显式指令 bypass）。
++   触发点：LifeService.updateMoodValue 极性跨 ±15 阈值时（经 MemoryManager 暴露调用）——
++   人格来源从"只有用户反馈"变成"用户反馈 + 情绪累积"
 
 处理流程:
 ```

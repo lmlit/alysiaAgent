@@ -19,6 +19,8 @@ export interface MemoryEvent {
   importance: number;
   created_at: string;
   processed: number; // bitmask: 1=profile, 2=summary, 4=persona, 8=knowledge
+  /** ★ 8-28 视角标记（memory-character-perspective）：'interaction'(与用户互动) | 'self'(昔涟自己的生活) */
+  perspective?: 'interaction' | 'self';
 }
 
 export interface UserProfile {
@@ -27,6 +29,8 @@ export interface UserProfile {
   preferences: string;  // JSON
   facts: string;        // JSON array
   updated_at: string;
+  /** ★ 8-28 角色事实（memory-character-perspective）：昔涟自己的事（与 facts 用户事实并列） */
+  character_facts?: string;
 }
 
 export interface Persona {
@@ -79,6 +83,8 @@ export interface Conversation {
   started_at: string;
   ended_at: string | null;
   embedding_id: string | null;
+  /** ★ 8-28 角色视角（memory-character-perspective）：昔涟在这段对话中的感受/变化 */
+  character_perspective?: string;
 }
 
 export interface KnowledgeDoc {
@@ -137,6 +143,8 @@ export interface SearchResult {
 }
 
 export interface MemoryReadRequest {
+  /** ★ 8-28 视角过滤（memory-character-perspective）：'self'=只召回昔涟自己的生活，'interaction'=只召回互动，缺省不过滤 */
+  perspective?: 'interaction' | 'self';
   query: string;
   mode: 'chat' | 'code';
   limit: number;

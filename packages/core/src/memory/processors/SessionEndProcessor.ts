@@ -74,6 +74,8 @@ export class SessionEndProcessor {
       started_at: events[0]?.created_at || now,
       ended_at: now,
       embedding_id: null,
+      // ★ 8-28 角色视角（memory-character-perspective）
+      character_perspective: conversationSummary.character_perspective,
     };
 
     let embedVector: number[] | undefined;
@@ -88,10 +90,15 @@ export class SessionEndProcessor {
     await this.conversationStore.insert(conv, embedVector);
 
     // 4. Extract profile facts from session events (v2: 使用 addFacts 自动处理冲突)
+    //    ★ 8-28 角色视角（memory-character-perspective）：同一次提取双输出——用户事实 +
+    //    角色事实（昔涟自己的事）分库写入
     if (messageEvents.length > 0) {
-      const newFacts = await this.profileExtractor.extract(messageEvents);
-      if (newFacts.length > 0) {
-        this.profileStore.addFacts(newFacts);
+      const extracted = await this.profileExtractor.extract(messageEvents);
+      if (extracted.facts.length > 0) {
+        this.profileStore.addFacts(extracted.facts);
+      }
+      if (extracted.characterFacts.length > 0) {
+        this.profileStore.addCharacterFacts(extracted.characterFacts);
       }
     }
 
@@ -111,20 +118,24 @@ export class SessionEndProcessor {
   private async generateSummary(
     dialogue: string[],
     sessionId: string,
-  ): Promise<{ summary: string; participants: string[]; topics: string[]; key_decisions: string[] }> {
+  ): Promise<{ summary: string; participants: string[]; topics: string[]; key_decisions: string[]; character_perspective: string }> {
     const defaultSummary = {
       summary: `Session ${sessionId} summary`,
       participants: ['user', 'assistant'],
       topics: [] as string[],
       key_decisions: [] as string[],
+      character_perspective: '',
     };
 
     if (dialogue.length === 0) return defaultSummary;
 
     try {
       const conversationText = dialogue.join('\n');
+      // ★ 8-28 角色视角（memory-character-perspective）：摘要同时总结昔涟的感受/变化
       const response = await this.llmService.complete(
-        '你是一个会话总结器。请总结以下对话（[用户]/[昔涟] 标记发言者），提取关键主题和决定。返回JSON格式: {"summary": "...", "participants": ["user", "assistant"], "topics": [...], "key_decisions": [...]}',
+        '你是一个会话总结器。请总结以下对话（[用户]/[昔涟] 标记发言者），提取关键主题和决定。' +
+        '同时用一句话总结**昔涟**在这段对话中的感受或变化（角色视角，如"昔涟聊到雨时语气变得柔软"、"昔涟对游戏话题显得兴致勃勃"；没有明显情绪变化就留空字符串）。' +
+        '返回JSON格式: {"summary": "...", "participants": ["user", "assistant"], "topics": [...], "key_decisions": [...], "character_perspective": "..."}',
         conversationText,
       );
 
@@ -134,6 +145,7 @@ export class SessionEndProcessor {
         participants: parsed.participants || defaultSummary.participants,
         topics: parsed.topics || [],
         key_decisions: parsed.key_decisions || [],
+        character_perspective: typeof parsed.character_perspective === 'string' ? parsed.character_perspective.slice(0, 200) : '',
       };
     } catch {
       return defaultSummary;

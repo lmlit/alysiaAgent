@@ -185,3 +185,41 @@ describe('ProfileStore — 8-28 分类过期 + 确认闭环', () => {
     expect(store.confirmFact('不存在的归一化文本', true)).toBe(false);
   });
 });
+
+describe('ProfileStore — 8-28 角色事实（memory-character-perspective）', () => {
+  let db: Database.Database;
+  let store: ProfileStore;
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    initializeDatabase(db);
+    store = new ProfileStore(db);
+    db.prepare(`INSERT OR IGNORE INTO user_profile (id, basics, preferences, facts, updated_at) VALUES (1, '{}', '{}', '[]', ?)`).run(new Date().toISOString());
+  });
+
+  afterEach(() => { db.close(); });
+
+  it('addCharacterFacts + getAllCharacterFacts roundtrip（与用户事实分离）', () => {
+    store.addCharacterFacts([{ fact: '昔涟最近在学做点心', confidence: 0.7, evidence: 'e', source_event: 'e1', category: 'status' }]);
+    const cf = store.getAllCharacterFacts();
+    expect(cf).toHaveLength(1);
+    expect(cf[0].fact).toContain('做点心');
+    expect(cf[0].category).toBe('status');
+    expect(cf[0].status).toBe('active');
+    // 分类 TTL 生效（status → 14 天）
+    const ttl = new Date(cf[0].valid_until!).getTime() - Date.now();
+    expect(ttl).toBeGreaterThan(13 * 86_400_000);
+    // 用户事实不受影响
+    expect(store.getAllFacts()).toHaveLength(0);
+  });
+
+  it('getActiveCharacterFacts 过滤过期/superseded', () => {
+    store.addCharacterFacts([
+      { fact: '昔涟喜欢雨天', confidence: 0.8, evidence: 'e', source_event: 'e1', category: 'preference' },
+    ]);
+    const all = store.getAllCharacterFacts();
+    all[0].status = 'superseded';
+    db.prepare('UPDATE user_profile SET character_facts = ? WHERE id = 1').run(JSON.stringify(all));
+    expect(store.getActiveCharacterFacts()).toHaveLength(0);
+  });
+});

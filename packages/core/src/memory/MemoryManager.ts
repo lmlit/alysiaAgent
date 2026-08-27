@@ -636,6 +636,8 @@ export class MemoryManager {
     if (event.payload.content) {
       event.payload = { ...event.payload, content: filterPII(event.payload.content as string) };
     }
+    // ★ 8-28 视角标记（memory-character-perspective）：LifeService 回写生活事件带 'self'
+    event.perspective = event.perspective ?? 'interaction';
 
     // Write to event log (immutable)
     this.eventStore.insert(event);
@@ -694,6 +696,14 @@ export class MemoryManager {
         ...this.conversationStore.searchByText(req.query, req.limit),
         ...this.knowledgeStore.searchChunksByText(req.query, Math.min(3, req.limit)),
       ], knobs).slice(0, req.limit);
+    }
+
+    // ★ 8-28 视角过滤（memory-character-perspective）：'self'=只留生活事件（昔涟自己的生活）；
+    //   'interaction'=排除生活事件（互动为主）；缺省不过滤
+    if (req.perspective === 'self') {
+      retrieved = retrieved.filter(r => r.metadata?.source === 'life_event');
+    } else if (req.perspective === 'interaction') {
+      retrieved = retrieved.filter(r => r.metadata?.source !== 'life_event');
     }
 
     return {
@@ -795,6 +805,13 @@ export class MemoryManager {
     return archived;
   }
 
+  /** ★ 8-28 情绪惯性漂移（memory-character-perspective）：生活事件累积 mood_value 驱动
+   *  人格自然漂移（连续开心 → playfulness、连续低落 → empathy），走 apply 5 道护栏。
+   *  由 LifeService.updateMoodValue 极性跨阈值时调用。 */
+  adjustPersonaFromMood(moodValue: number): boolean {
+    return this.personaAdapter.adjustFromMood(moodValue);
+  }
+
   /** ★ 手动调整人格参数（Web 端滑条/按钮）。
    *  包装 PersonaAdapter.apply()，带护栏（|Δ|≤0.1 / 5min 冷却 / 24h 回归 / 显式 bypass）。
    *  param 格式: "tone.warmth" / "speech_style.emoji_usage" / "emotional_range.empathy" 等。
@@ -841,24 +858,31 @@ export class MemoryManager {
   /** ★ 获取当前画像快照（Web 端画像展示）。 */
   getProfileSnapshot(): {
     facts: Array<{ fact: string; confidence: number; source: string; status: string; updatedAt: string; validFrom: string; category: string }>;
+    characterFacts: Array<{ fact: string; confidence: number; source: string; status: string; updatedAt: string; validFrom: string; category: string }>;
     basics: string;
     preferences: string;
   } {
     const profile = this.profileStore.get();
     // ★ 8-28 时间 + 分类透出（profile-facts-timestamps / classification）：Web 画像页展示时间列与分类
-    const facts = (JSON.parse(profile.facts) as Array<{ fact: string; confidence: number; source: string; status: string; updated_at?: string; valid_from?: string; category?: string }>)
+    const toView = (f: { fact: string; confidence: number; source: string; status: string; updated_at?: string; valid_from?: string; category?: string }) => ({
+      fact: f.fact,
+      confidence: f.confidence,
+      source: f.source,
+      status: f.status,
+      updatedAt: f.updated_at ?? '',
+      validFrom: f.valid_from ?? '',
+      category: f.category ?? 'general',
+    });
+    const facts = (JSON.parse(profile.facts) as Parameters<typeof toView>[0][])
       .filter(f => f.status !== 'superseded')
-      .map(f => ({
-        fact: f.fact,
-        confidence: f.confidence,
-        source: f.source,
-        status: f.status,
-        updatedAt: f.updated_at ?? '',
-        validFrom: f.valid_from ?? '',
-        category: f.category ?? 'general',
-      }));
+      .map(toView);
+    // ★ 8-28 角色事实（memory-character-perspective）：昔涟自己的事，Web 画像页并列展示
+    const characterFacts = (JSON.parse(profile.character_facts || '[]') as Parameters<typeof toView>[0][])
+      .filter(f => f.status !== 'superseded')
+      .map(toView);
     return {
       facts,
+      characterFacts,
       basics: profile.basics,
       preferences: profile.preferences,
     };

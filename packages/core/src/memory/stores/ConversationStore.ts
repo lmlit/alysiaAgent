@@ -7,10 +7,11 @@ export class ConversationStore {
   constructor(private db: Database.Database, private vectorStore: IVectorStore | null) {}
 
   async insert(conv: Conversation, vector?: number[]): Promise<void> {
+    // ★ 8-28 character_perspective 列（memory-character-perspective）
     this.db.prepare(`
-      INSERT INTO conversations (id, session_id, summary, participants, topics, key_decisions, message_count, started_at, ended_at, embedding_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(conv.id, conv.session_id, conv.summary, conv.participants, conv.topics, conv.key_decisions, conv.message_count, conv.started_at, conv.ended_at, conv.embedding_id);
+      INSERT INTO conversations (id, session_id, summary, participants, topics, key_decisions, message_count, started_at, ended_at, embedding_id, character_perspective)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(conv.id, conv.session_id, conv.summary, conv.participants, conv.topics, conv.key_decisions, conv.message_count, conv.started_at, conv.ended_at, conv.embedding_id, conv.character_perspective ?? '');
 
     if (vector && this.vectorStore) {
       await this.vectorStore.insert(conv.id, vector, conv.summary, {

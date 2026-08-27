@@ -18,7 +18,8 @@ export class ProfileExtractor {
 
   // ===== Fact 提取 (慢路径，SessionEnd 使用) =====
 
-  async extract(events: MemoryEvent[]): Promise<ProfileFact[]> {
+  /** ★ 8-28 双输出（memory-character-perspective）：用户事实 + 角色事实（昔涟自己的事） */
+  async extract(events: MemoryEvent[]): Promise<{ facts: ProfileFact[]; characterFacts: ProfileFact[] }> {
     // 服务端 ingest 不计算 importance（恒为 0），所以不过滤重要性。
     // 是否值得提取由 LLM 自行判断（prompt 中已要求"不确定则不提取"）。
     const significantEvents = events;
@@ -31,7 +32,7 @@ export class ProfileExtractor {
       .map(e => `[user]: ${e.payload?.content}`)
       .join('\n');
 
-    if (!userMessages.trim()) return [];
+    if (!userMessages.trim()) return { facts: [], characterFacts: [] };
 
     try {
       const response = await this.llm.complete(
@@ -46,22 +47,26 @@ export class ProfileExtractor {
         //   status=当前状态（最近在做什么/近况）；relationship=与昔涟的关系/互动模式；general=其他稳定事实。
         //   状态类（status）过期最快（14 天），身份类最慢（365 天）——判错倾向 identity/general 保守即可。
         'category: "identity"|"preference"|"status"|"relationship"|"general"。' +
-        '返回JSON: {"facts": [{"fact": "...", "confidence": 0.8, "evidence": "...", "directly_stated": true, "transient": false, "category": "preference"}]}',
+        // ★ 8-28 角色视角（memory-character-perspective）：除用户事实外，同时提取对话中
+        //   反映的**昔涟自己的事**（她的感受/态度/变化/习惯/看法）——结构与用户事实相同。
+        //   示例："昔涟在对话中表现出对下雨的喜爱"、"昔涟最近在学做点心"。
+        //   character_facts 留空数组也可以（不是每段对话都有角色事实）。
+        '返回JSON: {"facts": [{"fact": "...", "confidence": 0.8, "evidence": "...", "directly_stated": true, "transient": false, "category": "preference"}], "character_facts": [{"fact": "...", "confidence": 0.6, "evidence": "...", "category": "preference"}]}',
         userMessages
       );
       const parsed = JSON.parse(response);
       // ★ 8-28 分类接线：按 category 设 valid_until（TTL：identity 365d/preference 90d/status 14d/
       //   relationship 90d/general 60d）；transient 兼容（无 category 时 transient=true → status 14 天）
       const ttlMs = (cat: string) => FACT_TTL_BY_CATEGORY[cat as keyof typeof FACT_TTL_BY_CATEGORY] ?? FACT_TTL_BY_CATEGORY.general;
-      return (parsed.facts || []).map((f: { fact: string; confidence: number; evidence: string; directly_stated?: boolean; transient?: boolean; category?: string }, i: number) => {
+      const toFact = (f: { fact: string; confidence: number; evidence: string; directly_stated?: boolean; transient?: boolean; category?: string }, index: number): ProfileFact => {
         const category = (['identity', 'preference', 'status', 'relationship', 'general'] as const).includes(f.category as never)
-          ? (f.category as 'identity' | 'preference' | 'status' | 'relationship' | 'general')
+          ? (f.category as ProfileFact['category'])
           : (f.transient ? 'status' as const : 'general' as const);
         return {
           fact: f.fact,
           confidence: f.confidence,
           evidence: f.evidence,
-          source_event: events[0]?.id || 'unknown',
+          source_event: events[0]?.id || `unknown-${index}`,
           updated_at: new Date().toISOString(),
           // ★ 用户直接陈述的事实标 source='user'（PromptAssembler 显示"[你说过]"且不可被推断覆盖）。
           //   之前硬编码 'inferred'，导致所有事实显示"（待确认）"，被 LLM 打折对待。
@@ -72,9 +77,17 @@ export class ProfileExtractor {
           status: 'active' as const,
           category,
         };
-      });
+      };
+      // ★ 8-28 双输出：用户事实 + 角色事实（角色事实 source 固定 inferred——对话中推断的角色信息）
+      const userFacts = (parsed.facts || []).map((f: Parameters<typeof toFact>[0], i: number) => toFact(f, i));
+      const characterFacts = (parsed.character_facts || []).map((f: Parameters<typeof toFact>[0], i: number) => ({
+        ...toFact(f, i),
+        source: 'inferred' as const,
+        source_event: events[0]?.id || `unknown-c${i}`,
+      }));
+      return { facts: userFacts, characterFacts };
     } catch {
-      return [];
+      return { facts: [], characterFacts: [] };
     }
   }
 

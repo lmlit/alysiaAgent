@@ -123,13 +123,18 @@ extractProfile(sessionId: string): Promise<{
 
 ```typescript
 getProfileSnapshot(): {
-  facts: Array<{ fact: string; confidence: number; source: string; status: string }>;  // 已过滤 superseded
+  facts: Array<{ fact: string; confidence: number; source: string; status: string;
+                 updatedAt: string; validFrom: string; category: string }>;  // 已过滤 superseded
+  characterFacts: Array<{ fact: string; confidence: number; source: string; status: string;
+                          updatedAt: string; validFrom: string; category: string }>;  // ★ 8-28 角色事实（昔涟自己的事）
   basics: string;      // 深度画像摘要（自然语言）
   preferences: string; // 偏好 JSON
 }
 ```
 
-**Web 用途**: 画像展示页。facts 列表 + 深度摘要。
+**Web 用途**: 画像展示页。facts(用户)+ characterFacts(角色)并列 + 时间列 + 分类。
+
+**★ 8-28 补充**: `MemoryManager.ingest(event)` 支持 `event.perspective`('interaction' 默认 | 'self' 生活事件回写);`read({perspective})` 可按视角过滤召回。
 
 ---
 

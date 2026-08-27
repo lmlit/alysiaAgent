@@ -36,12 +36,14 @@ export class PersonaAdapter {
     // Ask LLM to determine adjustment (v2: 包含 memory_config)
     const persona = this.store.get();
     const memoryConfig = this.store.getMemoryConfig();
+    // ★ 8-28 retention_bias 语义转向角色性格（memory-character-perspective）：不再是"偏好讨好用户"，
+    //   而是"昔涟作为三千万世的人对什么记忆更深"——负=刻骨铭心的事记得深，正=温暖明亮的时刻记得深
     const prompt = `当前人格参数: ${JSON.stringify({
       tone: JSON.parse(persona.tone),
       speech: JSON.parse(persona.speech_style),
       emotional: JSON.parse(persona.emotional_range),
       memory: memoryConfig,
-    })}\n用户消息: "${content}"\n判断是否需要调整。记忆旋钮(memory): retention_bias(-1=只记坏的,+1=只记好的), decay_rate(0=不忘,1=秒忘), importance_threshold(0=什么都记,1=只记大事), recency_weight(0=念旧,1=只认最近), confirmation_bias(0=随风倒,1=固执)。返回JSON: {"adjustments": [{"param": "...", "delta": 0.0, "reason": "..."}]}`;
+    })}\n用户消息: "${content}"\n判断是否需要调整。记忆旋钮(memory): retention_bias(-1=作为三千万世轮回者对伤痛/遗憾记得更深,+1=对温暖明亮的时刻记得更深,这是她的性格不是讨好倾向), decay_rate(0=不忘,1=秒忘), importance_threshold(0=什么都记,1=只记大事), recency_weight(0=念旧,1=只认最近), confirmation_bias(0=随风倒,1=固执)。返回JSON: {"adjustments": [{"param": "...", "delta": 0.0, "reason": "..."}]}`;
 
     this.lastSignalProcessed = Date.now();
 
@@ -69,6 +71,19 @@ export class PersonaAdapter {
       // LLM returned invalid JSON, skip
     }
     return null;
+  }
+
+  /** ★ 8-28 情绪惯性漂移（memory-character-perspective）：生活事件累积 mood_value 驱动自然漂移——
+   *  连续开心（moodValue≥15）→ playfulness 微升；连续低落（≤-15）→ empathy 微升。
+   *  走 apply 5 道护栏（Δ 钳制/冷却/同向次数/24h 回归）；24h 回归把参数拉回默认，不会无限累积。 */
+  adjustFromMood(moodValue: number): boolean {
+    if (moodValue >= 15) {
+      return this.apply({ param: 'emotional_range.playfulness', delta: 0.05, reason: '情绪惯性：连续开心，自然更活泼' });
+    }
+    if (moodValue <= -15) {
+      return this.apply({ param: 'emotional_range.empathy', delta: 0.05, reason: '情绪惯性：连续低落，变得更敏感共情' });
+    }
+    return false;
   }
 
   apply(adjustment: PersonaAdjustment, options?: { bypassLimits?: boolean }): boolean {

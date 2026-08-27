@@ -326,3 +326,33 @@ describe('MemoryManager — 8-09 getRecentDialogueBlock', () => {
     expect(mm.getRecentDialogueBlock('sess-empty')).toBe('');
   });
 });
+
+describe('MemoryManager — 8-28 视角与角色事实（memory-character-perspective）', () => {
+  let db: Database.Database;
+  let mm: MemoryManager;
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    initializeDatabase(db);
+    const embedService = { embed: async () => [0], dimension: () => 1024 };
+    const llmService = { complete: async () => '{}' };
+    mm = new MemoryManager(db as any, null, embedService as any, llmService as any);
+  });
+
+  afterEach(() => db.close());
+
+  it('ingest 默认 perspective=interaction；显式 self 透传入库', async () => {
+    await mm.ingest({ id: 'e1', session_id: 's1', source: 'chat', type: 'message', payload: { content: 'hi', role: 'user' }, importance: 0, created_at: new Date().toISOString(), processed: 0 } as any);
+    await mm.ingest({ id: 'e2', session_id: 's1', source: 'chat', type: 'message', payload: { content: '在阳台看书', role: 'assistant' }, importance: 0, created_at: new Date().toISOString(), processed: 0, perspective: 'self' } as any);
+    const rows = db.prepare('SELECT id, perspective FROM events ORDER BY id').all() as Array<{ id: string; perspective: string }>;
+    expect(rows).toEqual([
+      { id: 'e1', perspective: 'interaction' },
+      { id: 'e2', perspective: 'self' },
+    ]);
+  });
+
+  it('getProfileSnapshot 返回 characterFacts（默认空）', () => {
+    const snap = mm.getProfileSnapshot();
+    expect(snap.characterFacts).toEqual([]);
+  });
+});

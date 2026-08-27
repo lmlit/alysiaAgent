@@ -874,3 +874,47 @@ describe('LifeService — 8-27 Agency Window 与对话余波', () => {
     expect(ctx).toContain('开心');
   });
 });
+
+describe('LifeService — 8-28 情绪漂移触发（memory-character-perspective）', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('mood_value 极性跨 ±15 阈值 → 触发 adjustPersonaFromMood', () => {
+    freezeTime(14);
+    const { memoryManager } = makeMocks({
+      // mood_shift 钳制 -5..+5：0 + 5×1.5 = 7.5 → 8，未到阈值——用较高起点跨阈值
+      getLifeSnapshot: vi.fn().mockReturnValue({ currentActivity: '', mood: '开心', intimacy: 30, moodValue: 10, updatedAt: '2026-08-06T14:00:00' }),
+      adjustPersonaFromMood: vi.fn().mockReturnValue(true),
+    });
+    const svc = new LifeService(memoryManager as any, {} as any, { ownerOpenid: 'openid-1' });
+    (svc as any).updateMoodValue(5, new Date('2026-08-06T14:00:00')); // 10 + 5×1.5 = 17.5 → 18 ≥ 15 → 跨阈值
+    expect(memoryManager.adjustPersonaFromMood).toHaveBeenCalledWith(18);
+  });
+
+  it('极性未跨阈值（0 → 10）→ 不触发', () => {
+    freezeTime(14);
+    const { memoryManager } = makeMocks({
+      getLifeSnapshot: vi.fn().mockReturnValue({ currentActivity: '', mood: '平静', intimacy: 30, moodValue: 0, updatedAt: '2026-08-06T14:00:00' }),
+      adjustPersonaFromMood: vi.fn().mockReturnValue(true),
+    });
+    const svc = new LifeService(memoryManager as any, {} as any, { ownerOpenid: 'openid-1' });
+    (svc as any).updateMoodValue(3, new Date('2026-08-06T14:00:00')); // 0 + 3×1.5 = 4.5 → 5,未到 15
+    expect(memoryManager.adjustPersonaFromMood).not.toHaveBeenCalled();
+  });
+
+  it('回写记忆带 perspective=self（生活事件 → 角色视角）', async () => {
+    freezeTime(14);
+    vi.spyOn(Math, 'random').mockReturnValue(0.1);
+    const { memoryManager, qqOff } = makeMocks();
+    const svc = new LifeService(memoryManager as any, qqOff as any, {
+      ownerOpenid: 'openid-1',
+      generateEvent: async () => '{"content":"在阳台看书","type":"internal"}',
+    });
+    await svc.tick();
+    expect(memoryManager.ingest).toHaveBeenCalledWith(
+      expect.objectContaining({ perspective: 'self' })
+    );
+  });
+});

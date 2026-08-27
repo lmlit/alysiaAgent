@@ -282,7 +282,9 @@ export class LifeService {
     return `qq-official-1:private:private_${this.opts.ownerOpenid}`;
   }
 
-  /** 回写主动消息到 EventStore（assistant 角色） */
+  /** 回写主动消息到 EventStore（assistant 角色）。
+   *  ★ 8-28 视角标记（memory-character-perspective）：生活事件标 perspective='self'——
+   *  向量检索可区分"昔涟自己的生活"与"和用户的互动" */
   private async writebackToMemory(content: string): Promise<void> {
     try {
       await this.memoryManager.ingest({
@@ -294,8 +296,9 @@ export class LifeService {
         importance: 0.3,
         created_at: new Date().toISOString(),
         processed: 0,
+        perspective: 'self',
       });
-      logger.debug('[Life] written back to memory (assistant)');
+      logger.debug('[Life] written back to memory (assistant, perspective=self)');
     } catch (err: any) {
       logger.warn(`[Life] writeback failed: ${err.message}`);
     }
@@ -438,7 +441,9 @@ export class LifeService {
   private updateMoodValue(shift?: number, now: Date = new Date()): void {
     try {
       const snapshot = this.memoryManager.getLifeSnapshot();
-      let mv = snapshot.moodValue ?? 0;
+      const prevVal = snapshot.moodValue ?? 0;
+      const prevPolar = prevVal >= 15 ? 'pos' : prevVal <= -15 ? 'neg' : 'flat';
+      let mv = prevVal;
       const lastAt = snapshot.updatedAt ? new Date(snapshot.updatedAt).getTime() : 0;
       // 8h 回归：距上次 mood 更新 elapsed → 向 0 线性回归（满 8h 归 0）
       if (lastAt > 0) {
@@ -455,6 +460,13 @@ export class LifeService {
       // mood 文本联动极性（与 LifeView 心情映射兼容：平静/开心/低落）
       const moodText = mv >= 15 ? '开心' : mv <= -15 ? '低落' : '平静';
       this.memoryManager.updateLifeState({ moodValue: mv, mood: moodText });
+      // ★ 8-28 情绪惯性漂移（memory-character-perspective）：极性跨 ±15 阈值变化 →
+      //   触发人格自然漂移（连续开心 → playfulness、连续低落 → empathy，走 5 道护栏）
+      const newPolar = mv >= 15 ? 'pos' : mv <= -15 ? 'neg' : 'flat';
+      if (prevPolar !== newPolar && newPolar !== 'flat') {
+        const applied = this.memoryManager.adjustPersonaFromMood?.(mv) ?? false;
+        logger.info(`[Life] mood polarity ${prevPolar} → ${newPolar} (mood_value ${snapshot.moodValue} → ${mv}): persona drift ${applied ? 'applied' : 'blocked by guards'}`);
+      }
       logger.debug(`[Life] mood_value ${snapshot.moodValue} → ${mv} (shift ${s})`);
     } catch (err: any) {
       logger.warn(`[Life] mood_value update failed: ${err.message}`);

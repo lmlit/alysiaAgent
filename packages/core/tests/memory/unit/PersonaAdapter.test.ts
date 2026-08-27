@@ -212,3 +212,44 @@ describe('PersonaAdapter', () => {
     expect(r2).toBe(true);
   });
 });
+
+describe('PersonaAdapter — 8-28 情绪惯性漂移（memory-character-perspective）', () => {
+  let db: Database.Database;
+  let store: PersonaStore;
+  let adapter: PersonaAdapter;
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    initializeDatabase(db);
+    store = new PersonaStore(db);
+    adapter = new PersonaAdapter(store, mockLLM);
+  });
+
+  afterEach(() => { db.close(); });
+
+  it('连续开心（moodValue≥15）→ playfulness 微升 0.05', () => {
+    const applied = adapter.adjustFromMood(30);
+    expect(applied).toBe(true);
+    const persona = store.get();
+    const emotional = JSON.parse(persona.emotional_range);
+    expect(emotional.playfulness).toBeCloseTo(0.1 + 0.05, 5); // 默认 0.1 + 0.05
+  });
+
+  it('连续低落（moodValue≤-15）→ empathy 微升 0.05', () => {
+    const applied = adapter.adjustFromMood(-25);
+    expect(applied).toBe(true);
+    const emotional = JSON.parse(store.get().emotional_range);
+    expect(emotional.empathy).toBeCloseTo(0.3 + 0.05, 5); // 默认 0.3 + 0.05
+  });
+
+  it('情绪平稳（|moodValue|<15）→ 不调整', () => {
+    expect(adapter.adjustFromMood(0)).toBe(false);
+    expect(adapter.adjustFromMood(14)).toBe(false);
+    expect(adapter.adjustFromMood(-14)).toBe(false);
+  });
+
+  it('冷却护栏：5min 内重复漂移被拦截', () => {
+    expect(adapter.adjustFromMood(30)).toBe(true);
+    expect(adapter.adjustFromMood(40)).toBe(false); // 冷却中
+  });
+});

@@ -212,6 +212,20 @@ export function initializeDatabase(db: Database.Database): void {
     db.exec(`ALTER TABLE worldbook_entries ADD COLUMN digest TEXT`);
   } catch { /* column already exists */ }
 
+  // ★ 8-28 角色视角（memory-character-perspective）——三处迁移，全部 ALTER + try-catch
+  // 1) user_profile.character_facts：昔涟自己的事实（与 facts 用户事实并列，同 ProfileFact 结构）
+  try {
+    db.exec(`ALTER TABLE user_profile ADD COLUMN character_facts TEXT NOT NULL DEFAULT '[]'`);
+  } catch { /* column already exists */ }
+  // 2) events.perspective：'interaction'(与用户互动) | 'self'(昔涟自己的生活)
+  try {
+    db.exec(`ALTER TABLE events ADD COLUMN perspective TEXT DEFAULT 'interaction'`);
+  } catch { /* column already exists */ }
+  // 3) conversations.character_perspective：会话摘要的角色视角（昔涟在对话中的感受/变化）
+  try {
+    db.exec(`ALTER TABLE conversations ADD COLUMN character_perspective TEXT DEFAULT ''`);
+  } catch { /* column already exists */ }
+
   // ★ 8-27 叙事化重构（life-system-narrative-refactor）迁移——全部 ALTER + try-catch，不 DROP
   // 1) ai_life_state.mood_value：情绪累积值 -100..100（同向加成/反向衰减/8h 回归 0）
   try {

@@ -245,6 +245,57 @@ export class ProfileStore {
     this.replaceFacts(updated);
   }
 
+  // ===== ★ 8-28 角色事实（memory-character-perspective）=====
+  // 昔涟自己的事，与 facts（用户事实）并列。结构完全复用 ProfileFact（分类/TTL/确认机制）。
+  // 冲突检测/过期确认逻辑与用户事实同构（列不同）。
+
+  getAllCharacterFacts(): ProfileFact[] {
+    this.ensureRow();
+    const row = this.db.prepare('SELECT character_facts FROM user_profile WHERE id = 1').get() as { character_facts: string };
+    const raw: Partial<ProfileFact>[] = JSON.parse(row.character_facts || '[]');
+    return raw.map(migrateFact);
+  }
+
+  getActiveCharacterFacts(): ProfileFact[] {
+    const all = this.getAllCharacterFacts();
+    const now = NOW();
+    return all
+      .filter(f => f.status === 'active')
+      .filter(f => f.valid_until === null || f.valid_until > now);
+  }
+
+  /** 批量插入角色事实（同 addFacts 冲突检测：normalizeKey + 子串包含） */
+  addCharacterFacts(newFacts: ProfileFact[]): ProfileFact[] {
+    const all = this.getAllCharacterFacts();
+    const added: ProfileFact[] = [];
+
+    for (const fact of newFacts) {
+      const key = normalizeKey(fact.fact);
+      const existingIdx = all.findIndex(
+        f => f.status === 'active' && (normalizeKey(f.fact) === key || normContains(normalizeKey(f.fact), key))
+      );
+      if (existingIdx >= 0) {
+        all[existingIdx] = { ...all[existingIdx], status: 'superseded', valid_until: NOW(), updated_at: NOW() };
+      }
+      const migrated = migrateFact(fact);
+      migrated.status = 'active';
+      migrated.valid_from = migrated.valid_from || NOW();
+      migrated.updated_at = NOW();
+      if (!migrated.valid_until && fact.category && FACT_TTL_BY_CATEGORY[fact.category]) {
+        migrated.valid_until = new Date(Date.now() + FACT_TTL_BY_CATEGORY[fact.category]).toISOString();
+      }
+      all.push(migrated);
+      added.push(migrated);
+    }
+
+    if (added.length > 0) {
+      this.ensureRow();
+      this.db.prepare('UPDATE user_profile SET character_facts = ?, updated_at = ? WHERE id = 1')
+        .run(JSON.stringify(all), NOW());
+    }
+    return added;
+  }
+
   setUpdated(): void {
     this.ensureRow();
     this.db.prepare('UPDATE user_profile SET updated_at = ? WHERE id = 1')

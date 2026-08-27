@@ -27,7 +27,7 @@ describe('ProfileExtractor', () => {
 
   it('should extract facts from events', async () => {
     const events = [makeEvent('我做后端做了5年了')];
-    const facts = await extractor.extract(events);
+    const { facts } = await extractor.extract(events);
     expect(facts).toHaveLength(1);
     expect(facts[0].fact).toBe('用户是后端工程师');
     expect(facts[0].confidence).toBe(0.9);
@@ -35,7 +35,7 @@ describe('ProfileExtractor', () => {
 
   it('directly_stated=true → source=user（用户亲口说的事实，显示"[你说过]"）', async () => {
     const events = [makeEvent('我做后端做了5年了')];
-    const facts = await extractor.extract(events);
+    const { facts } = await extractor.extract(events);
     expect(facts[0].source).toBe('user');
   });
 
@@ -49,7 +49,7 @@ describe('ProfileExtractor', () => {
       }),
     };
     const extractor2 = new ProfileExtractor(mockInferredLLM);
-    const facts = await extractor2.extract([makeEvent('用户点了奶茶')]);
+    const { facts } = await extractor2.extract([makeEvent('用户点了奶茶')]);
     expect(facts[0].source).toBe('inferred');
     expect(facts[1].source).toBe('user');
   });
@@ -121,7 +121,7 @@ describe('ProfileExtractor', () => {
       }),
     };
     const extractor2 = new ProfileExtractor(mockTransientLLM);
-    const facts = await extractor2.extract([makeEvent('我午餐吃了香菜拌牛肉')]);
+    const { facts } = await extractor2.extract([makeEvent('我午餐吃了香菜拌牛肉')]);
     expect(facts).toHaveLength(1);
     expect(facts[0].category).toBe('status');
     const ttl = new Date(facts[0].valid_until!).getTime() - Date.now();
@@ -139,7 +139,7 @@ describe('ProfileExtractor', () => {
       }),
     };
     const extractor2 = new ProfileExtractor(mockStableLLM);
-    const facts = await extractor2.extract([makeEvent('我在长沙')]);
+    const { facts } = await extractor2.extract([makeEvent('我在长沙')]);
     expect(facts).toHaveLength(2);
     for (const f of facts) {
       expect(f.category).toBe('general');
@@ -158,7 +158,7 @@ describe('ProfileExtractor', () => {
       }),
     };
     const extractor2 = new ProfileExtractor(mockLLM);
-    const facts = await extractor2.extract([makeEvent('我定居长沙')]);
+    const { facts } = await extractor2.extract([makeEvent('我定居长沙')]);
     expect(facts[0].category).toBe('identity');
     const ttl = new Date(facts[0].valid_until!).getTime() - Date.now();
     expect(ttl).toBeGreaterThan(364 * 86_400_000);
@@ -171,7 +171,29 @@ describe('ProfileExtractor', () => {
     };
     const emptyExtractor = new ProfileExtractor(mockEmptyLLM);
     const events = [makeEvent('好的')];
-    const facts = await emptyExtractor.extract(events);
+    const { facts } = await emptyExtractor.extract(events);
     expect(facts).toHaveLength(0);
+  });
+
+  // ★ 8-28 角色视角（memory-character-perspective）：双输出
+  it('character_facts 双输出：同一调用返回角色事实（source=inferred）', async () => {
+    const mockLLM2: ILLMService = {
+      complete: async () => JSON.stringify({
+        facts: [{ fact: '用户在学钢琴', confidence: 0.8, evidence: '我最近在学钢琴', directly_stated: true }],
+        character_facts: [{ fact: '昔涟聊到钢琴时显得很感兴趣', confidence: 0.6, evidence: '用户说最近在学钢琴' }],
+      }),
+    };
+    const extractor2 = new ProfileExtractor(mockLLM2);
+    const { facts, characterFacts } = await extractor2.extract([makeEvent('我最近在学钢琴')]);
+    expect(facts).toHaveLength(1);
+    expect(characterFacts).toHaveLength(1);
+    expect(characterFacts[0].fact).toContain('钢琴');
+    expect(characterFacts[0].source).toBe('inferred'); // 角色事实都是推断
+    expect(characterFacts[0].status).toBe('active');
+  });
+
+  it('character_facts 缺失 → 空数组（不是每段对话都有角色事实）', async () => {
+    const { characterFacts } = await extractor.extract([makeEvent('我做后端做了5年了')]);
+    expect(characterFacts).toHaveLength(0);
   });
 });

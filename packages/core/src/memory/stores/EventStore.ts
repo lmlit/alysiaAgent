@@ -23,9 +23,10 @@ export class EventStore {
   }
 
   insert(event: MemoryEvent): void {
+    // ★ 8-28 perspective 列（memory-character-perspective）
     this.db.prepare(`
-      INSERT OR REPLACE INTO events (id, session_id, source, type, payload, importance, created_at, processed)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT OR REPLACE INTO events (id, session_id, source, type, payload, importance, created_at, processed, perspective)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       event.id,
       event.session_id,
@@ -34,7 +35,8 @@ export class EventStore {
       JSON.stringify(event.payload),
       event.importance,
       event.created_at,
-      event.processed
+      event.processed,
+      event.perspective ?? 'interaction'
     );
   }
 
