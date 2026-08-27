@@ -26,14 +26,16 @@ import { logger } from '@alysia/core';
 
 // ── 表情包标记协议：文案内 [表情包:名字] → 图片发送 ──────
 // 提取为纯函数便于单测（不依赖 adapter 实例）。
+// ★ 8-27 兼容全角括号/冒号（LLM 偶发输出 ［表情包:名字］/［表情包：名字］——
+//   8-27 实测全角标记未被解析、原样发给用户 → 双保险解析）
 export function parseStickerMarks(text: string): { text: string; marks: string[] } {
   const marks: string[] = [];
-  for (const m of text.matchAll(/\[表情包:([^\]]+)\]/g)) {
+  for (const m of text.matchAll(/[\[［]\s*表情包\s*[:：]\s*([^\]］]+)\s*[\]］]/g)) {
     marks.push(m[1].trim());
   }
   // 移除标记后可能残留相邻空格/换行，压缩为单个
   const clean = text
-    .replace(/\[表情包:[^\]]+\]/g, '')
+    .replace(/[\[［]\s*表情包\s*[:：]\s*[^\]］]+[\]］]/g, '')
     .replace(/\n{3,}/g, '\n\n')
     .replace(/ {2,}/g, ' ')
     .trim();

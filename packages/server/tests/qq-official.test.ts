@@ -35,4 +35,24 @@ describe('parseStickerMarks — 表情包标记协议解析', () => {
     const { text } = parseStickerMarks('第一段\n\n\n\n第二段');
     expect(text).toBe('第一段\n\n第二段');
   });
+
+  // ★ 8-27 全角兼容：LLM 偶发输出 ［表情包:名字］/［表情包：名字］（实测全角未被解析
+  //   原样发给用户 → 8-27 修复，解析端双保险）
+  it('全角方括号 ［表情包:名字］→ 同样解析移除', () => {
+    const { text, marks } = parseStickerMarks('晚安好梦哦 ［表情包:睡觉］');
+    expect(marks).toEqual(['睡觉']);
+    expect(text).toBe('晚安好梦哦');
+  });
+
+  it('全角冒号 ［表情包：名字］→ 同样解析移除', () => {
+    const { text, marks } = parseStickerMarks('［表情包：嘻嘻］今天心情不错');
+    expect(marks).toEqual(['嘻嘻']);
+    expect(text).toBe('今天心情不错');
+  });
+
+  it('半角全角混用：全部提取', () => {
+    const { text, marks } = parseStickerMarks('开心 [表情包:开心] 又 ［表情包:害羞］');
+    expect(marks).toEqual(['开心', '害羞']);
+    expect(text).toBe('开心 又');
+  });
 });

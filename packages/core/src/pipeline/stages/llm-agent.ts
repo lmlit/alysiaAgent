@@ -90,7 +90,7 @@ export class LLMAgentStage implements Stage {
     if (event.getMessageType() === MessageType.PRIVATE) {
       const stickers = this.ctx.memoryManager.listStickers();
       if (stickers.length > 0) {
-        systemPrompt += `\n\n[表情包使用]\n你可以用表情包回应情绪（开心/难过/撒娇/困了等），在回复文案中插入标记: [表情包:名字]\n可用表情包: ${stickers.map(s => s.name).join('、')}\n示例: "晚安好梦哦 [表情包:睡觉]"\n约束: 每次回复最多插入一个表情包标记，情绪平淡时不要插入。`;
+        systemPrompt += `\n\n[表情包使用]\n你可以用表情包回应情绪（开心/难过/撒娇/困了等），在回复文案中插入标记: [表情包:名字]\n★ 必须使用半角方括号和冒号（[表情包:名字]），禁止全角（［表情包：名字］）——全角标记无法被解析\n可用表情包: ${stickers.map(s => s.name).join('、')}\n示例: "晚安好梦哦 [表情包:睡觉]"\n约束: 每次回复最多插入一个表情包标记，情绪平淡时不要插入。`;
       }
     }
 
