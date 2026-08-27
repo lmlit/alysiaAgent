@@ -1,6 +1,7 @@
 // src/memory/stores/ProfileStore.ts
 import type Database from 'better-sqlite3';
 import type { UserProfile, ProfileFact } from '../types.js';
+import { FACT_TTL_BY_CATEGORY, FACT_CONFIRM_WINDOW_MS } from '../types.js';
 
 const NOW = () => new Date().toISOString();
 
@@ -36,6 +37,8 @@ function migrateFact(f: Partial<ProfileFact>): ProfileFact {
     valid_from: f.valid_from || f.updated_at || NOW(),
     valid_until: f.valid_until ?? null,
     status: f.status || 'active',
+    // ★ 8-28 分类兜底：存量事实 → general（不强制迁移；新写入由提取器/调用方给分类）
+    category: f.category ?? 'general',
   };
 }
 
@@ -120,7 +123,12 @@ export class ProfileStore {
       ...fact,
       status: 'active',
       valid_from: fact.valid_from || NOW(),
-      valid_until: fact.valid_until ?? null,
+      // ★ 8-28 分类过期兜底（profile-facts-classification-confirm）：未显式给 valid_until
+      //   且 category 明确 → 按分类 TTL 设过期（身份 365d/偏好 90d/状态 14d/关系 90d/默认 60d）；
+      //   旧调用无 category → null 保持旧行为（永不过期）
+      valid_until: fact.valid_until ?? (fact.category && FACT_TTL_BY_CATEGORY[fact.category]
+        ? new Date(Date.now() + FACT_TTL_BY_CATEGORY[fact.category]).toISOString()
+        : null),
       updated_at: NOW(),
     });
 
@@ -159,6 +167,11 @@ export class ProfileStore {
       migrated.status = 'active';
       migrated.valid_from = migrated.valid_from || NOW();
       migrated.updated_at = NOW();
+      // ★ 8-28 分类过期兜底（同 addFact）：按**原始** fact.category 判断——
+      //   旧调用没传 category → 保持 null（永不过期，向后兼容）；传了 → 按 TTL
+      if (!migrated.valid_until && fact.category && FACT_TTL_BY_CATEGORY[fact.category]) {
+        migrated.valid_until = new Date(Date.now() + FACT_TTL_BY_CATEGORY[fact.category]).toISOString();
+      }
       all.push(migrated);
       added.push(migrated);
     }
@@ -242,5 +255,64 @@ export class ProfileStore {
     this.ensureRow();
     this.db.prepare('UPDATE user_profile SET facts = ?, updated_at = ? WHERE id = 1')
       .run(JSON.stringify(facts), NOW());
+  }
+
+  // ===== ★ 8-28 过期确认（profile-facts-classification-confirm）=====
+
+  /** 定位 key：事实归一化文本（normalizeKey），无 schema 改动即可稳定引用单条事实 */
+  factKeyOf(factText: string): string {
+    return normalizeKey(factText);
+  }
+
+  /** 过期清理：valid_until 已过且超过确认窗口（3 天）的 active 事实 → expired（不反复打扰）。
+   *  返回清理条数。调用方在读取待确认列表前执行。 */
+  expireStaleFacts(): number {
+    const all = this.getAllFacts();
+    const now = Date.now();
+    let n = 0;
+    for (const f of all) {
+      if (f.status === 'active' && f.valid_until && now - new Date(f.valid_until).getTime() > FACT_CONFIRM_WINDOW_MS) {
+        f.status = 'expired';
+        n++;
+      }
+    }
+    if (n > 0) this.writeFacts(all);
+    return n;
+  }
+
+  /** 确认事实：stillValid=true → 按分类续期一个周期；false → superseded。key 为 factKeyOf 归一化文本 */
+  confirmFact(key: string, stillValid: boolean): boolean {
+    const all = this.getAllFacts();
+    const idx = all.findIndex(f => normalizeKey(f.fact) === key);
+    if (idx < 0) return false;
+    const f = all[idx];
+    if (stillValid) {
+      f.status = 'active';
+      f.valid_until = new Date(Date.now() + FACT_TTL_BY_CATEGORY[f.category]).toISOString();
+      f.updated_at = NOW();
+    } else {
+      f.status = 'superseded';
+      f.valid_until = NOW();
+      f.updated_at = NOW();
+    }
+    this.writeFacts(all);
+    return true;
+  }
+
+  /** 待确认事实：过期 ≤3 天的 active 事实（先清理超窗事实）。
+   *  PromptAssembler 注入【待确认的事实】块 + MemoryManager 工具链路共用 */
+  listPendingConfirmFacts(): Array<{ factId: string; fact: string; validFrom: string; category: string }> {
+    this.expireStaleFacts();
+    const now = Date.now();
+    return this.getAllFacts()
+      .filter(f => f.status === 'active' && f.valid_until)
+      .filter(f => new Date(f.valid_until!).getTime() <= now)
+      .filter(f => now - new Date(f.valid_until!).getTime() <= FACT_CONFIRM_WINDOW_MS)
+      .map(f => ({
+        factId: normalizeKey(f.fact),
+        fact: f.fact,
+        validFrom: f.valid_from,
+        category: f.category,
+      }));
   }
 }

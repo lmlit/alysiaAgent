@@ -19,10 +19,13 @@ function makeMm(overrides: Record<string, any> = {}) {
 }
 
 describe('createSelfEvolveTools', () => {
-  it('注册 4 个工具，名字与参数形状正确', () => {
+  it('注册 5 个工具，名字与参数形状正确', () => {
     const tools = createSelfEvolveTools(makeMm());
     const names = tools.map(t => t.name);
-    expect(names).toEqual(['write_worldbook', 'add_life_template', 'delete_worldbook_entry', 'delete_life_template']);
+    expect(names).toEqual(['write_worldbook', 'add_life_template', 'delete_worldbook_entry', 'confirm_profile_fact', 'delete_life_template']);
+    // ★ 8-28 确认工具：参数形状 + 仅当用户明确回答才调用
+    expect(tools[3].parameters.required).toEqual(['fact_id', 'still_valid']);
+    expect(tools[3].description).toContain('仅当对话中用户明确回答');
     const wb = tools[0];
     expect(wb.parameters.required).toEqual(['trigger_keys', 'content']);
     // 行为准则硬约束
@@ -79,8 +82,32 @@ describe('createSelfEvolveTools', () => {
   it('delete_life_template：按关键词匹配删除', async () => {
     const mm = makeMm();
     const tools = createSelfEvolveTools(mm);
-    const result = await tools[3].handler({ keyword: '多肉' });
+    const result = await tools[4].handler({ keyword: '多肉' });
     expect(mm.deleteLifeTemplate).toHaveBeenCalledWith('lt_self_1');
     expect(result).toContain('删掉了');
+  });
+
+  // ★ 8-28 过期确认（profile-facts-classification-confirm）
+  it('confirm_profile_fact：转发 confirmProfileFact（确认 → 续期文案）', async () => {
+    const mm = makeMm({ confirmProfileFact: vi.fn().mockReturnValue(true) });
+    const tools = createSelfEvolveTools(mm);
+    const result = await tools[3].handler({ fact_id: '用户之前玩绝区零', still_valid: true });
+    expect(mm.confirmProfileFact).toHaveBeenCalledWith('用户之前玩绝区零', true);
+    expect(result).toContain('还作数');
+  });
+
+  it('confirm_profile_fact：否认 → 忘掉文案', async () => {
+    const mm = makeMm({ confirmProfileFact: vi.fn().mockReturnValue(true) });
+    const tools = createSelfEvolveTools(mm);
+    const result = await tools[3].handler({ fact_id: '用户以前在长沙', still_valid: false });
+    expect(mm.confirmProfileFact).toHaveBeenCalledWith('用户以前在长沙', false);
+    expect(result).toContain('忘掉');
+  });
+
+  it('confirm_profile_fact：未匹配 → 提示找不到', async () => {
+    const mm = makeMm({ confirmProfileFact: vi.fn().mockReturnValue(false) });
+    const tools = createSelfEvolveTools(mm);
+    const result = await tools[3].handler({ fact_id: '不存在的事实', still_valid: true });
+    expect(result).toContain('没有找到');
   });
 });

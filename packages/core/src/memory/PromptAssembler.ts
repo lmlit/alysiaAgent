@@ -111,6 +111,24 @@ ${rangeText}`;
       }
     }
 
+    // ★ 8-28 过期确认（profile-facts-classification-confirm）：过期 ≤3 天的画像事实 →
+    //   【待确认的事实】块（≤2 条）——昔涟在合适时机自然询问，用户回答后调 confirm_profile_fact 记录
+    try {
+      const pending = this.profileStore.listPendingConfirmFacts();
+      if (pending.length > 0) {
+        const pendingLines = pending.slice(0, 2).map(f => {
+          const d = new Date(f.validFrom);
+          const dateNote = Number.isNaN(d.getTime()) ? '' : ` (${d.getMonth() + 1}月${d.getDate()}日记录的)`;
+          return `- ${f.fact}${dateNote}`;
+        }).join('\n');
+        const pendingBlock = `[待确认的事实]\n这些关于轻月的事你可能记错了——想确认的话可以在合适的时机自然地问（一次最多问一条），\n问清后用 confirm_profile_fact 工具记录回答（确认 → 续期；否认 → 忘掉）：\n${pendingLines}`;
+        if (budget.canFit(pendingBlock)) {
+          budget.reserve(pendingBlock);
+          blocks.push(pendingBlock);
+        }
+      }
+    } catch { /* pending confirm injection is non-fatal */ }
+
     // Recent conversations
     if (recentConvs.length > 0) {
       const recentBlock = `[最近对话]\n${recentConvs.map(c => `- ${c.summary}`).join('\n')}`;

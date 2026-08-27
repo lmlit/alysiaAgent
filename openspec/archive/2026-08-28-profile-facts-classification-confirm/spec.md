@@ -102,7 +102,7 @@ CREATE TABLE user_profile (
 | `valid_from` | string | 生效时间 (ISO) |
 | `valid_until` | string\|null | 失效时间，null=永不过期 |
 | `status` | `'active'`\|`'superseded'`\|`'expired'` | 状态: active=有效, superseded=被替代, expired=自然过期 |
-| `category` | `'identity'`\|`'preference'`\|`'status'`\|`'relationship'`\|`'general'` | ★ 8-28 分类（profile-facts-classification-confirm）：决定过期时长 |
++ | `category` | `'identity'`\|`'preference'`\|`'status'`\|`'relationship'`\|`'general'` | ★ 8-28 分类（profile-facts-classification-confirm）：决定过期时长 |
 
 **冲突解决规则**:
 - 同 normalizeKey → 旧条 `status='superseded'`, `valid_until=now`（不删除，留审计链）
@@ -110,16 +110,16 @@ CREATE TABLE user_profile (
 - `source='user'` 优先级最高，不会被 `inferred` 覆盖
 - 新写入默认 `source='inferred'`, `confidence=0.4`, `status='active'`
 
-**★ 8-28 分类过期（profile-facts-classification-confirm）**：
-- 分类过期时长：identity 365 天 / preference 90 天 / status 14 天 / relationship 90 天 / general 60 天；
-  写入时按分类设 valid_until（显式传入 valid_until 优先）；存量 null 保持不过期（不强制迁移）
-- 分类来源：ProfileExtractor 提取时 LLM 判断（prompt 加分类要求）
-- **过期确认闭环**（对话中自然问，不推送）：
-  - `listPendingConfirmFacts()`：valid_until 在过去 3 天内且 status='active' → 待确认
-  - PromptAssembler 注入【待确认的事实】块（≤2 条，`- 事实 (M月d日记录的)`）——昔涟在合适时机自然询问
-  - 工具 `confirm_profile_fact(fact_id, still_valid)`：确认 → 按分类重设 valid_until（续期一个周期）；
-    否认 → superseded
-  - 过期超 3 天未确认 → 自动 status='expired'（不反复打扰）
++ **★ 8-28 分类过期（profile-facts-classification-confirm）**：
++ - 分类过期时长：identity 365 天 / preference 90 天 / status 14 天 / relationship 90 天 / general 60 天；
++   写入时按分类设 valid_until（显式传入 valid_until 优先）；存量 null 保持不过期（不强制迁移）
++ - 分类来源：ProfileExtractor 提取时 LLM 判断（prompt 加分类要求）
++ - **过期确认闭环**（对话中自然问，不推送）：
++   - `listPendingConfirmFacts()`：valid_until 在过去 3 天内且 status='active' → 待确认
++   - PromptAssembler 注入【待确认的事实】块（≤2 条，`- 事实 (M月d日记录的)`）——昔涟在合适时机自然询问
++   - 工具 `confirm_profile_fact(fact_id, still_valid)`：确认 → 按分类重设 valid_until（续期一个周期）；
++     否认 → superseded
++   - 过期超 3 天未确认 → 自动 status='expired'（不反复打扰）
 
 **★ 8-28 时间标注（profile-facts-timestamps）**：
 - 数据层时间字段（valid_from/updated_at）已齐全，**展示层补上**：

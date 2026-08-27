@@ -23,7 +23,7 @@ import { formatLocalTime, localDateKey, localDateKeyFromISO } from '../utils/tim
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { createHash } from 'crypto';
 import type { MemoryEvent, MemoryReadRequest, MemoryReadResult, MemoryConfig, KnowledgeDoc, SearchResult, WorldbookEntry } from './types.js';
-import { DEFAULT_MEMORY_CONFIG } from './types.js';
+import { DEFAULT_MEMORY_CONFIG, FACT_CONFIRM_WINDOW_MS } from './types.js';
 import type { IVectorStore } from './interfaces/IVectorStore.js';
 import type { IEmbedService } from './interfaces/IEmbedService.js';
 import type { ILLMService } from './interfaces/ILLMService.js';
@@ -231,6 +231,7 @@ export class MemoryManager {
       valid_from: new Date().toISOString(),
       valid_until: null as string | null,
       status: 'active' as const,
+      category: 'general' as const, // ★ 8-28 纠正事实：类别由后续提取器细分，兜底 general
     };
 
     return this.profileStore.supersede(signal.target, newFact);
@@ -839,13 +840,13 @@ export class MemoryManager {
 
   /** ★ 获取当前画像快照（Web 端画像展示）。 */
   getProfileSnapshot(): {
-    facts: Array<{ fact: string; confidence: number; source: string; status: string; updatedAt: string; validFrom: string }>;
+    facts: Array<{ fact: string; confidence: number; source: string; status: string; updatedAt: string; validFrom: string; category: string }>;
     basics: string;
     preferences: string;
   } {
     const profile = this.profileStore.get();
-    // ★ 8-28 时间字段透出（profile-facts-timestamps）：Web 画像页展示事实时间
-    const facts = (JSON.parse(profile.facts) as Array<{ fact: string; confidence: number; source: string; status: string; updated_at?: string; valid_from?: string }>)
+    // ★ 8-28 时间 + 分类透出（profile-facts-timestamps / classification）：Web 画像页展示时间列与分类
+    const facts = (JSON.parse(profile.facts) as Array<{ fact: string; confidence: number; source: string; status: string; updated_at?: string; valid_from?: string; category?: string }>)
       .filter(f => f.status !== 'superseded')
       .map(f => ({
         fact: f.fact,
@@ -854,12 +855,39 @@ export class MemoryManager {
         status: f.status,
         updatedAt: f.updated_at ?? '',
         validFrom: f.valid_from ?? '',
+        category: f.category ?? 'general',
       }));
     return {
       facts,
       basics: profile.basics,
       preferences: profile.preferences,
     };
+  }
+
+  // ===== ★ 8-28 过期确认（profile-facts-classification-confirm）=====
+
+  /** 待确认事实：过期 ≤3 天的 active 事实（先清理超窗事实）。昔涟对话中可自然询问。 */
+  listPendingConfirmFacts(): Array<{ factId: string; fact: string; validFrom: string; category: string }> {
+    try {
+      return this.profileStore.listPendingConfirmFacts();
+    } catch (err: any) {
+      logger.warn(`[Profile] pending confirm list failed: ${err.message}`);
+      return [];
+    }
+  }
+
+  /** 确认事实：stillValid=true → 按分类续期；false → superseded（不删除，留审计链）。
+   *  factId 为事实完整文本（工具/LLM 传原文），内部归一化匹配 */
+  confirmProfileFact(factId: string, stillValid: boolean): boolean {
+    try {
+      const key = this.profileStore.factKeyOf(factId);
+      const ok = this.profileStore.confirmFact(key, stillValid);
+      if (ok) logger.info(`[Profile] fact confirmed: still_valid=${stillValid} (${factId.slice(0, 30)})`);
+      return ok;
+    } catch (err: any) {
+      logger.warn(`[Profile] fact confirm failed: ${err.message}`);
+      return false;
+    }
   }
 
   /** ★ 获取人格快照（Web 端人格状态展示）。 */

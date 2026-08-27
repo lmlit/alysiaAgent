@@ -156,6 +156,8 @@ export interface PersonaAdjustment {
   explicit?: boolean; // true = bypass cooldown/delta limits (user explicit directive)
 }
 
+export type ProfileFactCategory = 'identity' | 'preference' | 'status' | 'relationship' | 'general';
+
 export interface ProfileFact {
   fact: string;
   confidence: number;  // 0.0 - 1.0
@@ -170,7 +172,22 @@ export interface ProfileFact {
   valid_until: string | null;
   /** 状态: active=有效, superseded=被新事实替代, expired=自然过期 */
   status: 'active' | 'superseded' | 'expired';
+  /** ★ 8-28 分类（profile-facts-classification-confirm）：身份/偏好/状态/关系/默认——决定过期时长 */
+  category: ProfileFactCategory;
 }
+
+/** ★ 8-28 分类过期时长（ms）：identity 365 天 / preference 90 天 / status 14 天 /
+ *  relationship 90 天 / general 60 天。写入时按分类设 valid_until（显式传入优先） */
+export const FACT_TTL_BY_CATEGORY: Record<ProfileFactCategory, number> = {
+  identity: 365 * 86_400_000,
+  preference: 90 * 86_400_000,
+  status: 14 * 86_400_000,
+  relationship: 90 * 86_400_000,
+  general: 60 * 86_400_000,
+};
+
+/** ★ 8-28 过期确认窗口：valid_until 在过去 N 天内且 active → 待确认（超窗口自动 expired） */
+export const FACT_CONFIRM_WINDOW_MS = 3 * 86_400_000;
 
 // Bitmask constants for MemoryEvent.processed
 export const PROCESSED_NONE     = 0;

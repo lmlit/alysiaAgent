@@ -101,3 +101,87 @@ describe('ProfileStore — 8-09 包含去重', () => {
     expect(store.getFacts()).toHaveLength(2); // 互不包含，都保留
   });
 });
+
+describe('ProfileStore — 8-28 分类过期 + 确认闭环', () => {
+  let db: Database.Database;
+  let store: ProfileStore;
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    initializeDatabase(db);
+    store = new ProfileStore(db);
+    db.prepare(`INSERT OR IGNORE INTO user_profile (id, basics, preferences, facts, updated_at) VALUES (1, '{}', '{}', '[]', ?)`).run(new Date().toISOString());
+  });
+
+  afterEach(() => { db.close(); });
+
+  it('分类过期时长：status→14天 / identity→365天 / general→60天', () => {
+    const now = Date.now();
+    const base = { confidence: 0.8, evidence: 'e', source_event: 'e1', updated_at: new Date().toISOString(), status: 'active' as const };
+    store.addFacts([{ ...base, fact: '用户最近在玩绝区零', category: 'status' }]);
+    store.addFacts([{ ...base, fact: '用户在长沙定居', category: 'identity' }]);
+    store.addFacts([{ ...base, fact: '用户一般十一点睡', category: 'general' }]);
+    const all = store.getAllFacts();
+    const by = (f: string) => all.find(x => x.fact === f)!;
+    expect(new Date(by('用户最近在玩绝区零').valid_until!).getTime() - now).toBeCloseTo(14 * 86_400_000, -5);
+    expect(new Date(by('用户在长沙定居').valid_until!).getTime() - now).toBeCloseTo(365 * 86_400_000, -5);
+    expect(new Date(by('用户一般十一点睡').valid_until!).getTime() - now).toBeCloseTo(60 * 86_400_000, -5);
+  });
+
+  it('旧调用无 category → valid_until null（永不过期，向后兼容）', () => {
+    store.addFacts([{ fact: '老数据', confidence: 0.5, evidence: 'e', source_event: 'e1', updated_at: new Date().toISOString(), status: 'active' }]);
+    expect(store.getAllFacts()[0].valid_until).toBeNull();
+    expect(store.getAllFacts()[0].category).toBe('general'); // migrateFact 兜底
+  });
+
+  it('待确认窗口：过期 1 天 → pending；过期 5 天 → 自动 expired 清理', () => {
+    const now = Date.now();
+    const mk = (fact: string, daysAgo: number, cat: 'status' | 'general') => ({
+      fact, confidence: 0.8, evidence: 'e', source_event: 'e1',
+      updated_at: new Date(now - (daysAgo + 14) * 86_400_000).toISOString(),
+      source: 'inferred' as const,
+      valid_from: new Date(now - (daysAgo + 14) * 86_400_000).toISOString(),
+      valid_until: new Date(now - daysAgo * 86_400_000).toISOString(), // 过期 daysAgo 天
+      status: 'active' as const, category: cat,
+    });
+    store.addFacts([mk('用户之前玩绝区零', 1, 'status'), mk('用户以前的旧习惯', 5, 'general')]);
+    // 1 天前过期的在待确认列表
+    const pending = store.listPendingConfirmFacts();
+    expect(pending.map(p => p.fact)).toEqual(['用户之前玩绝区零']);
+    // 5 天前过期的已被清理为 expired
+    const all = store.getAllFacts();
+    expect(all.find(f => f.fact === '用户以前的旧习惯')?.status).toBe('expired');
+  });
+
+  it('confirmFact 确认 → 按分类续期一个周期', () => {
+    const now = Date.now();
+    store.addFacts([{
+      fact: '用户之前玩绝区零', confidence: 0.8, evidence: 'e', source_event: 'e1',
+      updated_at: new Date().toISOString(), source: 'inferred',
+      valid_from: new Date(now - 15 * 86_400_000).toISOString(),
+      valid_until: new Date(now - 86_400_000).toISOString(), status: 'active', category: 'status',
+    }]);
+    const key = store.factKeyOf('用户之前玩绝区零');
+    expect(store.confirmFact(key, true)).toBe(true);
+    const f = store.getAllFacts().find(x => x.fact === '用户之前玩绝区零')!;
+    expect(f.status).toBe('active');
+    expect(new Date(f.valid_until!).getTime() - now).toBeCloseTo(14 * 86_400_000, -5); // 续期 14 天
+  });
+
+  it('confirmFact 否认 → superseded（不删除）', () => {
+    store.addFacts([{
+      fact: '用户以前在长沙', confidence: 0.8, evidence: 'e', source_event: 'e1',
+      updated_at: new Date().toISOString(), source: 'inferred',
+      valid_from: new Date().toISOString(), valid_until: new Date(Date.now() - 86_400_000).toISOString(),
+      status: 'active', category: 'identity',
+    }]);
+    const key = store.factKeyOf('用户以前在长沙');
+    expect(store.confirmFact(key, false)).toBe(true);
+    const f = store.getAllFacts().find(x => x.fact === '用户以前在长沙')!;
+    expect(f.status).toBe('superseded');
+  });
+
+  it('confirmFact 未匹配 key → false', () => {
+    expect(store.confirmFact('不存在的归一化文本', true)).toBe(false);
+  });
+});

@@ -118,6 +118,33 @@ export function createSelfEvolveTools(memoryManager: MemoryManager): ToolDefinit
       },
     },
     {
+      // ★ 8-28 过期确认（profile-facts-classification-confirm）：画像事实过期后昔涟
+      //   在对话中自然询问（【待确认的事实】块），用户回答后调用本工具记录
+      name: 'confirm_profile_fact',
+      description: '确认一条画像事实是否仍有效。**仅当对话中用户明确回答了你关于待确认事实的询问时调用**' +
+        '（如你问"你还在长沙吗？"→ 用户说"在/是/还住这" → still_valid=true；"不在了/搬走了" → still_valid=false）。' +
+        '事实内容来自【待确认的事实】块。调用后自然接话，不要汇报操作细节。',
+      parameters: {
+        type: 'object',
+        properties: {
+          fact_id: {
+            type: 'string',
+            description: '待确认事实的完整文本（【待确认的事实】块里的条目内容）',
+          },
+          still_valid: {
+            type: 'boolean',
+            description: 'true=用户确认事实仍成立；false=已不成立（忘掉这条）',
+          },
+        },
+        required: ['fact_id', 'still_valid'],
+      },
+      handler: async (args) => {
+        const ok = memoryManager.confirmProfileFact(String(args.fact_id ?? ''), args.still_valid === true);
+        if (!ok) return '没有找到这条事实，先不用管了。';
+        return args.still_valid === true ? '好，那这条还作数。' : '好，那这条就忘掉了。';
+      },
+    },
+    {
       name: 'delete_life_template',
       description: '删除生活模板池里的一条活动模板。**仅当用户明确要求删除时才调用**，绝不可自主删除。' +
         '传入活动描述中的关键词。删除会记录日志。删除后自然地应和用户。',

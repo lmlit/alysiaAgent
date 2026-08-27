@@ -72,6 +72,7 @@ export class RealtimeProcessor {
             valid_from: new Date().toISOString(),
             valid_until: null,
             status: 'active',
+            category: 'general', // ★ 8-28 纠正事实兜底分类
           });
         }
       } catch {

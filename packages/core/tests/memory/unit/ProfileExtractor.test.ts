@@ -110,7 +110,9 @@ describe('ProfileExtractor', () => {
   });
 
   // ★ 8-12 时效性分类（profile-transient-expiry）：transient=true → 48h 自动过期
-  it('transient=true → valid_until 设为 48h 后（时效事实自动过期）', async () => {
+  // ★ 8-28 分类过期（profile-facts-classification-confirm）：transient 二元制升级为
+  //   category TTL——transient=true 且无 category → status 14 天；transient=false 且无 category → general 60 天
+  it('transient=true 无 category → 归为 status 类，valid_until 设为 14 天后', async () => {
     const mockTransientLLM: ILLMService = {
       complete: async () => JSON.stringify({
         facts: [
@@ -121,13 +123,13 @@ describe('ProfileExtractor', () => {
     const extractor2 = new ProfileExtractor(mockTransientLLM);
     const facts = await extractor2.extract([makeEvent('我午餐吃了香菜拌牛肉')]);
     expect(facts).toHaveLength(1);
-    expect(facts[0].valid_until).not.toBeNull();
+    expect(facts[0].category).toBe('status');
     const ttl = new Date(facts[0].valid_until!).getTime() - Date.now();
-    expect(ttl).toBeGreaterThan(47 * 3600 * 1000);
-    expect(ttl).toBeLessThanOrEqual(48 * 3600 * 1000);
+    expect(ttl).toBeGreaterThan(13 * 86_400_000);
+    expect(ttl).toBeLessThanOrEqual(14 * 86_400_000);
   });
 
-  it('transient=false/缺失 → valid_until=null（稳定属性永久有效）', async () => {
+  it('transient=false/缺失 → 归为 general 类，valid_until 设为 60 天后', async () => {
     const mockStableLLM: ILLMService = {
       complete: async () => JSON.stringify({
         facts: [
@@ -139,8 +141,28 @@ describe('ProfileExtractor', () => {
     const extractor2 = new ProfileExtractor(mockStableLLM);
     const facts = await extractor2.extract([makeEvent('我在长沙')]);
     expect(facts).toHaveLength(2);
-    expect(facts[0].valid_until).toBeNull();
-    expect(facts[1].valid_until).toBeNull();
+    for (const f of facts) {
+      expect(f.category).toBe('general');
+      const ttl = new Date(f.valid_until!).getTime() - Date.now();
+      expect(ttl).toBeGreaterThan(59 * 86_400_000);
+      expect(ttl).toBeLessThanOrEqual(60 * 86_400_000);
+    }
+  });
+
+  it('category 显式 → 按分类 TTL（identity 365 天）', async () => {
+    const mockLLM: ILLMService = {
+      complete: async () => JSON.stringify({
+        facts: [
+          { fact: '用户在长沙定居', confidence: 1, evidence: '我定居长沙', directly_stated: true, transient: false, category: 'identity' },
+        ],
+      }),
+    };
+    const extractor2 = new ProfileExtractor(mockLLM);
+    const facts = await extractor2.extract([makeEvent('我定居长沙')]);
+    expect(facts[0].category).toBe('identity');
+    const ttl = new Date(facts[0].valid_until!).getTime() - Date.now();
+    expect(ttl).toBeGreaterThan(364 * 86_400_000);
+    expect(ttl).toBeLessThanOrEqual(365 * 86_400_000);
   });
 
   it('should return empty for events with no extractable info', async () => {

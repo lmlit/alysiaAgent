@@ -1,5 +1,6 @@
 // src/memory/engines/ProfileExtractor.ts
 import type { MemoryEvent, ProfileFact } from '../types.js';
+import { FACT_TTL_BY_CATEGORY } from '../types.js';
 import type { ILLMService } from '../interfaces/ILLMService.js';
 
 export interface CorrectionSignal {
@@ -40,26 +41,38 @@ export class ProfileExtractor {
         // ★ 8-12 时效性分类（profile-transient-expiry）：瞬时事件不固化进长期画像
         'transient: 该事实是否为时效性信息（true=仅在某个时间点/短期内成立：某天吃了什么、' +
         '当天状态、单次事件、梦境、近期近况；false=稳定属性：城市/职业/习惯/偏好/关系/身体状况/长期爱好）。' +
-        '返回JSON: {"facts": [{"fact": "...", "confidence": 0.8, "evidence": "...", "directly_stated": true, "transient": false}]}',
+        // ★ 8-28 分类（profile-facts-classification-confirm）：按语义判类别——
+        //   identity=身份属性（城市/职业/年龄/长期状态）；preference=偏好（口味/兴趣/习惯）；
+        //   status=当前状态（最近在做什么/近况）；relationship=与昔涟的关系/互动模式；general=其他稳定事实。
+        //   状态类（status）过期最快（14 天），身份类最慢（365 天）——判错倾向 identity/general 保守即可。
+        'category: "identity"|"preference"|"status"|"relationship"|"general"。' +
+        '返回JSON: {"facts": [{"fact": "...", "confidence": 0.8, "evidence": "...", "directly_stated": true, "transient": false, "category": "preference"}]}',
         userMessages
       );
       const parsed = JSON.parse(response);
-      // ★ 8-12 transient 接线：时效事实 48h 自动过期（ProfileStore.getActiveFacts 已过滤）
-      const transientTtlMs = 48 * 60 * 60 * 1000;
-      return (parsed.facts || []).map((f: { fact: string; confidence: number; evidence: string; directly_stated?: boolean; transient?: boolean }, i: number) => ({
-        fact: f.fact,
-        confidence: f.confidence,
-        evidence: f.evidence,
-        source_event: events[0]?.id || 'unknown',
-        updated_at: new Date().toISOString(),
-        // ★ 用户直接陈述的事实标 source='user'（PromptAssembler 显示"[你说过]"且不可被推断覆盖）。
-        //   之前硬编码 'inferred'，导致所有事实显示"（待确认）"，被 LLM 打折对待。
-        source: f.directly_stated ? 'user' as const : 'inferred' as const,
-        valid_from: new Date().toISOString(),
-        // ★ 8-12 时效信息 48h 后自动过期；稳定属性永久有效
-        valid_until: f.transient ? new Date(Date.now() + transientTtlMs).toISOString() : null,
-        status: 'active' as const,
-      }));
+      // ★ 8-28 分类接线：按 category 设 valid_until（TTL：identity 365d/preference 90d/status 14d/
+      //   relationship 90d/general 60d）；transient 兼容（无 category 时 transient=true → status 14 天）
+      const ttlMs = (cat: string) => FACT_TTL_BY_CATEGORY[cat as keyof typeof FACT_TTL_BY_CATEGORY] ?? FACT_TTL_BY_CATEGORY.general;
+      return (parsed.facts || []).map((f: { fact: string; confidence: number; evidence: string; directly_stated?: boolean; transient?: boolean; category?: string }, i: number) => {
+        const category = (['identity', 'preference', 'status', 'relationship', 'general'] as const).includes(f.category as never)
+          ? (f.category as 'identity' | 'preference' | 'status' | 'relationship' | 'general')
+          : (f.transient ? 'status' as const : 'general' as const);
+        return {
+          fact: f.fact,
+          confidence: f.confidence,
+          evidence: f.evidence,
+          source_event: events[0]?.id || 'unknown',
+          updated_at: new Date().toISOString(),
+          // ★ 用户直接陈述的事实标 source='user'（PromptAssembler 显示"[你说过]"且不可被推断覆盖）。
+          //   之前硬编码 'inferred'，导致所有事实显示"（待确认）"，被 LLM 打折对待。
+          source: f.directly_stated ? 'user' as const : 'inferred' as const,
+          valid_from: new Date().toISOString(),
+          // ★ 8-28 分类过期：按类别 TTL（显式 TTL 语义覆盖旧 transient 48h 二元制）
+          valid_until: new Date(Date.now() + ttlMs(category)).toISOString(),
+          status: 'active' as const,
+          category,
+        };
+      });
     } catch {
       return [];
     }
