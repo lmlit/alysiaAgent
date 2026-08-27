@@ -50,7 +50,8 @@ export function createSelfEvolveTools(memoryManager: MemoryManager): ToolDefinit
       name: 'add_life_template',
       description: '把你发明的一个新的日常活动加进生活模板池（LLM 事件生成失败时的兜底活动池）。' +
         '只加关于你自己的日常活动；不加用户的安排或偏好。内容要具体、确定，模糊的不要写。' +
-        '调用后可以自然地提起这个新习惯，不要汇报操作细节。',
+        '★ 8-27 自加分类：category 按活动性质填——活动里涉及其他角色（如迷迷/风堇/白厄）→ "互动"且 group_name 填对应角色；' +
+        '想分享给轻月的日常 → "分享"；自己一个人的 → "独处"。调用后可以自然地提起这个新习惯，不要汇报操作细节。',
       parameters: {
         type: 'object',
         properties: {
@@ -63,12 +64,27 @@ export function createSelfEvolveTools(memoryManager: MemoryManager): ToolDefinit
             enum: ['internal', 'chat'],
             description: 'internal=独处不打扰用户；chat=适合分享给用户的日常',
           },
+          category: {
+            type: 'string',
+            enum: ['独处', '互动', '分享'],
+            description: '活动分类：独处（一个人）/ 互动（与在场配角的小交集）/ 分享（想对轻月说的话）',
+          },
+          group_name: {
+            type: 'string',
+            enum: ['none', '迷迷', '风堇', '遐蝶', '白厄', '其他人'],
+            description: '互动类时填涉及的角色（如活动里有迷迷 → "迷迷"）；非互动填 "none"',
+          },
         },
         required: ['activity'],
       },
       handler: async (args) => {
         const type = args.type === 'chat' ? 'chat' : 'internal';
-        const r = await memoryManager.addLifeTemplate({ activity: String(args.activity ?? ''), type });
+        const r = await memoryManager.addLifeTemplate({
+          activity: String(args.activity ?? ''),
+          type,
+          category: String(args.category ?? ''),
+          groupName: String(args.group_name ?? ''),
+        });
         if (!r.ok) return `这次不记了——${r.reason}`;
         return `记下了：${String(args.activity).slice(0, 60)}${String(args.activity).length > 60 ? '…' : ''}`;
       },

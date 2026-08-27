@@ -112,6 +112,33 @@ describe('MemoryManager 内容自进化', () => {
     expect(r.ok).toBe(false);
   });
 
+  // ★ 8-27 自加分类（life-template-self-classify）
+  it('addLifeTemplate 显式传 category/groupName → 落库正确', async () => {
+    const r = await mm.addLifeTemplate({ activity: '迷迷趴在我肩上睡着了', type: 'internal', category: '互动', groupName: '迷迷' });
+    expect(r.ok).toBe(true);
+    const row = db.prepare('SELECT * FROM life_templates WHERE id = ?').get(r.id) as any;
+    expect(row.category).toBe('互动');
+    expect(row.group_name).toBe('迷迷');
+  });
+
+  it('addLifeTemplate 未传分类 → 默认映射（chat→分享、internal→独处）', async () => {
+    const chat = await mm.addLifeTemplate({ activity: '窗外的月亮很圆想告诉轻月', type: 'chat' });
+    const chatRow = db.prepare('SELECT category, group_name FROM life_templates WHERE id = ?').get(chat.id) as any;
+    expect(chatRow.category).toBe('分享');
+    expect(chatRow.group_name).toBe('none');
+    const solo = await mm.addLifeTemplate({ activity: '一个人煮茶发呆', type: 'internal' });
+    const soloRow = db.prepare('SELECT category, group_name FROM life_templates WHERE id = ?').get(solo.id) as any;
+    expect(soloRow.category).toBe('独处');
+    expect(soloRow.group_name).toBe('none');
+  });
+
+  it('addLifeTemplate 非法分类值 → 回落默认（internal→独处）', async () => {
+    const r = await mm.addLifeTemplate({ activity: '整理书架', type: 'internal', category: '瞎填', groupName: '胡编' });
+    const row = db.prepare('SELECT category, group_name FROM life_templates WHERE id = ?').get(r.id) as any;
+    expect(row.category).toBe('独处');
+    expect(row.group_name).toBe('none');
+  });
+
   it('listLifeTemplates = seed 43 条（8-27 扩容）+ 自加；delete 生效', async () => {
     expect(mm.listLifeTemplates().length).toBe(43); // seed 保底（8-14 原 8 条 → 8-27 扩容 43 条）
     const { id } = await mm.addLifeTemplate({ activity: '在窗台种薄荷', type: 'chat' });

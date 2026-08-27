@@ -551,8 +551,10 @@ export class MemoryManager {
     return true;
   }
 
-  /** 自加生活模板：机械预检 → LLM 校验 → 写入（source='self'，weight 固定 2 防权重操纵） */
-  async addLifeTemplate(input: { activity: string; type?: 'chat' | 'internal' }): Promise<{ ok: boolean; id?: string; reason?: string }> {
+  /** 自加生活模板：机械预检 → LLM 校验 → 写入（source='self'，weight 固定 2 防权重操纵）。
+   *  ★ 8-27 自加分类（life-template-self-classify）：category/groupName 透传；
+   *    未传时默认映射（chat→'分享'、internal→'独处'）——自写模板回落能匹配在场角色组 */
+  async addLifeTemplate(input: { activity: string; type?: 'chat' | 'internal'; category?: string; groupName?: string }): Promise<{ ok: boolean; id?: string; reason?: string }> {
     const activity = (input.activity ?? '').trim();
     const type = input.type === 'chat' ? 'chat' : 'internal';
     if (!activity) return { ok: false, reason: '活动描述为空' };
@@ -563,10 +565,18 @@ export class MemoryManager {
     const v = await this.validateSelfEntry('life_template', `活动: ${activity}`);
     if (!v.ok) return { ok: false, reason: v.reason };
 
+    // 分类兜底：未显式传 → type 默认映射；非法值回落 '独处'
+    const category = ['独处', '互动', '分享'].includes(input.category ?? '')
+      ? (input.category as string)
+      : (type === 'chat' ? '分享' : '独处');
+    const groupName = ['none', '迷迷', '风堇', '遐蝶', '白厄', '其他人'].includes(input.groupName ?? '')
+      ? (input.groupName as string)
+      : 'none';
+
     const now = new Date().toISOString();
     const id = `lt_self_${this.hashStr(activity)}`;
-    this.lifeStore.addTemplate({ id, activity, type, weight: 2, source: 'self', createdAt: now });
-    logger.info(`[SelfEvolve] life_template+ ${id} [${type}] ${activity.slice(0, 60)}`);
+    this.lifeStore.addTemplate({ id, activity, type, weight: 2, source: 'self', createdAt: now, category, groupName });
+    logger.info(`[SelfEvolve] life_template+ ${id} [${type}/${category}/${groupName}] ${activity.slice(0, 60)}`);
     return { ok: true, id };
   }
 

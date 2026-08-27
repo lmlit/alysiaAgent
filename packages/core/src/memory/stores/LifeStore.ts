@@ -117,11 +117,11 @@ export class LifeStore {
   // ── ★ 8-14 生活模板池（content-self-evolution）──────────────────────────────
   //   源 server/life-templates.ts const → 本表；'seed' 种子 + 'self' 昔涟自写
 
-  addTemplate(t: { id: string; activity: string; type: 'chat' | 'internal'; weight: number; source: 'seed' | 'self'; createdAt: string }): void {
+  addTemplate(t: { id: string; activity: string; type: 'chat' | 'internal'; weight: number; source: 'seed' | 'self'; createdAt: string; category?: string; groupName?: string }): void {
     this.db.prepare(`
-      INSERT OR REPLACE INTO life_templates (id, activity, type, weight, source, created_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(t.id, t.activity, t.type, t.weight, t.source, t.createdAt);
+      INSERT OR REPLACE INTO life_templates (id, activity, type, weight, source, created_at, category, group_name)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(t.id, t.activity, t.type, t.weight, t.source, t.createdAt, t.category ?? '独处', t.groupName ?? 'none');
   }
 
   listTemplates(): Array<{ id: string; activity: string; type: 'chat' | 'internal'; weight: number; source: string; category: string; groupName: string }> {

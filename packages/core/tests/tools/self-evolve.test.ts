@@ -65,13 +65,15 @@ describe('createSelfEvolveTools', () => {
     expect(result).toContain('没有找到');
   });
 
-  it('add_life_template：type 默认 internal；显式 chat 透传', async () => {
+  it('add_life_template：type 默认 internal；显式 chat 透传；★ 8-27 分类参数透传', async () => {
     const mm = makeMm();
     const tools = createSelfEvolveTools(mm);
     await tools[1].handler({ activity: '对着多肉发呆' });
-    expect(mm.addLifeTemplate).toHaveBeenCalledWith({ activity: '对着多肉发呆', type: 'internal' });
+    expect(mm.addLifeTemplate).toHaveBeenCalledWith({ activity: '对着多肉发呆', type: 'internal', category: '', groupName: '' });
     await tools[1].handler({ activity: '在窗台种薄荷', type: 'chat' });
-    expect(mm.addLifeTemplate).toHaveBeenCalledWith({ activity: '在窗台种薄荷', type: 'chat' });
+    expect(mm.addLifeTemplate).toHaveBeenCalledWith({ activity: '在窗台种薄荷', type: 'chat', category: '', groupName: '' });
+    await tools[1].handler({ activity: '迷迷趴在肩上睡着了', type: 'internal', category: '互动', group_name: '迷迷' });
+    expect(mm.addLifeTemplate).toHaveBeenCalledWith({ activity: '迷迷趴在肩上睡着了', type: 'internal', category: '互动', groupName: '迷迷' });
   });
 
   it('delete_life_template：按关键词匹配删除', async () => {

@@ -448,10 +448,10 @@ await memoryManager.ingest({
 
 - seed 8 条既有模板（source='seed'）启动时 INSERT OR IGNORE 保底（以 id 幂等——用户删过的种子重启不复活）
 - 昔涟可通过 `add_life_template` 自加（source='self'，weight 固定 2，type 参数化）
-- ★ 8-27 自加分类（life-template-self-classify）：工具参数加 `category`（独处/互动/分享）+
-  `group_name`（none/迷迷/风堇/遐蝶/白厄/其他人），LLM 自行判断——活动涉及在场角色 →
-  互动+对应角色组；想分享给轻月 → 分享；否则独处。未传时默认映射（chat→分享、
-  internal→独处）——自写模板回落时能正确匹配在场角色组
++ - ★ 8-27 自加分类（life-template-self-classify）：工具参数加 `category`（独处/互动/分享）+
++   `group_name`（none/迷迷/风堇/遐蝶/白厄/其他人），LLM 自行判断——活动涉及在场角色 →
++   互动+对应角色组；想分享给轻月 → 分享；否则独处。未传时默认映射（chat→分享、
++   internal→独处）——自写模板回落时能正确匹配在场角色组
 - `LifeService.pickTemplate()` 从 `memoryManager.listLifeTemplates()` 实时读取（weight 加权）；
   LLM 失败回落逻辑不变（模板事件强制 internal 防剧情链断裂）
 - ★ 8-27 扩容 40+ 条（life-template-expansion）：8 条 → 40+ 条，按 `category` 分三类：
