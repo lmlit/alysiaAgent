@@ -170,26 +170,29 @@ getPersonaSnapshot(): {
 
 ---
 
-## 2.6 生活系统（AI 主动生活，2026-08-06 已封装）
+## 2.6 生活系统（AI 主动生活，2026-08-06 已封装；8-27 叙事化重构增量）
 
 **Web 路由**: `GET /api/life` → `{ snapshot, events }`（快照 + 近 7 天事件流）
 
 | Core 方法 | 用途 |
 |-----------|------|
-| `getLifeSnapshot()` | AI 生活状态快照（活动/心情/亲密度） |
-| `listLifeEvents(days)` | 生活事件列表（默认 7 天，含 id/wbEntryId/delivered） |
+| `getLifeSnapshot()` | AI 生活状态快照（活动/心情/亲密度/**moodValue 8-27 新增**） |
+| `listLifeEvents(days)` | 生活事件列表（默认 7 天，含 id/wbEntryId/delivered/**origin 8-27 新增**） |
 | `listLifeSummaries(days)` | 近 N 天每日生活摘要（生成器回顾用） |
-| `recordLifeEvent(...)` | 记录 AI 生活事件（LifeService 内部，返回事件 id） |
+| `recordLifeEvent(...)` | 记录 AI 生活事件（LifeService 内部，返回事件 id；**origin 8-27 新增**） |
 | `markLifeEventDelivered(id)` | 标记事件已推送（delivered=1，LifeService 推送成功后） |
 | `bumpWorldbookHit(id)` | 世界书命中统计 hit_count+1（事件引用时） |
 | `getLifeEventInjection()` | 事件流注入块（PromptAssembler 用） |
-| `getWorldbookSample(n)` | 世界书人设采样（返回 `{id, content}`，事件生成用） |
+| `getWorldbookSample(n)` | 世界书分层采样（**8-27 起 life_event 3 + text 2 随机，截断 200 字**） |
 | `getUserActivitySummary()` | 用户近况摘要（事件生成用） |
-| `updateLifeState(partial)` | 更新 AI 实时状态 |
+| `updateLifeState(partial)` | 更新 AI 实时状态（**moodValue 8-27 新增**） |
 | `upsertDailySummary(date, summary)` | 写入/更新某天生活摘要 |
-| `listLifeTemplates()` | 生活模板池列表（seed + self） |
+| `listLifeTemplates()` | 生活模板池列表（seed + self；**category/groupName 8-27 新增**） |
 | `addLifeTemplate({activity, type})` | 昔涟自加生活模板（机械预检 + LLM 校验，weight 固定 2） |
 | `deleteLifeTemplate(id)` | 删除生活模板（仅用户指令，日志留底） |
+| `listScenePresence()` | ★ 8-27 配角在场状态列表（name/status/basis/updatedAt） |
+| `listPresentCharacters()` | ★ 8-27 当前在场配角名（事件生成注入用） |
+| `upsertScenePresence(name, status, basis?)` | ★ 8-27 更新在场状态（事件提到谁 → present；24h 无提及 → off-scene） |
 
 ## 2.7 内容自进化（worldbook 自写，2026-08-14 已封装）
 

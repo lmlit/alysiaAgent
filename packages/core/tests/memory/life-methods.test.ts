@@ -152,13 +152,36 @@ describe('MemoryManager life methods', () => {
   });
 
   // ★ 8-12 二期④：life_event 种子纳入采样
-  it('getWorldbookSample 纳入 content_type=life_event 的事件种子（按 priority）', () => {
+  // ★ 8-27 分层随机（life-worldbook-layered-sample）：life_event 取 3 + text 取 2，随机抽取
+  it('getWorldbookSample 纳入 content_type=life_event 的事件种子（8-27 起随机抽取不再按 priority 排序）', () => {
     db.prepare(`INSERT INTO worldbook_entries (id, trigger_keys, trigger_mode, content, scope, priority, cooldown_sec, last_triggered, hit_count, created_at, updated_at, role, content_type)
       VALUES ('wb-life', '[""]', 'any', '昔涟会在集市买桃子', 'chat', 20, 0, NULL, 0, '2026-08-06T00:00:00', '2026-08-06T00:00:00', 'alysia', 'life_event')`).run();
     const sample = mm.getWorldbookSample(5);
     expect(sample.some(x => x.content === '昔涟会在集市买桃子')).toBe(true);
-    // life_event 条目 priority 高 → 排前
-    expect(sample[0]?.content).toBe('昔涟会在集市买桃子');
+  });
+
+  // ★ 8-27 分层随机：life_event 3 + text 2，总量=5
+  it('getWorldbookSample 分层：life_event 3 条 + text 2 条', () => {
+    const ins = db.prepare(`INSERT INTO worldbook_entries (id, trigger_keys, trigger_mode, content, scope, priority, cooldown_sec, last_triggered, hit_count, created_at, updated_at, role, content_type)
+      VALUES (?, '[""]', 'any', ?, 'chat', 5, 0, NULL, 0, '2026-08-06T00:00:00', '2026-08-06T00:00:00', 'alysia', ?)`);
+    for (let i = 1; i <= 4; i++) ins.run(`wb-life-${i}`, `生活条目${i}`, 'life_event');
+    for (let i = 1; i <= 3; i++) ins.run(`wb-text-${i}`, `设定条目${i}`, 'text');
+    const sample = mm.getWorldbookSample(5);
+    expect(sample).toHaveLength(5);
+    const life = sample.filter(x => x.id.startsWith('wb-life'));
+    const text = sample.filter(x => x.id.startsWith('wb-text'));
+    expect(life).toHaveLength(3);
+    expect(text).toHaveLength(2);
+  });
+
+  // ★ 8-27 截断 200 字（原 100 字）
+  it('getWorldbookSample 每条截断 200 字', () => {
+    const long = '生'.repeat(300);
+    db.prepare(`INSERT INTO worldbook_entries (id, trigger_keys, trigger_mode, content, scope, priority, cooldown_sec, last_triggered, hit_count, created_at, updated_at, role, content_type)
+      VALUES ('wb-long', '[""]', 'any', ?, 'chat', 5, 0, NULL, 0, '2026-08-06T00:00:00', '2026-08-06T00:00:00', 'alysia', 'life_event')`).run(long);
+    const sample = mm.getWorldbookSample(5);
+    const item = sample.find(x => x.id === 'wb-long');
+    expect(item!.content.length).toBe(200);
   });
 
   it('getWorldbookSample 返回含 id 的结构（终审修复：生成器引用 + 命中统计）', () => {

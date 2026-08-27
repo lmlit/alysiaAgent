@@ -8,11 +8,11 @@ migrated: 2026-08-07
 > 日期: 2026-08-06  
 > 状态: 已实现（2026-08-06）  
 > 前置: ProactiveService（`packages/server/src/proactive.ts`）、sendProactive（`packages/server/src/adapters/qq-official.ts`）、EventStore、ProfileStore、WorldbookStore
-
-> ★ 8-27 叙事化重构（change: life-system-narrative-refactor，参考 HDS-Interlude）：
-> 配角在场（ScenePresence）/ 情绪惯性（mood_value）/ 模板扩容分类 / 世界书分层随机 /
-> daily_life.md / 9 条生成约束 / 7 条 post-check / Agency Window（can_contact）/ 对话余波。
-> 核心理念：事件从角色的生活中自然生长，而非模板堆砌。
++ 
++ > ★ 8-27 叙事化重构（change: life-system-narrative-refactor，参考 HDS-Interlude）：
++ > 配角在场（ScenePresence）/ 情绪惯性（mood_value）/ 模板扩容分类 / 世界书分层随机 /
++ > daily_life.md / 9 条生成约束 / 7 条 post-check / Agency Window（can_contact）/ 对话余波。
++ > 核心理念：事件从角色的生活中自然生长，而非模板堆砌。
 
 ---
 
@@ -47,10 +47,10 @@ migrated: 2026-08-07
 | 主动消息表情包 | 本次支持（扩展 sendProactive 解析 `[表情包:xxx]`） |
 | 主提示词瘦身 | 二期独立立项 |
 | 事件注入 prompt | 每次对话注入「[我的近期日常]」块 |
-| 配角在场（8-27） | 新表 `ai_life_scene_presence`；事件提到谁 → present，24h 无提及 → off-scene；生成注入【在场角色】，LLM 不得召唤离场角色（HDSI ScenePresence 简化：不做 LLM 更新回路，自动推导） |
-| 情绪惯性（8-27） | `ai_life_state.mood_value` 累积（同向加成/反向衰减/8h 回归 0）；注入【心情】块影响事件风格（HDSI Alter 简化：mood_value 本身即 prompt 可见，不做侧端分析） |
-| Agency Window（8-27） | 事件 JSON 带 `agency.can_contact`；推送判定加"方便联系"条件（HDSI 简化：不做重查队列） |
-| 对话余波（8-27） | 最后 user 消息 15min 后无 followup 事件 → 生成 internal 余波（origin='followup'，不推送只记录） |
++ | 配角在场（8-27） | 新表 `ai_life_scene_presence`；事件提到谁 → present，24h 无提及 → off-scene；生成注入【在场角色】，LLM 不得召唤离场角色（HDSI ScenePresence 简化：不做 LLM 更新回路，自动推导） |
++ | 情绪惯性（8-27） | `ai_life_state.mood_value` 累积（同向加成/反向衰减/8h 回归 0）；注入【心情】块影响事件风格（HDSI Alter 简化：mood_value 本身即 prompt 可见，不做侧端分析） |
++ | Agency Window（8-27） | 事件 JSON 带 `agency.can_contact`；推送判定加"方便联系"条件（HDSI 简化：不做重查队列） |
++ | 对话余波（8-27） | 最后 user 消息 15min 后无 followup 事件 → 生成 internal 余波（origin='followup'，不推送只记录） |
 
 ---
 
@@ -103,10 +103,10 @@ CREATE TABLE ai_life_state (
   last_event_id   TEXT,
   updated_at      TEXT
 );
--- ★ 8-27 情绪惯性（migration: ALTER TABLE + try-catch）
---   mood_value: 情绪累积值 -100..100（同方向加成/反方向衰减/8h 回归 0），
---   极性注入【心情】块影响事件风格；正=开心/负=低落，0=平静
--- ALTER TABLE ai_life_state ADD COLUMN mood_value INTEGER DEFAULT 0;
++ -- ★ 8-27 情绪惯性（migration: ALTER TABLE + try-catch）
++ --   mood_value: 情绪累积值 -100..100（同方向加成/反方向衰减/8h 回归 0），
++ --   极性注入【心情】块影响事件风格；正=开心/负=低落，0=平静
++ -- ALTER TABLE ai_life_state ADD COLUMN mood_value INTEGER DEFAULT 0;
 
 -- 事件流（完整历史，供连续性/回顾/注入）
 CREATE TABLE ai_life_events (
@@ -119,19 +119,19 @@ CREATE TABLE ai_life_events (
   wb_entry_id     TEXT,         -- 关联的世界书条目（可空）
   delivered       INTEGER DEFAULT 0   -- 是否已推送给用户
 );
--- ★ 8-27 对话余波标记（migration: ALTER TABLE + try-catch）
---   origin: 'regular'(常规事件) | 'followup'(对话余波)——余波事件不推送只记录
--- ALTER TABLE ai_life_events ADD COLUMN origin TEXT DEFAULT 'regular';
++ -- ★ 8-27 对话余波标记（migration: ALTER TABLE + try-catch）
++ --   origin: 'regular'(常规事件) | 'followup'(对话余波)——余波事件不推送只记录
++ -- ALTER TABLE ai_life_events ADD COLUMN origin TEXT DEFAULT 'regular';
 
--- ★ 8-27 配角在场状态（新表；HDSI ScenePresence 简化版）
---   present=在场 | off-scene=离场 | expected=待会合；事件内容提到谁 → present，
---   24h 无提及 → off-scene。仅记录已确认在场的配角（角色世界书里的人物）。
-CREATE TABLE IF NOT EXISTS ai_life_scene_presence (
-  name        TEXT PRIMARY KEY,       -- 配角名（如 迷迷/风堇/遐蝶/白厄）
-  status      TEXT NOT NULL DEFAULT 'off-scene',  -- present | off-scene | expected
-  basis       TEXT,                   -- 在场依据（最近一次提到的事件内容摘要）
-  updated_at  TEXT NOT NULL
-);
++ -- ★ 8-27 配角在场状态（新表；HDSI ScenePresence 简化版）
++ --   present=在场 | off-scene=离场 | expected=待会合；事件内容提到谁 → present，
++ --   24h 无提及 → off-scene。仅记录已确认在场的配角（角色世界书里的人物）。
++ CREATE TABLE IF NOT EXISTS ai_life_scene_presence (
++   name        TEXT PRIMARY KEY,       -- 配角名（如 迷迷/风堇/遐蝶/白厄）
++   status      TEXT NOT NULL DEFAULT 'off-scene',  -- present | off-scene | expected
++   basis       TEXT,                   -- 在场依据（最近一次提到的事件内容摘要）
++   updated_at  TEXT NOT NULL
++ );
 
 CREATE INDEX idx_life_events_time ON ai_life_events(created_at);
 
@@ -151,11 +151,11 @@ CREATE TABLE life_templates (
   source      TEXT NOT NULL DEFAULT 'seed',      -- 'seed'(既有种子) | 'self'(昔涟自写)
   created_at  TEXT NOT NULL
 );
--- ★ 8-27 模板分类分组（migration: ALTER TABLE + try-catch）
---   category: '独处' | '互动' | '分享'——回落模板按场景分类
---   group_name: 'none' | '迷迷' | '风堇' | '遐蝶' | '白厄' | '其他人'——按角色关系分组
--- ALTER TABLE life_templates ADD COLUMN category TEXT DEFAULT '独处';
--- ALTER TABLE life_templates ADD COLUMN group_name TEXT DEFAULT 'none';
++ -- ★ 8-27 模板分类分组（migration: ALTER TABLE + try-catch）
++ --   category: '独处' | '互动' | '分享'——回落模板按场景分类
++ --   group_name: 'none' | '迷迷' | '风堇' | '遐蝶' | '白厄' | '其他人'——按角色关系分组
++ -- ALTER TABLE life_templates ADD COLUMN category TEXT DEFAULT '独处';
++ -- ALTER TABLE life_templates ADD COLUMN group_name TEXT DEFAULT 'none';
 ```
 
 ---
@@ -197,10 +197,10 @@ tick() {
 
 **聊天锁实现**：`EventStore.getRecentBySession(umo, 1, new Date(Date.now()-30min))` 有记录 → 跳过。
 
-**对话余波**（8-27，HDSI conversation-follow-up 简化）：最后一条 user 消息过去 15min 后，
-若无 followup 事件（`origin='followup'`）且不在深夜 → 生成 internal"对话余波"事件：
-注入最近对话上下文，LLM 生成"聊完后的自然反应"（如"想到刚才说的话，有点不好意思"）。
-只入库不推送（origin='followup'，Web 端不显示推送标签）。余波事件同样回写记忆、参与 mood_value 累积。
++ **对话余波**（8-27，HDSI conversation-follow-up 简化）：最后一条 user 消息过去 15min 后，
++ 若无 followup 事件（`origin='followup'`）且不在深夜 → 生成 internal"对话余波"事件：
++ 注入最近对话上下文，LLM 生成"聊完后的自然反应"（如"想到刚才说的话，有点不好意思"）。
++ 只入库不推送（origin='followup'，Web 端不显示推送标签）。余波事件同样回写记忆、参与 mood_value 累积。
 
 **深夜抑制**：0-7 点事件仍生成但 `type` 强制 `internal`（生活积累不打扰）。
 
@@ -443,11 +443,11 @@ await memoryManager.ingest({
 - 昔涟可通过 `add_life_template` 自加（source='self'，weight 固定 2，type 参数化）
 - `LifeService.pickTemplate()` 从 `memoryManager.listLifeTemplates()` 实时读取（weight 加权）；
   LLM 失败回落逻辑不变（模板事件强制 internal 防剧情链断裂）
-- ★ 8-27 扩容 40+ 条（life-template-expansion）：8 条 → 40+ 条，按 `category` 分三类：
-  独处 ~20（发呆/家务/看书/听歌）+ 互动 ~12（与在场配角的小交集）+ 分享 ~12（想对轻月说的话）；
-  按 `group_name` 按角色关系分组（none/迷迷/风堇/遐蝶/白厄/其他人）——分组用于回落时
-  尽量选与"在场角色"匹配的模板（在场无迷迷 → 不回落"迷迷"组模板）
-- 回落优先级：在场角色组模板 → 独处模板；仍以 LLM 生成为主路径，模板只是保底
++ - ★ 8-27 扩容 40+ 条（life-template-expansion）：8 条 → 40+ 条，按 `category` 分三类：
++   独处 ~20（发呆/家务/看书/听歌）+ 互动 ~12（与在场配角的小交集）+ 分享 ~12（想对轻月说的话）；
++   按 `group_name` 按角色关系分组（none/迷迷/风堇/遐蝶/白厄/其他人）——分组用于回落时
++   尽量选与"在场角色"匹配的模板（在场无迷迷 → 不回落"迷迷"组模板）
++ - 回落优先级：在场角色组模板 → 独处模板；仍以 LLM 生成为主路径，模板只是保底
 
 ---
 
@@ -472,15 +472,15 @@ await memoryManager.ingest({
 - [x] 世界书 life_event 种子（8-12：getWorldbookSample 纳入，priority 同池采样）
 - [x] 亲密度 API 就绪（/api/life 返回 intimacy）；UI 渲染待 Web 端整体开工
 
-**8-27 叙事化重构（life-system-narrative-refactor）**：
-- [ ] 配角在场：ai_life_scene_presence 表 + 事件内容推导（提到谁 → present，24h 无提及 → off-scene）+ 生成注入【在场角色】+ post-check ⑦
-- [ ] 情绪惯性：ai_life_state.mood_value（同向加成/反向衰减/8h 回归 0）+【心情】注入
-- [ ] 模板扩容 40+ 条（category 独处/互动/分享 + group_name 角色分组）
-- [ ] 世界书分层随机（life_event 3 + text 2，随机抽取，截断 200 字）
-- [ ] daily_life.md（10-15 条 content_type='life_event'：住所/饮食/爱好/习惯/童年）+ loader 纳入
-- [ ] 9 条生成约束 + 7 条 post-check（重试 1 次 → 回落模板）
-- [ ] Agency Window：事件 JSON agency.can_contact → 推送门加"方便联系"条件
-- [ ] 对话余波：最后 user 消息 15min 后生成 internal 余波（origin='followup'，不推送）
++ **8-27 叙事化重构（life-system-narrative-refactor）**：
++ - [ ] 配角在场：ai_life_scene_presence 表 + 事件内容推导（提到谁 → present，24h 无提及 → off-scene）+ 生成注入【在场角色】+ post-check ⑦
++ - [ ] 情绪惯性：ai_life_state.mood_value（同向加成/反向衰减/8h 回归 0）+【心情】注入
++ - [ ] 模板扩容 40+ 条（category 独处/互动/分享 + group_name 角色分组）
++ - [ ] 世界书分层随机（life_event 3 + text 2，随机抽取，截断 200 字）
++ - [ ] daily_life.md（10-15 条 content_type='life_event'：住所/饮食/爱好/习惯/童年）+ loader 纳入
++ - [ ] 9 条生成约束 + 7 条 post-check（重试 1 次 → 回落模板）
++ - [ ] Agency Window：事件 JSON agency.can_contact → 推送门加"方便联系"条件
++ - [ ] 对话余波：最后 user 消息 15min 后生成 internal 余波（origin='followup'，不推送）
 
 ---
 

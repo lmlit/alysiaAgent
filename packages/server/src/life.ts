@@ -133,6 +133,9 @@ export class LifeService {
     // 亲密度更新
     this.updateIntimacy();
 
+    // ★ 8-27 对话余波：聊完天 15min 后生成 internal 余波（不推送只记录）
+    await this.maybeGenerateFollowUp(now);
+
     // ① 聊天锁：最近 chatLockMinutes 有用户互动则跳过
     //    只认 user 角色——AI 主动消息回写的 assistant 消息不算"互动"，否则 cooldownHours < 1 时自锁
     const lockMinutes = this.opts.chatLockMinutes ?? 30;
@@ -153,7 +156,28 @@ export class LifeService {
     const deepNight = hour >= deepStart && hour < deepEnd;
 
     // ③ 生成事件（LLM 建议间隔 next_in_hours 由 evt 带回）
-    const evt = await this.generateEvent(deepNight);
+    // ★ 8-27 post-check：LLM 输出过 7 条校验，不过 → 带反馈重试 1 次 → 仍不过回落模板
+    const todayKey = localDateKey();
+    const todayEvents = this.memoryManager.listLifeEvents(2)
+      .filter((e: any) => localDateKeyFromISO(e.createdAt) === todayKey);
+    const presentNames = this.memoryManager.listPresentCharacters() as string[];
+
+    let evt = await this.generateEvent(deepNight);
+    if (evt && !evt.fromTemplate) {
+      const check = this.postCheck(evt, todayEvents, presentNames);
+      if (!check.ok) {
+        logger.info(`[Life] post-check failed (${check.feedback}), retrying once`);
+        const retry = await this.generateEvent(deepNight, check.feedback);
+        if (retry && !retry.fromTemplate) {
+          const check2 = this.postCheck(retry, todayEvents, presentNames);
+          evt = check2.ok ? retry : null;
+        } else if (retry) {
+          evt = retry; // 重试也回落模板 → 接受模板（模板内容本身满足约束）
+        } else {
+          evt = null;
+        }
+      }
+    }
     if (!evt) return;
 
     // 存储 + 更新状态（recordLifeEvent 返回事件 id，供推送成功后标记 delivered）
@@ -169,8 +193,12 @@ export class LifeService {
     // ★ 世界书命中统计（spec §7 ②）：事件引用了世界书条目 → hit_count+1
     if (evt.wb_entry_id) this.memoryManager.bumpWorldbookHit(evt.wb_entry_id);
 
-    // ④ 推送判定（8-09：冷却 1h + 每日软上限——超限的 chat 降级 internal 入库不推送）
-    const pushable = evt.type === 'chat' && !deepNight;
+    // ★ 8-27 在场推导 + 情绪累积（事件入库后）
+    this.updatePresenceFromEvent(evt.content);
+    this.updateMoodValue(evt.mood_shift, now);
+
+    // ④ 推送判定（8-09：冷却 1h + 每日软上限 + ★ 8-27 Agency Window can_contact）
+    const pushable = evt.type === 'chat' && !deepNight && evt.can_contact !== false;
     if (pushable) {
       const cooldownMs = (this.opts.cooldownHours ?? 1) * 3_600_000;
       const inCooldown = now.getTime() - this.state.lastProactiveAt < cooldownMs;
@@ -187,7 +215,7 @@ export class LifeService {
         logger.info(`[Life] chat event degraded to internal (${inCooldown ? 'cooldown' : overDaily ? 'daily cap' : 'push failed'}): ${evt.content.slice(0, 50)}`);
       }
     } else {
-      logger.debug(`[Life] internal event (${deepNight ? 'deep night' : 'internal'}): ${evt.content.slice(0, 50)}`);
+      logger.debug(`[Life] internal event (${deepNight ? 'deep night' : evt.can_contact === false ? 'not contactable' : 'internal'}): ${evt.content.slice(0, 50)}`);
     }
 
     // ★ 8-09 C：所有事件回写记忆（chat 推送成功的 + internal）——bot 记得自己在做什么
@@ -198,6 +226,49 @@ export class LifeService {
     this.state.nextEventAt = Date.now() + this.clampIntervalHours(evt.next_in_hours);
     this.saveState();
     this.scheduleNextEvent();
+  }
+
+  // ── ★ 8-27 对话余波（conversation-follow-up 简化）──────────────
+
+  /** 聊完天 15min 后（窗口 15min-3h）且最近 3h 无余波 → 生成 internal 余波（origin='followup'，不推送）。
+   *  余波回写记忆、参与 mood_value 与在场推导，让角色的生活与对话自然衔接。 */
+  private async maybeGenerateFollowUp(now: Date): Promise<void> {
+    try {
+      const since24h = new Date(now.getTime() - 24 * 3_600_000);
+      const msgs = this.memoryManager.getRecentMessages(this.sessionId(), 200, since24h)
+        .filter((m: any) => m.role === 'user') as Array<{ createdAt: string; content: string }>;
+      if (msgs.length === 0) return;
+      // 最近一条 user 消息（无 createdAt 的 mock/异常行 → 跳过，不误触）
+      let last = msgs[0];
+      for (const m of msgs) if (new Date(m.createdAt) > new Date(last.createdAt)) last = m;
+      const lastTime = new Date(last.createdAt).getTime();
+      if (!Number.isFinite(lastTime)) return;
+      const minutesSince = (now.getTime() - lastTime) / 60_000;
+      if (minutesSince < 15 || minutesSince > 180) return; // 15min 后才生成，超 3h 窗口关闭
+
+      // 最近 3h 已有余波 → 跳过（去重）
+      const since3h = new Date(now.getTime() - 3 * 3_600_000).toISOString();
+      const recentFollowUps = (this.memoryManager.listLifeEvents(1) as any[])
+        .filter((e: any) => e.origin === 'followup' && e.createdAt >= since3h);
+      if (recentFollowUps.length > 0) return;
+
+      const evt = await this.generateEvent(false, undefined, true);
+      if (!evt) return;
+      this.memoryManager.recordLifeEvent({
+        type: 'internal',
+        content: evt.content,
+        moodDelta: evt.mood_delta,
+        referenceEventId: evt.reference_event_id,
+        wbEntryId: evt.wb_entry_id,
+        origin: 'followup',
+      });
+      this.updatePresenceFromEvent(evt.content);
+      this.updateMoodValue(evt.mood_shift, now);
+      await this.writebackToMemory(evt.content);
+      logger.info(`[Life] follow-up event: ${evt.content.slice(0, 50)}`);
+    } catch (err: any) {
+      logger.warn(`[Life] follow-up generation failed: ${err.message}`);
+    }
   }
 
   /** next_in_hours 钳制：0.5-8h；非法/缺失 → 0（触发 scheduleNextEvent 默认间隔兜底） */
@@ -232,14 +303,22 @@ export class LifeService {
 
   // ── 事件生成 ────────────────────────────────────────
 
-  /** 组装 woke prompt 并调 LLM；失败回落通用模板 */
-  private async generateEvent(deepNight: boolean): Promise<{
+  /** ★ 8-27 叙事化重构：生成事件 = 组装 context（在场/心情/约束）→ LLM → post-check 7 条 →
+   *  不过则带反馈重试 1 次 → 仍不过回落模板。LLM 失败同样回落模板。
+   *  @param followUp - 对话余波模式（origin='followup'，只记录不推送） */
+  private async generateEvent(deepNight: boolean, retryFeedback?: string, followUp = false): Promise<{
     content: string; type: 'chat' | 'internal'; mood_delta?: string;
+    /** ★ 8-27 情绪净变化 -5..+5（mood_value 累积用，非法按 0） */
+    mood_shift?: number;
     reference_event_id?: string; wb_entry_id?: string;
     /** 8-09：LLM 建议的下一事件间隔（小时，0.5-8，钳制在 tick） */
     next_in_hours?: number;
     /** 8-09：延续的上一事件 id（须命中今天事件 ID 集合） */
     continuation_of?: string;
+    /** ★ 8-27 Agency Window：此刻是否方便联系轻月（false → 降级 internal 不推送） */
+    can_contact?: boolean;
+    /** ★ 8-27 模板回落标记：模板事件不参与 post-check（非 LLM 输出） */
+    fromTemplate?: boolean;
   } | null> {
     const snapshot = this.memoryManager.getLifeSnapshot();
 
@@ -261,9 +340,19 @@ export class LifeService {
     const ongoingBlock = this.buildOngoingBlock(todayIds);
 
     // ★ 世界书背景（spec §7 ①）：行格式带 [wb: wb_xxx]，LLM 引用时返回 wb_entry_id
+    //   ★ 8-27 分层随机已下沉到 getWorldbookSample（life_event 3 + text 2，截断 200）
     const wbSample = this.memoryManager.getWorldbookSample(5);
     const wbIds = new Set(wbSample.map((w: any) => w.id));
     const wbBlock = wbSample.map((w: any) => `- [wb: ${w.id}] ${w.content}`).join('\n');
+
+    // ★ 8-27 在场角色（ScenePresence）：只有在场者可与 LLM 生活交集
+    const presentNames = this.memoryManager.listPresentCharacters() as string[];
+    const presenceBlock = presentNames.length === 0
+      ? '此刻只有你一个人，安安静静的——不要凭空召唤其他角色'
+      : `这些配角此刻在你身边/可互动（只与他们交集，列表外的一律不出现）：\n${presentNames.map(n => `- ${n}`).join('\n')}`;
+
+    // ★ 8-27 心情块（情绪惯性）：mood_value 极性影响事件风格
+    const moodBlock = this.buildMoodBlock(snapshot.moodValue ?? 0);
 
     // ★ 今天已主动联系内容（ProactiveService 感知，避免重复打扰）
     const todayActive = this.opts.todayProactive?.() ?? '';
@@ -271,14 +360,20 @@ export class LifeService {
     const context = [
       `【当前时间】${formatLocalTime()}`,
       `【当前状态】你正在: ${snapshot.currentActivity || '发呆'}；心情: ${snapshot.mood || '平静'}`,
+      `【心情】${moodBlock}`,
       `【亲密度】与轻月: ${snapshot.intimacy}/100`,
       `【今天的生活】${todayBlock || '（还没有特别的事）'}`,
       `【你的人设背景】${wbBlock || '（暂无）'}`,
+      `【在场角色】${presenceBlock}`,
       `【轻月最近】${this.memoryManager.getUserActivitySummary() || '（暂无）'}`,
       // ★ 8-09 延续机制：沉浸中的事可延续或开启新事件
       ongoingBlock ? `【你正在做的事】${ongoingBlock}\n你可以选择：继续沉浸其中（JSON 里 continuation_of 填该事件 id），或自然开启一件新的事（不填 continuation_of）。` : '',
       todayActive ? `【今天已主动联系】今天已经发过: ${todayActive}。请聚焦生活日常本身，不要生成同类问候/祝福内容。` : '',
       deepNight ? '【注意】现在是深夜，只能生成安静的内部事件（发呆/看书/听雨），不要打扰轻月。' : '',
+      // ★ 8-27 对话余波任务（followUp 模式）
+      followUp ? '【任务】这是你刚和轻月聊完天后的片刻余波——此刻你的内心在想什么（1-2 句，第一人称内心独白）。不推送、不问候、不需要说给轻月听；安静地记录这一刻（如"想到刚才说的话，有点不好意思"）。' : '',
+      // ★ 8-27 post-check 反馈重试
+      retryFeedback ? `【修正提示】上次生成未通过校验：${retryFeedback}。请按提示重新生成。` : '',
     ].filter(Boolean).join('\n');
 
     try {
@@ -301,15 +396,19 @@ export class LifeService {
         const wbId = parsed.wb_entry_id ? String(parsed.wb_entry_id) : undefined;
         const contId = parsed.continuation_of ? String(parsed.continuation_of) : undefined;
         const nextHours = Number(parsed.next_in_hours);
+        // ★ 8-27 mood_shift 钳制 -5..+5（非法忽略）；can_contact 默认 true
+        const shift = Number(parsed.mood_shift);
         return {
           content: String(parsed.content).trim(),
           type: deepNight ? 'internal' : (parsed.type === 'chat' ? 'chat' : 'internal'),
           mood_delta: parsed.mood_delta ? String(parsed.mood_delta) : undefined,
+          mood_shift: isFinite(shift) ? Math.max(-5, Math.min(5, Math.round(shift))) : undefined,
           reference_event_id: refId && todayIds.has(refId) ? refId : undefined,
           wb_entry_id: wbId && wbIds.has(wbId) ? wbId : undefined,
           // 8-09：next_in_hours 钳制在 tick（clampIntervalHours）；continuation_of 须命中今天事件
           next_in_hours: isFinite(nextHours) ? nextHours : undefined,
           continuation_of: contId && todayIds.has(contId) ? contId : undefined,
+          can_contact: parsed.agency?.can_contact === false ? false : true,
         };
       }
     } catch (err: any) {
@@ -319,9 +418,127 @@ export class LifeService {
     // 失败回落：通用模板加权随机（无角色特色；角色特色事件由 LLM 结合世界书自创）
     // ★ 8-09 修复：模板事件强制 internal——模板文案无剧情链，推送会造成"上下文断裂"
     //   观感（7-16 实测用户收到"听到楼下琴声"与画云剧情链脱节）
-    const t = this.pickTemplate();
-    if (t) return { content: t.activity, type: 'internal', mood_delta: '平静' };
+    // ★ 8-27 在场角色组优先（在场无迷迷 → 不回落"迷迷"组模板）
+    const t = this.pickTemplate(presentNames);
+    if (t) return { content: t.activity, type: 'internal', mood_delta: '平静', can_contact: false, fromTemplate: true };
     return null;
+  }
+
+  // ── ★ 8-27 情绪惯性（mood_value）───────────────────
+
+  /** 【心情】块：mood_value 极性 → 事件风格指引 */
+  private buildMoodBlock(mv: number): string {
+    if (mv >= 15) return `情绪累积: +${mv}（最近心情偏开心——事件可以明亮、有暖意）`;
+    if (mv <= -15) return `情绪累积: ${mv}（最近心情偏低沉——事件可以安静、柔软一些）`;
+    return `情绪累积: ${mv}（心情平稳）`;
+  }
+
+  /** mood_value 累积：同方向加成 / 反方向衰减 / 8h 回归 0（按事件间隔线性回归）。
+   *  shift -5..+5（来自事件 JSON mood_shift，非法按 0）。联动 mood 文本极性。 */
+  private updateMoodValue(shift?: number, now: Date = new Date()): void {
+    try {
+      const snapshot = this.memoryManager.getLifeSnapshot();
+      let mv = snapshot.moodValue ?? 0;
+      const lastAt = snapshot.updatedAt ? new Date(snapshot.updatedAt).getTime() : 0;
+      // 8h 回归：距上次 mood 更新 elapsed → 向 0 线性回归（满 8h 归 0）
+      if (lastAt > 0) {
+        const elapsed = Math.min(1, (now.getTime() - lastAt) / (8 * 3_600_000));
+        if (elapsed > 0) mv = Math.round(mv - mv * elapsed);
+      }
+      const s = Math.max(-5, Math.min(5, Math.round(shift ?? 0)));
+      if (s !== 0) {
+        if (mv > 0 && s < 0) mv = Math.round(mv * 0.5) + s;   // 反方向：先衰减再反向
+        else if (mv < 0 && s > 0) mv = Math.round(mv * 0.5) + s;
+        else mv = mv + Math.round(s * 1.5);                    // 同方向加成
+      }
+      mv = Math.max(-100, Math.min(100, mv));
+      // mood 文本联动极性（与 LifeView 心情映射兼容：平静/开心/低落）
+      const moodText = mv >= 15 ? '开心' : mv <= -15 ? '低落' : '平静';
+      this.memoryManager.updateLifeState({ moodValue: mv, mood: moodText });
+      logger.debug(`[Life] mood_value ${snapshot.moodValue} → ${mv} (shift ${s})`);
+    } catch (err: any) {
+      logger.warn(`[Life] mood_value update failed: ${err.message}`);
+    }
+  }
+
+  // ── ★ 8-27 配角在场（ScenePresence）─────────────────
+
+  /** 世界书配角名单：事件内容提到谁 → 在场推导；post-check ⑦ 校验不在场角色不出现 */
+  private static KNOWN_CHARS = [
+    '迷迷', '风堇', '遐蝶', '白厄', '那刻夏', '万敌',
+    '三月七', '丹恒', '开拓者', '荒笛', '来古士', '德谬歌',
+  ] as const;
+
+  /** 事件入库后：内容提到谁 → present（带依据）；随后巡检 present 超 24h 无更新 → off-scene */
+  private updatePresenceFromEvent(content: string): void {
+    try {
+      for (const name of LifeService.KNOWN_CHARS) {
+        if (content.includes(name)) {
+          this.memoryManager.upsertScenePresence(name, 'present', content.slice(0, 50));
+        }
+      }
+      // 巡检：在场角色 24h 无提及 → 降级离场（生活自然推移）
+      const now = Date.now();
+      const presence = this.memoryManager.listScenePresence() as Array<{ name: string; status: string; updatedAt: string }>;
+      for (const p of presence) {
+        if (p.status === 'present' && now - new Date(p.updatedAt).getTime() > 24 * 3_600_000) {
+          this.memoryManager.upsertScenePresence(p.name, 'off-scene');
+          logger.debug(`[Life] ${p.name} left scene (24h no mention)`);
+        }
+      }
+    } catch (err: any) {
+      logger.warn(`[Life] presence update failed: ${err.message}`);
+    }
+  }
+
+  // ── ★ 8-27 post-check 7 条校验 ─────────────────────
+
+  /** 生成后规则校验；返回 { ok, feedback }。不过 → 带反馈重试 1 次 → 回落模板 */
+  private postCheck(
+    evt: { content: string; type: string },
+    todayEvents: Array<{ content: string; type: string }>,
+    presentNames: string[],
+  ): { ok: boolean; feedback: string } {
+    const c = evt.content.trim();
+    // ① 长度 ≤ 80 字
+    if (c.length > 80) return { ok: false, feedback: '内容超过 80 字，压缩到 1-2 句' };
+    // ② 不硬设定：设定词条黑名单（生活事件里出现即生硬罗列）
+    const HARD_SETTING_WORDS = ['黄金裔', '火种', '泰坦', '铁幕', '轮回', '因子', '神权', '负世', '岁月'];
+    for (const w of HARD_SETTING_WORDS) {
+      if (c.includes(w)) return { ok: false, feedback: `不要生硬罗列设定词"${w}"，把背景融入生活细节` };
+    }
+    // ③ 对话感：chat 是分享不是报备
+    if (evt.type === 'chat') {
+      const REPORT_WORDS = ['汇报', '通知', '特此', '以下是', '综上所述'];
+      for (const w of REPORT_WORDS) {
+        if (c.includes(w)) return { ok: false, feedback: '这是对轻月的分享不是报备，去掉公文腔' };
+      }
+    }
+    // ④ 不重复：与今天已有事件（完全相同/前 12 字相同）
+    for (const e of todayEvents) {
+      const a = e.content.slice(0, 12), b = c.slice(0, 12);
+      if (e.content === c || (a && b && a === b)) {
+        return { ok: false, feedback: '与今天已有事件重复，换一件不一样的事' };
+      }
+    }
+    // ⑤ 不连续独处：已有连续 ≥3 internal 且本事件仍 internal → 提示互动
+    if (evt.type === 'internal' && todayEvents.length >= 3) {
+      let streak = 0;
+      for (let i = todayEvents.length - 1; i >= 0 && todayEvents[i].type === 'internal'; i--) streak++;
+      if (streak >= 3) return { ok: false, feedback: '最近一直在独处，试着写一件和在场角色或轻月的互动' };
+    }
+    // ⑥ 不引用对话：引号包裹的直接引用 / "你说…""你刚才…"
+    if (/[「」""''【】]/.test(c) || /你说|你刚才|你上次/.test(c)) {
+      return { ok: false, feedback: '不要引用与轻月的对话内容，过自己的生活' };
+    }
+    // ⑦ 不在场角色不出现：内容提到的配角必须在场列表内
+    const present = new Set(presentNames);
+    for (const name of LifeService.KNOWN_CHARS) {
+      if (c.includes(name) && !present.has(name)) {
+        return { ok: false, feedback: `"${name}"此刻不在场，不要让他/她出现` };
+      }
+    }
+    return { ok: true, feedback: '' };
   }
 
   /** ★ 8-09 延续机制：最近 8h 内 internal 事件 = "正在做的事"（可延续）。
@@ -349,19 +566,25 @@ export class LifeService {
   }
 
   /** ★ 8-14 加权随机模板（权重越高越常被选中）；空池返回 null。
-   *  模板池迁 SQLite（content-self-evolution）：listLifeTemplates 实时读取（seed + self） */
-  private pickTemplate(): { activity: string; type: 'chat' | 'internal' } | null {
+   *  模板池迁 SQLite（content-self-evolution）：listLifeTemplates 实时读取（seed + self）。
+   *  ★ 8-27 在场角色组优先：在场者对应的 group_name 模板优先；无 → 独处/通用池。 */
+  private pickTemplate(presentNames: string[] = []): { activity: string; type: 'chat' | 'internal'; category: string } | null {
     const templates = this.memoryManager.listLifeTemplates() ?? [];
     if (templates.length === 0) return null;
-    const total = templates.reduce((s: number, t: any) => s + (t.weight ?? 2), 0);
+    const present = new Set(presentNames);
+    const groupPool = templates.filter((t: any) => t.groupName !== 'none' && present.has(t.groupName));
+    const pool = groupPool.length > 0
+      ? groupPool
+      : templates.filter((t: any) => t.category === '独处' || t.groupName === 'none');
+    const total = pool.reduce((s: number, t: any) => s + (t.weight ?? 2), 0);
     let r = Math.random() * total;
-    for (const t of templates) {
+    for (const t of pool) {
       r -= (t.weight ?? 2);
       if (r <= 0) return t;
     }
     // 数学上不可达：r < total 恒成立（Math.random() ∈ [0,1)），循环内必命中。
     // 保留返回值以满足 TS 控制流分析。
-    return templates[0];
+    return pool[0];
   }
 
   // ── 每日摘要生成 ────────────────────────────────────

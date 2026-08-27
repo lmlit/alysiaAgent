@@ -339,15 +339,32 @@ export class MemoryManager {
 
   // ===== AI 主动生活系统（v4）=====
 
-  /** ★ 生活状态快照（Web 展示） */
-  getLifeSnapshot(): { currentActivity: string; mood: string; intimacy: number } {
+  /** ★ 生活状态快照（Web 展示）。★ 8-27 增量扩展 moodValue（情绪累积值）与 updatedAt（8h 回归基准） */
+  getLifeSnapshot(): { currentActivity: string; mood: string; intimacy: number; moodValue: number; updatedAt: string } {
     const s = this.lifeStore.getState();
-    return { currentActivity: s.currentActivity, mood: s.mood, intimacy: s.intimacy };
+    return { currentActivity: s.currentActivity, mood: s.mood, intimacy: s.intimacy, moodValue: s.moodValue, updatedAt: s.updatedAt };
   }
 
-  /** 更新 AI 实时状态（活动/心情/亲密度），亲密度由 LifeService 每小时推导后传入 */
-  updateLifeState(partial: { currentActivity?: string; mood?: string; intimacy?: number }): void {
+  /** 更新 AI 实时状态（活动/心情/亲密度/moodValue），亲密度由 LifeService 每小时推导后传入 */
+  updateLifeState(partial: { currentActivity?: string; mood?: string; intimacy?: number; moodValue?: number }): void {
     this.lifeStore.updateState(partial);
+  }
+
+  // ===== ★ 8-27 配角在场（ScenePresence）=====
+
+  /** 全部在场状态（含 off-scene，供管理展示） */
+  listScenePresence(): Array<{ name: string; status: string; basis?: string; updatedAt: string }> {
+    return this.lifeStore.listScenePresence();
+  }
+
+  /** 当前在场配角名（present + expected）——事件生成注入【在场角色】 */
+  listPresentCharacters(): string[] {
+    return this.lifeStore.listPresentNames();
+  }
+
+  /** 更新/新建在场状态（事件提到谁 → present，带依据；24h 无提及由 LifeService 巡检降级） */
+  upsertScenePresence(name: string, status: 'present' | 'off-scene' | 'expected', basis?: string): void {
+    this.lifeStore.upsertScenePresence(name, status, basis);
   }
 
   /** ★ 事件流注入块（对话 prompt 用）：今天逐条 + 近 7 天摘要。无事件返回 '' */
@@ -393,17 +410,18 @@ export class MemoryManager {
     return `[我的近期日常]\n${lines.join('\n')}`;
   }
 
-  /** ★ 记录 AI 生活事件 + 更新当前活动。返回事件 id（LifeService 推送成功后标记 delivered 用） */
-  recordLifeEvent(input: { type: 'chat' | 'internal'; content: string; moodDelta?: string; referenceEventId?: string; wbEntryId?: string }): string {
+  /** ★ 记录 AI 生活事件 + 更新当前活动。返回事件 id（LifeService 推送成功后标记 delivered 用）
+   *  ★ 8-27 扩展 origin（'regular' | 'followup' 对话余波） */
+  recordLifeEvent(input: { type: 'chat' | 'internal'; content: string; moodDelta?: string; referenceEventId?: string; wbEntryId?: string; origin?: 'regular' | 'followup' }): string {
     const now = new Date().toISOString();
     const id = `life-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
     this.lifeStore.addEvent({
       id, createdAt: now, type: input.type, content: input.content,
       moodDelta: input.moodDelta, referenceEventId: input.referenceEventId,
-      wbEntryId: input.wbEntryId,
+      wbEntryId: input.wbEntryId, origin: input.origin,
     });
     this.lifeStore.updateState({ currentActivity: input.content, mood: input.moodDelta ?? undefined, lastEventId: id });
-    logger.info(`[Life] event: [${input.type}] ${input.content.slice(0, 60)}`);
+    logger.info(`[Life] event: [${input.type}]${input.origin === 'followup' ? '[followup]' : ''} ${input.content.slice(0, 60)}`);
     // ★ 8-12 事件向量检索（life-event-vector-search）：fire-and-forget 嵌入——
     //   对话可召回"bot 自己做过的事"（与主提示词瘦身配对：瘦掉的细节检索兜底）。
     //   embed 失败不阻塞事件记录（沿用 RealtimeProcessor 模式）
@@ -419,15 +437,23 @@ export class MemoryManager {
     return id;
   }
 
-  /** ★ 激活角色世界书采样（事件生成人设背景，priority 加权）。返回含 id，供生成器引用与命中统计。
-   *  ★ 8-12 二期④：纳入 content_type='life_event' 角色专属事件种子（事件模板），
-   *    按 priority 与文本条目同池采样——生成的事件更贴合角色设定 */
+  /** ★ 激活角色世界书采样（事件生成人设背景）。返回含 id，供生成器引用与命中统计。
+   *  ★ 8-12 二期④：纳入 content_type='life_event' 角色专属事件种子（事件模板）。
+   *  ★ 8-27 分层随机（life-worldbook-layered-sample）：life_event 随机取 3 + text 随机取 2
+   *    （ORDER BY RANDOM()，不再按 priority 排序），每条截断 200 字（原 100）——
+   *    角色生活化条目优先于设定条目；limit 参数兼容旧调用（按分层比例分配） */
   getWorldbookSample(limit: number = 5): Array<{ id: string; content: string }> {
     const role = this.getActiveRoleId();
-    const rows = this.db.prepare(
-      "SELECT id, content, priority FROM worldbook_entries WHERE role = ? AND scope IN ('chat', 'both') AND content_type IN ('text', 'life_event') ORDER BY priority DESC LIMIT ?"
-    ).all(role, limit) as Array<{ id: string; content: string; priority: number }>;
-    return rows.map(r => ({ id: r.id, content: r.content.slice(0, 100) }));
+    // 分层：life_event 占 3/5，text 占 2/5（按 limit 等比，最小各 1）
+    const lifeCount = Math.max(1, Math.round(limit * 3 / 5));
+    const textCount = Math.max(1, limit - lifeCount);
+    const lifeRows = this.db.prepare(
+      "SELECT id, content FROM worldbook_entries WHERE role = ? AND scope IN ('chat', 'both') AND content_type = 'life_event' ORDER BY RANDOM() LIMIT ?"
+    ).all(role, lifeCount) as Array<{ id: string; content: string }>;
+    const textRows = this.db.prepare(
+      "SELECT id, content FROM worldbook_entries WHERE role = ? AND scope IN ('chat', 'both') AND content_type = 'text' ORDER BY RANDOM() LIMIT ?"
+    ).all(role, textCount) as Array<{ id: string; content: string }>;
+    return [...lifeRows, ...textRows].map(r => ({ id: r.id, content: r.content.slice(0, 200) }));
   }
 
   /** ★ 世界书命中统计（spec §7 ②）：事件引用条目 → hit_count+1 + last_triggered（与对话触发共用冷却） */
@@ -1090,7 +1116,8 @@ export interface RolePackage {
     scope?: 'chat' | 'code' | 'both';
     priority?: number;
     cooldown_sec?: number;
-    content_type?: 'text' | 'image' | 'sticker';
+    /** ★ 8-12/8-27：'text'(设定) | 'life_event'(生活化种子) | 'image' | 'sticker'（表情包素材） */
+    content_type?: 'text' | 'life_event' | 'image' | 'sticker';
   }>;
   /** 导入后是否立即激活 */
   activate?: boolean;

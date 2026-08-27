@@ -4,7 +4,7 @@ import { LifeService } from '../src/life.js';
 /** MemoryManager / QQ 适配器 mock（按真实接口 getRecentMessages/ingest/listLifeEvents） */
 function makeMocks(overrides: Record<string, any> = {}) {
   const memoryManager = {
-    getLifeSnapshot: vi.fn().mockReturnValue({ currentActivity: '', mood: '', intimacy: 30 }),
+    getLifeSnapshot: vi.fn().mockReturnValue({ currentActivity: '', mood: '', intimacy: 30, moodValue: 0, updatedAt: '' }),
     // ★ 旋钮（8-08：updateIntimacy 读 getPersonaSnapshot().memoryConfig，默认值 0.3/0.4/0.3/0.3）
     getPersonaSnapshot: vi.fn().mockReturnValue({
       name: '昔涟',
@@ -21,13 +21,17 @@ function makeMocks(overrides: Record<string, any> = {}) {
     listLifeSummaries: vi.fn().mockReturnValue([]),
     // ★ 8-14 模板池迁库：pickTemplate 从库实时读取
     listLifeTemplates: vi.fn().mockReturnValue([
-      { id: 'lt-1', activity: '给自己倒了杯水', type: 'internal', weight: 5, source: 'seed' },
+      { id: 'lt-1', activity: '给自己倒了杯水', type: 'internal', weight: 5, source: 'seed', category: '独处', groupName: 'none' },
     ]),
     listSessions: vi.fn().mockReturnValue([]),
     upsertDailySummary: vi.fn(),
     markLifeEventDelivered: vi.fn(),
     bumpWorldbookHit: vi.fn(),
     ingest: vi.fn().mockResolvedValue(undefined),
+    // ★ 8-27 配角在场（ScenePresence）
+    listPresentCharacters: vi.fn().mockReturnValue([]),
+    listScenePresence: vi.fn().mockReturnValue([]),
+    upsertScenePresence: vi.fn(),
     ...overrides,
   };
   const qqOff = { sendProactive: vi.fn().mockResolvedValue(true) };
@@ -609,5 +613,264 @@ describe('LifeService — todayProactive 感知（方案 B：避免重复打扰�
     await svc.tick();
     expect(capturedContext).not.toContain('【今天已主动联系】');
     vi.restoreAllMocks();
+  });
+});
+
+// ── ★ 8-27 叙事化重构（life-system-narrative-refactor）──────────────────
+
+describe('LifeService — 8-27 配角在场（ScenePresence）', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('事件提到在场角色 → upsertScenePresence(present, 带依据)', async () => {
+    freezeTime(14);
+    vi.spyOn(Math, 'random').mockReturnValue(0.1);
+    const { memoryManager, qqOff } = makeMocks({
+      listPresentCharacters: vi.fn().mockReturnValue(['迷迷']),
+    });
+    const svc = new LifeService(memoryManager as any, qqOff as any, {
+      ownerOpenid: 'openid-1',
+      generateEvent: async () => '{"content":"迷迷在我腿边团成一团","type":"internal"}',
+    });
+    await svc.tick();
+    expect(memoryManager.upsertScenePresence).toHaveBeenCalledWith(
+      '迷迷', 'present', expect.stringContaining('迷迷')
+    );
+  });
+
+  it('生成 prompt 注入【在场角色】；空在场 → 提示不要凭空召唤角色', async () => {
+    freezeTime(14);
+    vi.spyOn(Math, 'random').mockReturnValue(0.1);
+    let ctx = '';
+    const { memoryManager } = makeMocks();
+    const svc = new LifeService(memoryManager as any, {} as any, {
+      ownerOpenid: 'openid-1',
+      generateEvent: async (c: string) => { ctx = c; return '{"content":"x","type":"internal"}'; },
+    });
+    await svc.tick();
+    expect(ctx).toContain('【在场角色】');
+    expect(ctx).toContain('不要凭空召唤其他角色');
+  });
+
+  it('prompt 注入在场名单', async () => {
+    freezeTime(14);
+    vi.spyOn(Math, 'random').mockReturnValue(0.1);
+    let ctx = '';
+    const { memoryManager } = makeMocks({
+      listPresentCharacters: vi.fn().mockReturnValue(['迷迷', '风堇']),
+    });
+    const svc = new LifeService(memoryManager as any, {} as any, {
+      ownerOpenid: 'openid-1',
+      generateEvent: async (c: string) => { ctx = c; return '{"content":"x","type":"internal"}'; },
+    });
+    await svc.tick();
+    expect(ctx).toContain('- 迷迷');
+    expect(ctx).toContain('- 风堇');
+  });
+
+  it('post-check ⑦：内容出现不在场配角 → 拒绝并重试', async () => {
+    freezeTime(14);
+    vi.spyOn(Math, 'random').mockReturnValue(0.1);
+    const gen = vi.fn()
+      .mockResolvedValueOnce('{"content":"白厄在院子里劈柴","type":"internal"}')  // 白厄不在场 → 拒绝
+      .mockResolvedValueOnce('{"content":"安安静静看书","type":"internal"}');       // 重试通过
+    const { memoryManager, qqOff } = makeMocks();
+    const svc = new LifeService(memoryManager as any, qqOff as any, {
+      ownerOpenid: 'openid-1',
+      generateEvent: gen,
+    });
+    await svc.tick();
+    expect(gen).toHaveBeenCalledTimes(2);
+    // 重试请求带修正反馈
+    expect(String(gen.mock.calls[1][0])).toContain('不在场');
+    expect(memoryManager.recordLifeEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ content: '安安静静看书' })
+    );
+  });
+
+  it('post-check ⑦：在场配角出现 → 直接通过不重试', async () => {
+    freezeTime(14);
+    vi.spyOn(Math, 'random').mockReturnValue(0.1);
+    const gen = vi.fn().mockResolvedValue('{"content":"迷迷在我腿边蹭了蹭","type":"internal"}');
+    const { memoryManager } = makeMocks({
+      listPresentCharacters: vi.fn().mockReturnValue(['迷迷']),
+    });
+    const svc = new LifeService(memoryManager as any, {} as any, {
+      ownerOpenid: 'openid-1',
+      generateEvent: gen,
+    });
+    await svc.tick();
+    expect(gen).toHaveBeenCalledTimes(1);
+  });
+
+  it('pickTemplate：在场角色组模板优先（在场有迷迷 → 选迷迷组）', () => {
+    const { memoryManager } = makeMocks({
+      listLifeTemplates: vi.fn().mockReturnValue([
+        { id: 'a', activity: '迷迷在腿边团成一团', type: 'internal', weight: 3, source: 'seed', category: '互动', groupName: '迷迷' },
+        { id: 'b', activity: '给自己倒了杯水', type: 'internal', weight: 5, source: 'seed', category: '独处', groupName: 'none' },
+      ]),
+    });
+    const svc = new LifeService(memoryManager as any, {} as any, { ownerOpenid: 'openid-1' });
+    vi.spyOn(Math, 'random').mockReturnValue(0.5); // 落在池内任意权重区间
+    const t = (svc as any).pickTemplate(['迷迷']);
+    expect(t.groupName).toBe('迷迷');
+    vi.restoreAllMocks();
+  });
+});
+
+describe('LifeService — 8-27 情绪惯性（mood_value）', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('同方向加成：mood_value 20 + mood_shift 2 → 23（×1.5）', () => {
+    freezeTime(14);
+    const { memoryManager } = makeMocks({
+      getLifeSnapshot: vi.fn().mockReturnValue({ currentActivity: '', mood: '开心', intimacy: 30, moodValue: 20, updatedAt: '2026-08-06T14:00:00' }),
+    });
+    const svc = new LifeService(memoryManager as any, {} as any, { ownerOpenid: 'openid-1' });
+    (svc as any).updateMoodValue(2, new Date('2026-08-06T14:00:00')); // updatedAt=now → 无回归
+    const call = memoryManager.updateLifeState.mock.calls[0][0];
+    expect(call.moodValue).toBe(23); // 20 + 2×1.5 = 23
+  });
+
+  it('反方向衰减：mood_value 20 + mood_shift -4 → 20×0.5-4 = 6', () => {
+    freezeTime(14);
+    const { memoryManager } = makeMocks({
+      getLifeSnapshot: vi.fn().mockReturnValue({ currentActivity: '', mood: '开心', intimacy: 30, moodValue: 20, updatedAt: '2026-08-06T14:00:00' }),
+    });
+    const svc = new LifeService(memoryManager as any, {} as any, { ownerOpenid: 'openid-1' });
+    (svc as any).updateMoodValue(-4, new Date('2026-08-06T14:00:00'));
+    const call = memoryManager.updateLifeState.mock.calls[0][0];
+    expect(call.moodValue).toBe(6); // 20×0.5 - 4 = 6
+  });
+
+  it('8h 回归：满 8h 未更新 → 归 0', () => {
+    freezeTime(14);
+    const { memoryManager } = makeMocks({
+      getLifeSnapshot: vi.fn().mockReturnValue({ currentActivity: '', mood: '开心', intimacy: 30, moodValue: 40, updatedAt: '2026-08-06T02:00:00' }),
+    });
+    const svc = new LifeService(memoryManager as any, {} as any, { ownerOpenid: 'openid-1' });
+    (svc as any).updateMoodValue(0, new Date('2026-08-06T14:00:00')); // 12h 后 → elapsed 钳到 1 → 归 0
+    const call = memoryManager.updateLifeState.mock.calls[0][0];
+    expect(call.moodValue).toBe(0);
+  });
+
+  it('mood_value 极性联动 mood 文本：+15 → 开心，-15 → 低落', () => {
+    freezeTime(14);
+    const base = { currentActivity: '', intimacy: 30, updatedAt: '2026-08-06T14:00:00' };
+    const pos = makeMocks({ getLifeSnapshot: vi.fn().mockReturnValue({ ...base, mood: '', moodValue: 20 }) });
+    new LifeService(pos.memoryManager as any, {} as any, { ownerOpenid: 'openid-1' });
+    (new LifeService(pos.memoryManager as any, {} as any, { ownerOpenid: 'openid-1' }) as any).updateMoodValue(0, new Date('2026-08-06T14:00:00'));
+    const posCall = pos.memoryManager.updateLifeState.mock.calls[0][0];
+    expect(posCall.mood).toBe('开心');
+    const neg = makeMocks({ getLifeSnapshot: vi.fn().mockReturnValue({ ...base, mood: '', moodValue: -20 }) });
+    (new LifeService(neg.memoryManager as any, {} as any, { ownerOpenid: 'openid-1' }) as any).updateMoodValue(0, new Date('2026-08-06T14:00:00'));
+    const negCall = neg.memoryManager.updateLifeState.mock.calls[0][0];
+    expect(negCall.mood).toBe('低落');
+  });
+});
+
+describe('LifeService — 8-27 Agency Window 与对话余波', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('agency.can_contact=false → chat 事件降级 internal 不推送', async () => {
+    freezeTime(14);
+    vi.spyOn(Math, 'random').mockReturnValue(0.1);
+    const { memoryManager, qqOff } = makeMocks();
+    const svc = new LifeService(memoryManager as any, qqOff as any, {
+      ownerOpenid: 'openid-1',
+      cooldownHours: 0,
+      generateEvent: async () => '{"content":"想分享的事","type":"chat","agency":{"can_contact":false,"reason":"沉浸中"}}',
+    });
+    await svc.tick();
+    expect(memoryManager.recordLifeEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'chat' }));
+    expect(qqOff.sendProactive).not.toHaveBeenCalled();
+  });
+
+  it('agency.can_contact 缺失/true → 正常推送', async () => {
+    freezeTime(14);
+    vi.spyOn(Math, 'random').mockReturnValue(0.1);
+    const { qqOff } = makeMocks();
+    const svc = new LifeService(makeMocks().memoryManager as any, qqOff as any, {
+      ownerOpenid: 'openid-1',
+      cooldownHours: 0,
+      generateEvent: async () => '{"content":"在阳台看星星","type":"chat"}',
+    });
+    await svc.tick();
+    expect(qqOff.sendProactive).toHaveBeenCalledWith('openid-1', '在阳台看星星');
+  });
+
+  it('对话余波：最后 user 消息 15min 后 → 生成 internal followup 事件（不推送）', async () => {
+    freezeTime(14);
+    vi.spyOn(Math, 'random').mockReturnValue(0.1);
+    const { memoryManager, qqOff } = makeMocks({
+      getRecentMessages: vi.fn().mockReturnValue([
+        { role: 'user', content: '在吗', createdAt: new Date(Date.now() - 20 * 60_000).toISOString() }, // 20min 前
+      ]),
+      listLifeEvents: vi.fn().mockReturnValue([]), // 无余波
+    });
+    const svc = new LifeService(memoryManager as any, qqOff as any, {
+      ownerOpenid: 'openid-1',
+      generateEvent: async () => '{"content":"想到刚才说的话，有点不好意思","type":"internal"}',
+    });
+    await svc.tick();
+    expect(memoryManager.recordLifeEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'internal', origin: 'followup', content: '想到刚才说的话，有点不好意思' })
+    );
+    expect(qqOff.sendProactive).not.toHaveBeenCalled();
+    expect(memoryManager.ingest).toHaveBeenCalled(); // 余波回写记忆
+  });
+
+  it('对话余波去重：3h 内已有 followup → 不再生成', async () => {
+    freezeTime(14);
+    vi.spyOn(Math, 'random').mockReturnValue(0.1);
+    const gen = vi.fn().mockResolvedValue('{"content":"x","type":"internal"}');
+    const { memoryManager } = makeMocks({
+      getRecentMessages: vi.fn().mockReturnValue([
+        { role: 'user', content: '在吗', createdAt: new Date(Date.now() - 20 * 60_000).toISOString() },
+      ]),
+      listLifeEvents: vi.fn().mockReturnValue([
+        { id: 'life-follow-1', origin: 'followup', createdAt: new Date(Date.now() - 60 * 60_000).toISOString() },
+      ]),
+    });
+    const svc = new LifeService(memoryManager as any, {} as any, { ownerOpenid: 'openid-1', generateEvent: gen });
+    await svc.tick();
+    expect(gen).not.toHaveBeenCalled(); // 余波跳过 + 聊天锁内（20min < 30min 锁）→ 主事件也不生成
+  });
+
+  it('对话余波窗口：15min 内不生成', async () => {
+    freezeTime(14);
+    const gen = vi.fn().mockResolvedValue('{"content":"x","type":"internal"}');
+    const { memoryManager } = makeMocks({
+      getRecentMessages: vi.fn().mockReturnValue([
+        { role: 'user', content: '在吗', createdAt: new Date(Date.now() - 5 * 60_000).toISOString() }, // 5min 前
+      ]),
+    });
+    const svc = new LifeService(memoryManager as any, {} as any, { ownerOpenid: 'openid-1', generateEvent: gen });
+    await svc.tick();
+    expect(gen).not.toHaveBeenCalled(); // 聊天锁内，不生成
+  });
+
+  it('prompt 注入【心情】块（mood_value 极性）', async () => {
+    freezeTime(14);
+    vi.spyOn(Math, 'random').mockReturnValue(0.1);
+    let ctx = '';
+    const { memoryManager } = makeMocks({
+      getLifeSnapshot: vi.fn().mockReturnValue({ currentActivity: '', mood: '开心', intimacy: 30, moodValue: 22, updatedAt: '' }),
+    });
+    const svc = new LifeService(memoryManager as any, {} as any, {
+      ownerOpenid: 'openid-1',
+      generateEvent: async (c: string) => { ctx = c; return '{"content":"x","type":"internal"}'; },
+    });
+    await svc.tick();
+    expect(ctx).toContain('【心情】');
+    expect(ctx).toContain('开心');
   });
 });

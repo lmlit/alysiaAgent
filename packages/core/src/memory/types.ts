@@ -107,7 +107,7 @@ export interface WorldbookEntry {
   updated_at: string;
   /** v3 角色系统：所属角色，匹配时按当前角色过滤 */
   role?: string;
-  /** v3 角色系统：内容类型 'text' | 'image' | 'sticker'（表情包素材） */
+  /** v3 角色系统：内容类型 'text' | 'life_event'（8-27 生活化种子）| 'image' | 'sticker'（表情包素材） */
   content_type?: string;
   /** ★ 8-14 内容自进化：条目来源 'seed'(角色包导入/seed) | 'self'(昔涟自写) */
   source?: string;

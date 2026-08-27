@@ -26,7 +26,16 @@ const WORLDBOOK_FILES = [
   'world.md',
   'story.md',
   '_glossary.md',
+  // ★ 8-27 生活化条目（life-system-narrative-refactor）：content_type='life_event'，
+  //   事件生成器按 life_event 层随机采样——让事件从角色生活中自然生长
+  'daily_life.md',
 ] as const;
+
+/** ★ 8-27 按文件指定 worldbook 条目的 content_type/scope/priority 元数据
+ *  （daily_life.md → life_event，生活背景优先于普通设定条目采样） */
+const FILE_META: Record<string, { content_type: 'text' | 'life_event' | 'image'; scope: 'chat' | 'code' | 'both'; priority: number }> = {
+  'daily_life.md': { content_type: 'life_event', scope: 'both', priority: 8 },
+};
 
 /** Read a persona file, returns empty string if not found */
 function readPersonaFile(filename: string): string {
@@ -105,6 +114,8 @@ export async function seedWorldbook(memoryManager: MemoryManager): Promise<void>
     trigger_keys: string;
     content: string;
     priority: number;
+    content_type: 'text' | 'life_event' | 'image';
+    scope: 'chat' | 'code' | 'both';
   }> = [];
 
   for (const file of WORLDBOOK_FILES) {
@@ -113,6 +124,7 @@ export async function seedWorldbook(memoryManager: MemoryManager): Promise<void>
 
     // Parse markdown headings as entry separators
     const sections = raw.split(/(?=^## )/m).filter(s => s.trim());
+    const meta = FILE_META[file] ?? { content_type: 'text', scope: 'chat', priority: file === 'Cyrene.md' ? 10 : 5 };
     for (const section of sections) {
       const titleMatch = section.match(/^## (.+)$/m);
       const title = titleMatch ? titleMatch[1].trim() : file.replace('.md', '');
@@ -123,7 +135,9 @@ export async function seedWorldbook(memoryManager: MemoryManager): Promise<void>
       entries.push({
         trigger_keys: JSON.stringify(triggerWords),
         content: section.trim(),
-        priority: file === 'Cyrene.md' ? 10 : 5,
+        priority: meta.priority,
+        content_type: meta.content_type,
+        scope: meta.scope as 'chat' | 'code' | 'both',
       });
     }
   }
@@ -139,6 +153,8 @@ export async function seedWorldbook(memoryManager: MemoryManager): Promise<void>
         trigger_keys: JSON.parse(e.trigger_keys) as string[],
         content: e.content,
         priority: e.priority,
+        content_type: e.content_type,
+        scope: e.scope,
       })),
       activate: false,
     });

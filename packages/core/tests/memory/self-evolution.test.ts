@@ -112,12 +112,12 @@ describe('MemoryManager 内容自进化', () => {
     expect(r.ok).toBe(false);
   });
 
-  it('listLifeTemplates = seed 8 条 + 自加；delete 生效', async () => {
-    expect(mm.listLifeTemplates().length).toBe(8); // seed 保底
+  it('listLifeTemplates = seed 43 条（8-27 扩容）+ 自加；delete 生效', async () => {
+    expect(mm.listLifeTemplates().length).toBe(43); // seed 保底（8-14 原 8 条 → 8-27 扩容 43 条）
     const { id } = await mm.addLifeTemplate({ activity: '在窗台种薄荷', type: 'chat' });
-    expect(mm.listLifeTemplates().length).toBe(9);
+    expect(mm.listLifeTemplates().length).toBe(44);
     expect(mm.listLifeTemplates().some(t => t.activity === '在窗台种薄荷' && t.type === 'chat')).toBe(true);
     expect(mm.deleteLifeTemplate(id)).toBe(true);
-    expect(mm.listLifeTemplates().length).toBe(8);
+    expect(mm.listLifeTemplates().length).toBe(43);
   });
 });
