@@ -839,14 +839,24 @@ export class MemoryManager {
 
   /** ★ 获取当前画像快照（Web 端画像展示）。 */
   getProfileSnapshot(): {
-    facts: Array<{ fact: string; confidence: number; source: string; status: string }>;
+    facts: Array<{ fact: string; confidence: number; source: string; status: string; updatedAt: string; validFrom: string }>;
     basics: string;
     preferences: string;
   } {
     const profile = this.profileStore.get();
-    const facts = JSON.parse(profile.facts) as Array<{ fact: string; confidence: number; source: string; status: string }>;
+    // ★ 8-28 时间字段透出（profile-facts-timestamps）：Web 画像页展示事实时间
+    const facts = (JSON.parse(profile.facts) as Array<{ fact: string; confidence: number; source: string; status: string; updated_at?: string; valid_from?: string }>)
+      .filter(f => f.status !== 'superseded')
+      .map(f => ({
+        fact: f.fact,
+        confidence: f.confidence,
+        source: f.source,
+        status: f.status,
+        updatedAt: f.updated_at ?? '',
+        validFrom: f.valid_from ?? '',
+      }));
     return {
-      facts: facts.filter(f => f.status !== 'superseded'),
+      facts,
       basics: profile.basics,
       preferences: profile.preferences,
     };

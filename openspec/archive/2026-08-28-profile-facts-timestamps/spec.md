@@ -108,12 +108,12 @@ CREATE TABLE user_profile (
 - 新条 `status='active'`, `valid_from=now` 插入
 - `source='user'` 优先级最高，不会被 `inferred` 覆盖
 - 新写入默认 `source='inferred'`, `confidence=0.4`, `status='active'`
-
-**★ 8-28 时间标注（profile-facts-timestamps）**：
-- 数据层时间字段（valid_from/updated_at）已齐全，**展示层补上**：
-- PromptAssembler 注入格式：`- 用户在长沙 [你说过] (3天前)`——相对时间（今天/昨天/N天前/超 30 天显示 `M月d日`），
-  时间基准 = valid_from/updated_at 较新者（"用户正在玩绝区零" 8-01 提取、8-02 被替代更新 → 显示 8-02 更贴近当前认知）
-- getProfileSnapshot 返回 facts 增量加 `updatedAt`/`validFrom`（Web 画像页展示时间列，不破坏现有字段）
++ 
++ **★ 8-28 时间标注（profile-facts-timestamps）**：
++ - 数据层时间字段（valid_from/updated_at）已齐全，**展示层补上**：
++ - PromptAssembler 注入格式：`- 用户在长沙 [你说过] (3天前)`——相对时间（今天/昨天/N天前/超 30 天显示 `M月d日`），
++   时间基准 = valid_from/updated_at 较新者（"用户正在玩绝区零" 8-01 提取、8-02 被替代更新 → 显示 8-02 更贴近当前认知）
++ - getProfileSnapshot 返回 facts 增量加 `updatedAt`/`validFrom`（Web 画像页展示时间列，不破坏现有字段）
 
 ### 2.3 Persona Store（AI 人格参数）— SQLite
 

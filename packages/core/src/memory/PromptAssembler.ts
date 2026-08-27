@@ -96,7 +96,10 @@ ${rangeText}`;
         .map(f => {
           const marker = f.source === 'inferred' ? '(待确认)' : '';
           const sourceNote = f.source === 'user' ? ' [你说过]' : '';
-          return `- ${f.fact}${marker}${sourceNote}`;
+          // ★ 8-28 时间标注（profile-facts-timestamps）：事实时效对 AI 决策关键——
+          //   "用户在长沙" 是 3 个月前还是今天的，含义完全不同
+          const timeNote = this.formatFactTime(f.valid_from, f.updated_at);
+          return `- ${f.fact}${marker}${sourceNote}${timeNote}`;
         })
         .join('\n');
       if (factsText) {
@@ -267,6 +270,23 @@ ${persona.name} 编程助手模式。语气: ${tone.formality < 0 ? '随意' : '
       // Not JSON — use as plain text (LLM-generated natural language summary)
       return raw;
     }
+  }
+
+  /** ★ 8-28 画像事实时间标注（profile-facts-timestamps）：
+   *  valid_from/updated_at 较新者 → 相对时间（今天/昨天/N天前）；超 30 天显示 M月d日。
+   *  无时间字段返回空串（不标注）。token 成本 ~3-6/条。 */
+  private formatFactTime(validFrom?: string, updatedAt?: string): string {
+    const ref = Math.max(
+      validFrom ? new Date(validFrom).getTime() : 0,
+      updatedAt ? new Date(updatedAt).getTime() : 0,
+    );
+    if (!ref) return '';
+    const days = Math.floor((Date.now() - ref) / 86_400_000);
+    if (days < 1) return ' (今天)';
+    if (days === 1) return ' (昨天)';
+    if (days <= 30) return ` (${days}天前)`;
+    const d = new Date(ref);
+    return ` (${d.getMonth() + 1}月${d.getDate()}日)`;
   }
 }
 
