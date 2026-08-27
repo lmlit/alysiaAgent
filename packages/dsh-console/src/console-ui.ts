@@ -8,8 +8,14 @@
 export function buildConsoleWidgetJs(mountPath: string): string {
   // ★ 脚本内部禁止反引号/嵌套 ${};字符串一律 ' 引号
   return `(function () {
-  if (window.__alysiaConsole) return
+  if (window.__alysiaConsole) {
+    // 旧实例已存在(SPA 内不整页刷新时):恢复可见,不重复渲染
+    var oldRoot = document.getElementById('alysia-console-root')
+    if (oldRoot) oldRoot.style.display = ''
+    return
+  }
   window.__alysiaConsole = true
+  try {
 
   var MOUNT = ${JSON.stringify(mountPath)}
   var CLICK_SQ = 9
@@ -64,7 +70,7 @@ export function buildConsoleWidgetJs(mountPath: string): string {
     '.alysia-bubble{position:absolute;left:50%;bottom:calc(100% + 10px);transform:translateX(-50%) translateY(6px);background:' + PANEL_BG + ';border:1px solid ' + BORDER + ';border-radius:12px;padding:8px 12px;font-size:12px;color:' + TEXT + ';white-space:nowrap;box-shadow:0 8px 24px rgba(0,0,0,.35),0 0 16px rgba(236,72,153,.12);opacity:0;pointer-events:none;transition:opacity .18s ease,transform .18s ease;z-index:3}',
     '.alysia-bubble.open{opacity:1;transform:translateX(-50%) translateY(0)}',
     '.alysia-bubble::after{content:"";position:absolute;left:50%;top:100%;margin-left:-5px;border:5px solid transparent;border-top-color:' + BORDER + '}',
-    '.alysia-console-panel{position:fixed;width:min(400px,calc(100vw - 40px));max-height:70vh;display:flex;flex-direction:column;background:' + PANEL_BG + ';border:1px solid ' + BORDER + ';border-radius:16px;box-shadow:0 14px 44px rgba(0,0,0,.5),0 0 30px rgba(236,72,153,.14);overflow:hidden;opacity:0;transform:translateY(10px) scale(.98);pointer-events:none;transition:opacity .2s ease,transform .2s cubic-bezier(.34,1.4,.64,1),left .22s ease,right .22s ease;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}',
+    '.alysia-console-panel{position:absolute;width:min(360px,calc(100vw - 90px));max-height:70vh;display:flex;flex-direction:column;background:' + PANEL_BG + ';border:1px solid ' + BORDER + ';border-radius:16px;box-shadow:0 14px 44px rgba(0,0,0,.5),0 0 30px rgba(236,72,153,.14);overflow:hidden;opacity:0;transform:translateY(10px) scale(.98);pointer-events:none;transition:opacity .2s ease,transform .2s cubic-bezier(.34,1.4,.64,1);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);z-index:4}',
     '.alysia-console-panel.open{opacity:1;transform:none;pointer-events:auto}',
     '.alysia-console-head{display:flex;align-items:center;gap:10px;padding:14px 16px 12px;background:linear-gradient(180deg,rgba(236,72,153,.14),transparent);border-bottom:1px solid ' + BORDER + '}',
     '.alysia-console-head .dot{width:8px;height:8px;border-radius:50%;background:linear-gradient(135deg,' + BRAND + ',' + BRAND_2 + ');box-shadow:0 0 10px ' + BRAND + '}',
@@ -96,7 +102,6 @@ export function buildConsoleWidgetJs(mountPath: string): string {
     '</div>' +
     '<div class="alysia-menu">' +
       '<button class="mi" data-act="console">打开控制台</button>' +
-      '<button class="mi" data-act="hide">隐藏</button>' +
       '<div class="m-scale"><span>大小</span><input type="range" min="' + MIN_SCALE + '" max="' + MAX_SCALE + '" step="' + STEP + '" value="1"><span class="val">100%</span></div>' +
     '</div>' +
     '<div class="alysia-bubble"></div>' +
@@ -105,7 +110,6 @@ export function buildConsoleWidgetJs(mountPath: string): string {
         '<button class="alysia-console-close" title="关闭">×</button></div>' +
       '<div class="alysia-console-tabs">' +
         '<button class="alysia-console-tab active" data-page="profile">画像</button>' +
-        '<button class="alysia-console-tab" data-page="sessions">会话</button>' +
       '</div>' +
       '<div class="alysia-console-body"></div>' +
     '</div>'
@@ -154,11 +158,15 @@ export function buildConsoleWidgetJs(mountPath: string): string {
     else { state.v = 'bottom'; state.top = clamp(cy - s / 2, GAP, vp.h - s - GAP) }
     settle()
   }
+  // ★ 面板 absolute 挂在 root(球)内 → 天然跟随球移动(鲸鱼式)
   function placePanel() {
     var vp = viewport()
-    panel.style.bottom = (scaled() + GAP + 10) + 'px'
-    if (state.h === 'left') { panel.style.right = 'auto'; panel.style.left = (state.left + scaled() + 12) + 'px' }
-    else { panel.style.left = 'auto'; panel.style.right = (vp.w - state.left + 4) + 'px' }
+    var s = scaled()
+    var ph = Math.min(panel.offsetHeight || 400, vp.h - s - GAP * 2)
+    if (state.h === 'left') { panel.style.left = (s + 12) + 'px'; panel.style.right = 'auto' }
+    else { panel.style.right = (s + 12) + 'px'; panel.style.left = 'auto' }
+    panel.style.bottom = 'auto'
+    panel.style.top = Math.min(state.top + s / 2 - 120, Math.max(0, vp.h - ph - GAP)) + 'px'
   }
 
   // ── 拖拽(捕获式,鲸鱼同款)──
@@ -211,7 +219,7 @@ export function buildConsoleWidgetJs(mountPath: string): string {
     bubbleTimer = setTimeout(function () { bubble.classList.remove('open') }, BUBBLE_MS)
   }
 
-  // ── 菜单 ──
+  // ── 菜单 ★ 全部捕获阶段监听(dsh 页面冒泡层可能拦截 click)──
   menuBtn.addEventListener('pointerdown', function (e) { e.stopPropagation() })
   menuBtn.addEventListener('click', function (e) {
     e.stopPropagation()
@@ -219,12 +227,11 @@ export function buildConsoleWidgetJs(mountPath: string): string {
     menu.style.left = onLeft ? 'calc(100% + 8px)' : 'auto'
     menu.style.right = onLeft ? 'auto' : 'calc(100% + 8px)'
     menu.classList.toggle('open')
-  })
+  }, true)
   menu.addEventListener('click', function (e) {
     var act = e.target && e.target.dataset && e.target.dataset.act
     if (act === 'console') { menu.classList.remove('open'); showConsole() }
-    if (act === 'hide') { menu.classList.remove('open'); root.style.display = 'none' }
-  })
+  }, true)
   menu.querySelector('input').addEventListener('input', function (e) {
     scale = Number(e.target.value)
     fab.style.transform = 'scale(' + scale + ')'
@@ -259,34 +266,21 @@ export function buildConsoleWidgetJs(mountPath: string): string {
       body.innerHTML = '<div class="alysia-console-err">加载失败: ' + String(e && e.message || e) + '</div>'
     })
   }
-  function renderSessions() {
-    body.innerHTML = '<div class="alysia-console-loading">加载会话…</div>'
-    api('/sessions').then(function (d) {
-      var list = (d && d.sessions) || (d && Array.isArray(d) ? d : [])
-      if (!list.length) { body.innerHTML = '<div class="alysia-console-empty">暂无会话</div>'; return }
-      body.innerHTML = list.map(function (s) {
-        var t = s.title || s.id || s.sessionId || ''
-        var time = s.updated_at || s.created_at || ''
-        return row(t.slice(0, 30), String(time).slice(0, 19))
-      }).join('')
-    }).catch(function (e) {
-      body.innerHTML = '<div class="alysia-console-err">加载失败: ' + String(e && e.message || e) + '</div>'
-    })
-  }
-  var pages = { profile: renderProfile, sessions: renderSessions }
+  // ★ 会话管理交给 dsh 原生侧栏(2026-08-27 用户决策:会话接 dsh 一套控制)
+  var pages = { profile: renderProfile }
   function showConsole() {
     open = true
     panel.classList.add('open')
     ;(pages[tabs.find(function (t) { return t.classList.contains('active') }).dataset.page] || renderProfile)()
   }
   function hideConsole() { open = false; panel.classList.remove('open') }
-  root.querySelector('.alysia-console-close').addEventListener('click', hideConsole)
+  root.querySelector('.alysia-console-close').addEventListener('click', hideConsole, true)
   tabs.forEach(function (t) {
     t.addEventListener('click', function () {
       tabs.forEach(function (x) { x.classList.remove('active') })
       t.classList.add('active')
       ;(pages[t.dataset.page] || renderProfile)()
-    })
+    }, true)
   })
 
   window.addEventListener('keydown', function (e) { if (e.key === 'Escape') { hideConsole(); menu.classList.remove('open') } })
@@ -297,5 +291,14 @@ export function buildConsoleWidgetJs(mountPath: string): string {
   state.left = v0.w - scaled() - GAP
   state.top = v0.h - scaled() - GAP
   settle()
+  } catch (err) {
+    // ★ 错误浮层:任何运行时错误画到页面角落,便于排查(生产可移除)
+    try {
+      var dbg = document.createElement('div')
+      dbg.style.cssText = 'position:fixed;right:10px;bottom:10px;z-index:99999;background:#fef2f2;color:#b91c1c;font:11px monospace;padding:8px 12px;border-radius:8px;max-width:60vw;white-space:pre-wrap'
+      dbg.textContent = 'alysia-console error: ' + String(err && err.stack || err)
+      document.body.appendChild(dbg)
+    } catch (e2) { /* debug overlay failed */ }
+  }
 })()`
 }
