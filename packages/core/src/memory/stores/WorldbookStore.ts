@@ -5,10 +5,11 @@ export class WorldbookStore {
   constructor(private db: Database.Database) {}
 
   insert(entry: WorldbookEntry): void {
+    // ★ 8-27 digest 列（worldbook-digest-summary）：seed 重建时保留旧 digest
     this.db.prepare(`
-      INSERT INTO worldbook_entries (id, trigger_keys, trigger_mode, content, scope, priority, cooldown_sec, last_triggered, hit_count, created_at, updated_at, role, content_type, source)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(entry.id, entry.trigger_keys, entry.trigger_mode, entry.content, entry.scope, entry.priority, entry.cooldown_sec, entry.last_triggered, entry.hit_count, entry.created_at, entry.updated_at, entry.role ?? 'alysia', entry.content_type ?? 'text', entry.source ?? 'seed');
+      INSERT INTO worldbook_entries (id, trigger_keys, trigger_mode, content, scope, priority, cooldown_sec, last_triggered, hit_count, created_at, updated_at, role, content_type, source, digest)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(entry.id, entry.trigger_keys, entry.trigger_mode, entry.content, entry.scope, entry.priority, entry.cooldown_sec, entry.last_triggered, entry.hit_count, entry.created_at, entry.updated_at, entry.role ?? 'alysia', entry.content_type ?? 'text', entry.source ?? 'seed', entry.digest ?? null);
   }
 
   getById(id: string): WorldbookEntry | null {

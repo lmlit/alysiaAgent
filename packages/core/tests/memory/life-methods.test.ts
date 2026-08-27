@@ -184,6 +184,33 @@ describe('MemoryManager life methods', () => {
     expect(item!.content.length).toBe(200);
   });
 
+  // ★ 8-27 digest 简介优先（worldbook-digest-summary）：有 digest 返回 digest，无则回落截断
+  it('getWorldbookSample digest 优先：text 条目有 digest → 返回 digest', () => {
+    const longContent = '很长很长的设定正文'.repeat(30);
+    db.prepare(`INSERT INTO worldbook_entries (id, trigger_keys, trigger_mode, content, scope, priority, cooldown_sec, last_triggered, hit_count, created_at, updated_at, role, content_type, digest)
+      VALUES ('wb-digest', '[""]', 'any', ?, 'chat', 5, 0, NULL, 0, '2026-08-06T00:00:00', '2026-08-06T00:00:00', 'alysia', 'text', ?)`).run(longContent, '白厄是昔涟从小一起长大的发小，两人相识于哀丽秘榭');
+    const sample = mm.getWorldbookSample(5);
+    const item = sample.find(x => x.id === 'wb-digest');
+    expect(item!.content).toBe('白厄是昔涟从小一起长大的发小，两人相识于哀丽秘榭');
+  });
+
+  it('getWorldbookSample 无 digest → 回落截断正文 200 字', () => {
+    const long = '设'.repeat(300);
+    db.prepare(`INSERT INTO worldbook_entries (id, trigger_keys, trigger_mode, content, scope, priority, cooldown_sec, last_triggered, hit_count, created_at, updated_at, role, content_type)
+      VALUES ('wb-raw', '[""]', 'any', ?, 'chat', 5, 0, NULL, 0, '2026-08-06T00:00:00', '2026-08-06T00:00:00', 'alysia', 'text')`).run(long);
+    const sample = mm.getWorldbookSample(5);
+    const item = sample.find(x => x.id === 'wb-raw');
+    expect(item!.content.length).toBe(200);
+  });
+
+  it('getWorldbookSample digest 为空串 → 回落截断正文', () => {
+    db.prepare(`INSERT INTO worldbook_entries (id, trigger_keys, trigger_mode, content, scope, priority, cooldown_sec, last_triggered, hit_count, created_at, updated_at, role, content_type, digest)
+      VALUES ('wb-empty-digest', '[""]', 'any', '设定正文内容', 'chat', 5, 0, NULL, 0, '2026-08-06T00:00:00', '2026-08-06T00:00:00', 'alysia', 'text', '')`).run();
+    const sample = mm.getWorldbookSample(5);
+    const item = sample.find(x => x.id === 'wb-empty-digest');
+    expect(item!.content).toBe('设定正文内容');
+  });
+
   it('getWorldbookSample 返回含 id 的结构（终审修复：生成器引用 + 命中统计）', () => {
     db.prepare(`INSERT INTO worldbook_entries (id, trigger_keys, trigger_mode, content, scope, priority, cooldown_sec, last_triggered, hit_count, created_at, updated_at, role, content_type)
       VALUES ('wb-test', '["测试"]', 'any', '测试设定内容', 'chat', 10, 0, NULL, 0, '2026-08-06T00:00:00', '2026-08-06T00:00:00', 'alysia', 'text')`).run();

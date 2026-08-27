@@ -206,6 +206,12 @@ export function initializeDatabase(db: Database.Database): void {
     db.exec(`ALTER TABLE events ADD COLUMN archived INTEGER DEFAULT 0`);
   }
 
+  // ★ 8-27 世界书 digest 简介（worldbook-digest-summary）：LLM 生成的 120-150 字角色简介，
+  //   采样注入优先用 digest 而非截断正文。ALTER + try-catch，不 DROP。
+  try {
+    db.exec(`ALTER TABLE worldbook_entries ADD COLUMN digest TEXT`);
+  } catch { /* column already exists */ }
+
   // ★ 8-27 叙事化重构（life-system-narrative-refactor）迁移——全部 ALTER + try-catch，不 DROP
   // 1) ai_life_state.mood_value：情绪累积值 -100..100（同向加成/反向衰减/8h 回归 0）
   try {

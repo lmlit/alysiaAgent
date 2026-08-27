@@ -489,10 +489,10 @@ await memoryManager.ingest({
 - [x] Agency Window：事件 JSON agency.can_contact → 推送门加"方便联系"条件
 - [x] 对话余波：最后 user 消息 15min 后生成 internal 余波（origin='followup'，不推送）
 
-**8-27 世界书 digest 简介（worldbook-digest-summary）**：
-- [ ] worldbook_entries.digest 列（ALTER + try-catch）+ getWorldbookSample 优先 digest（无 digest 回落截断 200）
-- [ ] scripts/digest-worldbook.ts 批量生成（幂等可重跑，只处理无 digest 的 text 条目）
-- [ ] 66 条 text 全量生成完成并抽查质量
++ **8-27 世界书 digest 简介（worldbook-digest-summary）**：
++ - [ ] worldbook_entries.digest 列（ALTER + try-catch）+ getWorldbookSample 优先 digest（无 digest 回落截断 200）
++ - [ ] scripts/digest-worldbook.ts 批量生成（幂等可重跑，只处理无 digest 的 text 条目）
++ - [ ] 66 条 text 全量生成完成并抽查质量
 
 ---
 

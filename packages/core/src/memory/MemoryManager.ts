@@ -441,7 +441,10 @@ export class MemoryManager {
    *  ★ 8-12 二期④：纳入 content_type='life_event' 角色专属事件种子（事件模板）。
    *  ★ 8-27 分层随机（life-worldbook-layered-sample）：life_event 随机取 3 + text 随机取 2
    *    （ORDER BY RANDOM()，不再按 priority 排序），每条截断 200 字（原 100）——
-   *    角色生活化条目优先于设定条目；limit 参数兼容旧调用（按分层比例分配） */
+   *    角色生活化条目优先于设定条目；limit 参数兼容旧调用（按分层比例分配）。
+   *  ★ 8-27 digest 简介优先（worldbook-digest-summary）：text 条目 content 字段 =
+   *    digest（LLM 生成的 120-150 字角色简介，scripts/digest-worldbook.ts 批量生成）
+   *    ?? 截断正文 200 字（无 digest 兜底，如新导入条目） */
   getWorldbookSample(limit: number = 5): Array<{ id: string; content: string }> {
     const role = this.getActiveRoleId();
     // 分层：life_event 占 3/5，text 占 2/5（按 limit 等比，最小各 1）
@@ -451,9 +454,15 @@ export class MemoryManager {
       "SELECT id, content FROM worldbook_entries WHERE role = ? AND scope IN ('chat', 'both') AND content_type = 'life_event' ORDER BY RANDOM() LIMIT ?"
     ).all(role, lifeCount) as Array<{ id: string; content: string }>;
     const textRows = this.db.prepare(
-      "SELECT id, content FROM worldbook_entries WHERE role = ? AND scope IN ('chat', 'both') AND content_type = 'text' ORDER BY RANDOM() LIMIT ?"
-    ).all(role, textCount) as Array<{ id: string; content: string }>;
-    return [...lifeRows, ...textRows].map(r => ({ id: r.id, content: r.content.slice(0, 200) }));
+      "SELECT id, content, digest FROM worldbook_entries WHERE role = ? AND scope IN ('chat', 'both') AND content_type = 'text' ORDER BY RANDOM() LIMIT ?"
+    ).all(role, textCount) as Array<{ id: string; content: string; digest: string | null }>;
+    return [
+      ...lifeRows.map(r => ({ id: r.id, content: r.content.slice(0, 200) })),
+      ...textRows.map(r => {
+        const digest = (r.digest ?? '').trim();
+        return { id: r.id, content: digest ? digest.slice(0, 200) : r.content.slice(0, 200) };
+      }),
+    ];
   }
 
   /** ★ 世界书命中统计（spec §7 ②）：事件引用条目 → hit_count+1 + last_triggered（与对话触发共用冷却） */
@@ -1022,6 +1031,14 @@ export class MemoryManager {
       const keys = Array.isArray(entry.trigger_keys) ? JSON.stringify(entry.trigger_keys) : entry.trigger_keys;
       return `wb_${pkg.role}_${this.hashStr(keys + entry.content)}`;
     });
+    // ★ 8-27 digest 保留（worldbook-digest-summary）：seed 幂等重建 delete+insert 会清空
+    //   已生成的简介（digest-worldbook.ts 多轮 digest 被 seed 重置的根因）。
+    //   必须在 delete **之前**缓存旧 digest——delete 后再 SELECT 恒为 NULL
+    const oldDigests = new Map<string, string | null>();
+    for (const id of newIds) {
+      const row = this.db.prepare('SELECT digest FROM worldbook_entries WHERE id = ?').get(id) as { digest: string | null } | undefined;
+      oldDigests.set(id, row?.digest ?? null);
+    }
     for (const id of newIds) {
       this.worldbookStore.deleteEntry(id);
     }
@@ -1043,6 +1060,7 @@ export class MemoryManager {
         updated_at: now,
         role: pkg.role,
         content_type: entry.content_type ?? 'text',
+        digest: oldDigests.get(id) ?? null,
       });
       count++;
     }

@@ -111,6 +111,9 @@ export interface WorldbookEntry {
   content_type?: string;
   /** ★ 8-14 内容自进化：条目来源 'seed'(角色包导入/seed) | 'self'(昔涟自写) */
   source?: string;
+  /** ★ 8-27 世界书 digest 简介（worldbook-digest-summary）：LLM 生成的 120-150 字角色简介，
+   *  采样注入优先用 digest 而非截断正文；seed 重建时继承旧值不清空 */
+  digest?: string | null;
 }
 
 export interface CodeContext {
