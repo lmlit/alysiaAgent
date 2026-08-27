@@ -596,9 +596,9 @@ query → Worldbook 匹配 → embed API → LanceDB 向量检索
 要点：Node 24 运行（better-sqlite3 ABI）；导出脚本需放入容器 `/app/packages/core/`（require 解析）；
 触发方式为手动运行，不做定时。
 
-**★ 8-28 分类容错（profile-extractor-category-fix）**：
-- 根因：LLM 实测输出 location/interest/hobby 等自由词不遵循枚举 → 全回落 general（分类功能形同虚设）
-- 修复：prompt 强约束（category 必须且只能从五个枚举值中选择，附中文语义）+ 提取器
-  同义词容错映射（location/city→identity、interest/hobby/taste→preference、
-  current/recent→status、friend/relation→relationship、未命中→transient 兼容兜底）
-- 存量数据不重分类（需重新提取），新提取事实生效
++ **★ 8-28 分类容错（profile-extractor-category-fix）**：
++ - 根因：LLM 实测输出 location/interest/hobby 等自由词不遵循枚举 → 全回落 general（分类功能形同虚设）
++ - 修复：prompt 强约束（category 必须且只能从五个枚举值中选择，附中文语义）+ 提取器
++   同义词容错映射（location/city→identity、interest/hobby/taste→preference、
++   current/recent→status、friend/relation→relationship、未命中→transient 兼容兜底）
++ - 存量数据不重分类（需重新提取），新提取事实生效

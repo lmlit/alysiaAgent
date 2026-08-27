@@ -13,6 +13,31 @@ export interface CorrectionSignal {
   rawText: string;
 }
 
+/** ★ 8-28 容错映射（profile-extractor-category-fix）：LLM 实测输出 location/interest/hobby
+ *  等自由词不遵循枚举 → 全回落 general（分类功能形同虚设）。同义词表兜底映射。 */
+const CATEGORY_SYNONYMS: Record<string, ProfileFact['category']> = {
+  location: 'identity',
+  city: 'identity',
+  career: 'identity',
+  job: 'identity',
+  age: 'identity',
+  identity: 'identity',
+  interest: 'preference',
+  hobby: 'preference',
+  taste: 'preference',
+  food: 'preference',
+  preference: 'preference',
+  current: 'status',
+  recent: 'status',
+  state: 'status',
+  status: 'status',
+  friend: 'relationship',
+  relation: 'relationship',
+  relationship: 'relationship',
+  general: 'general',
+  other: 'general',
+};
+
 export class ProfileExtractor {
   constructor(private llm: ILLMService) {}
 
@@ -46,7 +71,9 @@ export class ProfileExtractor {
         //   identity=身份属性（城市/职业/年龄/长期状态）；preference=偏好（口味/兴趣/习惯）；
         //   status=当前状态（最近在做什么/近况）；relationship=与昔涟的关系/互动模式；general=其他稳定事实。
         //   状态类（status）过期最快（14 天），身份类最慢（365 天）——判错倾向 identity/general 保守即可。
-        'category: "identity"|"preference"|"status"|"relationship"|"general"。' +
+        // ★ 8-28 修复（profile-extractor-category-fix）：LLM 实测输出 location/interest/hobby 等
+        //   自由词不遵循枚举 → 全回落 general。强化约束：category 必须且只能从这五个值中选择
+        'category: 必须且只能从这五个值中选择一个——"identity"(身份：城市/职业/年龄/长期状态)、"preference"(偏好：口味/兴趣/习惯/爱好)、"status"(当前状态：最近在做什么/近况)、"relationship"(与昔涟的关系/互动模式)、"general"(其他稳定事实)。' +
         // ★ 8-28 角色视角（memory-character-perspective）：除用户事实外，同时提取对话中
         //   反映的**昔涟自己的事**（她的感受/态度/变化/习惯/看法）——结构与用户事实相同。
         //   示例："昔涟在对话中表现出对下雨的喜爱"、"昔涟最近在学做点心"。
@@ -59,9 +86,11 @@ export class ProfileExtractor {
       //   relationship 90d/general 60d）；transient 兼容（无 category 时 transient=true → status 14 天）
       const ttlMs = (cat: string) => FACT_TTL_BY_CATEGORY[cat as keyof typeof FACT_TTL_BY_CATEGORY] ?? FACT_TTL_BY_CATEGORY.general;
       const toFact = (f: { fact: string; confidence: number; evidence: string; directly_stated?: boolean; transient?: boolean; category?: string }, index: number): ProfileFact => {
-        const category = (['identity', 'preference', 'status', 'relationship', 'general'] as const).includes(f.category as never)
-          ? (f.category as ProfileFact['category'])
-          : (f.transient ? 'status' as const : 'general' as const);
+        // ★ 8-28 修复：枚举校验 + 同义词容错映射（LLM 自由词 → 标准枚举）；transient 兼容兜底
+        const raw = String(f.category ?? '').trim().toLowerCase();
+        const category = (['identity', 'preference', 'status', 'relationship', 'general'] as const).includes(raw as never)
+          ? (raw as ProfileFact['category'])
+          : (CATEGORY_SYNONYMS[raw] ?? (f.transient ? 'status' as const : 'general' as const));
         return {
           fact: f.fact,
           confidence: f.confidence,

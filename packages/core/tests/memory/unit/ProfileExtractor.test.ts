@@ -197,3 +197,44 @@ describe('ProfileExtractor', () => {
     expect(characterFacts).toHaveLength(0);
   });
 });
+
+describe('ProfileExtractor — 8-28 分类容错映射（profile-extractor-category-fix）', () => {
+  const makeEvent = (content: string): MemoryEvent => ({
+    id: 'evt-fix', session_id: 'sess-fix', source: 'chat' as const, type: 'message' as const,
+    payload: { role: 'user', content }, importance: 0.6,
+    created_at: new Date().toISOString(), processed: 0,
+  });
+
+  it('LLM 输出 location → 映射 identity', async () => {
+    const llm: ILLMService = { complete: async () => JSON.stringify({ facts: [{ fact: '用户在长沙定居', confidence: 0.9, evidence: 'e', category: 'location' }] }) };
+    const { facts } = await new ProfileExtractor(llm).extract([makeEvent('x')]);
+    expect(facts[0].category).toBe('identity');
+  });
+
+  it('LLM 输出 interest/hobby → 映射 preference', async () => {
+    const llm: ILLMService = { complete: async () => JSON.stringify({ facts: [
+      { fact: '用户喜欢做菜', confidence: 0.9, evidence: 'e', category: 'interest' },
+      { fact: '用户爱好看番', confidence: 0.8, evidence: 'e', category: 'hobby' },
+    ] }) };
+    const { facts } = await new ProfileExtractor(llm).extract([makeEvent('x')]);
+    expect(facts.map(f => f.category)).toEqual(['preference', 'preference']);
+  });
+
+  it('LLM 输出 current → 映射 status', async () => {
+    const llm: ILLMService = { complete: async () => JSON.stringify({ facts: [{ fact: '用户最近在忙', confidence: 0.7, evidence: 'e', category: 'current' }] }) };
+    const { facts } = await new ProfileExtractor(llm).extract([makeEvent('x')]);
+    expect(facts[0].category).toBe('status');
+  });
+
+  it('LLM 输出 friend → 映射 relationship', async () => {
+    const llm: ILLMService = { complete: async () => JSON.stringify({ facts: [{ fact: '用户把昔涟当朋友', confidence: 0.6, evidence: 'e', category: 'friend' }] }) };
+    const { facts } = await new ProfileExtractor(llm).extract([makeEvent('x')]);
+    expect(facts[0].category).toBe('relationship');
+  });
+
+  it('未命中同义词且非 transient → 回落 general', async () => {
+    const llm: ILLMService = { complete: async () => JSON.stringify({ facts: [{ fact: '某条奇怪事实', confidence: 0.5, evidence: 'e', category: 'randomword' }] }) };
+    const { facts } = await new ProfileExtractor(llm).extract([makeEvent('x')]);
+    expect(facts[0].category).toBe('general');
+  });
+});
