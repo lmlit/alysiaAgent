@@ -68,6 +68,9 @@ function fmt(level: string, msg: string, ...args: unknown[]): void {
 /** 参数格式化：对象序列化，超长截断 */
 function formatArg(arg: unknown): string {
   if (typeof arg === 'string') return arg;
+  // ★ 8-28 修复：Error 对象 JSON.stringify 恒为 {}（message 是非枚举属性）——
+  //   所有 Error 日志丢 message 的根因（"Failed to start Alysia: {}"）
+  if (arg instanceof Error) return arg.message || arg.name || String(arg);
   try {
     const s = JSON.stringify(arg);
     return s && s.length > 500 ? s.slice(0, 500) + '…' : (s ?? String(arg));

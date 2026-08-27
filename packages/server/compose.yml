@@ -1,5 +1,8 @@
 services:
   alysia:
+    build:
+      context: ../..          # 仓库根（Dockerfile 按根路径 COPY workspace 文件）
+      dockerfile: packages/server/Dockerfile
     image: server-alysia:latest
     container_name: alysia-server
     restart: always

@@ -4,7 +4,11 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/core/package.json packages/core/
 COPY packages/server/package.json packages/server/
-RUN npm install -g pnpm@9 && pnpm install --frozen-lockfile
+# ★ 8-28 国内镜像源：容器内直连 registry.npmjs.org / unofficial-builds.nodejs.org
+#   会被网络掐断（ECONNRESET 实测）——registry + node-gyp headers 全走 npmmirror
+ENV npm_config_registry=https://registry.npmmirror.com
+ENV npm_config_disturl=https://npmmirror.com/mirrors/node
+RUN npm install -g pnpm@9 --registry=https://registry.npmmirror.com && pnpm install --frozen-lockfile
 COPY packages/core/src packages/core/src/
 COPY packages/core/tsconfig.json packages/core/
 COPY packages/server/src packages/server/src/
