@@ -191,4 +191,41 @@ export class LifeStore {
       origin: (r.origin as LifeEvent['origin']) ?? 'regular',
     };
   }
+
+  // ── ★ 8-28 意图系统（ai-life-intent-system）────────────────────────────
+  //   角色自己的隐式意图：延迟回复 / 承诺兑现 / 主动联系候选
+  //   与 reminders（用户显式提醒）并列，独立 CRUD
+
+  /** 意图类型 */
+  static INTENT_TYPES = ['delayed-reply', 'promise', 'proactive-contact'] as const;
+
+  saveIntent(t: { id: string; type: string; content: string; triggerAt: number; source: string; sessionId?: string; createdAt: string }): void {
+    this.db.prepare(`
+      INSERT OR REPLACE INTO ai_life_intents (id, type, content, trigger_at, status, source, session_id, created_at)
+      VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)
+    `).run(t.id, t.type, t.content, t.triggerAt, t.source, t.sessionId ?? '', t.createdAt);
+  }
+
+  /** 到期未完成的意图（status=pending 且 trigger_at <= now） */
+  listDueIntents(now: number = Date.now()): Array<{ id: string; type: string; content: string; triggerAt: number; status: string; source: string; sessionId: string; createdAt: string }> {
+    const rows = this.db.prepare(
+      'SELECT * FROM ai_life_intents WHERE status = ? AND trigger_at <= ? ORDER BY trigger_at ASC'
+    ).all('pending', now) as Array<Record<string, unknown>>;
+    return rows.map(r => ({
+      id: r.id as string,
+      type: r.type as string,
+      content: r.content as string,
+      triggerAt: r.trigger_at as number,
+      status: r.status as string,
+      source: r.source as string,
+      sessionId: (r.session_id as string) ?? '',
+      createdAt: r.created_at as string,
+    }));
+  }
+
+  /** 标记完成/取消 */
+  markIntentStatus(id: string, status: 'completed' | 'cancelled'): boolean {
+    return this.db.prepare('UPDATE ai_life_intents SET status = ? WHERE id = ? AND status = ?')
+      .run(status, id, 'pending').changes > 0;
+  }
 }

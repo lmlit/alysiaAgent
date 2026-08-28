@@ -918,3 +918,102 @@ describe('LifeService — 8-28 情绪漂移触发（memory-character-perspective
     );
   });
 });
+
+describe('LifeService — 8-28 意图系统（ai-life-intent-system）', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('事件 can_contact=false + intent → 存 intent（不推送）', async () => {
+    freezeTime(14);
+    vi.spyOn(Math, 'random').mockReturnValue(0.1);
+    const { memoryManager, qqOff } = makeMocks({
+      saveIntent: vi.fn().mockReturnValue('intent-1'),
+      completeIntent: vi.fn().mockReturnValue(true),
+    });
+    const svc = new LifeService(memoryManager as any, qqOff as any, {
+      ownerOpenid: 'openid-1',
+      cooldownHours: 0,
+      generateEvent: async () => '{"content":"想告诉轻月粉蝶花开了","type":"chat","agency":{"can_contact":false,"reason":"沉浸中"},"intent":{"type":"proactive-contact","delay_hours":1,"content":"想告诉轻月粉蝶花开了"}}',
+    });
+    await svc.tick();
+    // 不推送 + 存 intent（trigger_at = now + 1h）
+    expect(qqOff.sendProactive).not.toHaveBeenCalled();
+    expect(memoryManager.saveIntent).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'proactive-contact',
+      content: '想告诉轻月粉蝶花开了',
+      source: 'life-event',
+    }));
+    const triggerAt = memoryManager.saveIntent.mock.calls[0][0].triggerAt as number;
+    expect(triggerAt - Date.now()).toBeCloseTo(3600_000, -3);
+  });
+
+  it('事件 can_contact=true 无 intent → 不存 intent', async () => {
+    freezeTime(14);
+    vi.spyOn(Math, 'random').mockReturnValue(0.1);
+    const { memoryManager, qqOff } = makeMocks({
+      saveIntent: vi.fn(),
+    });
+    const svc = new LifeService(memoryManager as any, qqOff as any, {
+      ownerOpenid: 'openid-1',
+      cooldownHours: 0,
+      generateEvent: async () => '{"content":"在阳台看星星","type":"chat"}',
+    });
+    await svc.tick();
+    expect(memoryManager.saveIntent).not.toHaveBeenCalled();
+    expect(qqOff.sendProactive).toHaveBeenCalled();
+  });
+
+  it('tick 扫描到期 intent：proactive-contact 到期推送 + completed', async () => {
+    freezeTime(14);
+    const { memoryManager, qqOff } = makeMocks({
+      listDueIntents: vi.fn().mockReturnValue([
+        { id: 'i1', type: 'proactive-contact', content: '想告诉轻月粉蝶花开了', triggerAt: Date.now() - 1000, source: 'life-event', sessionId: '' },
+      ]),
+      completeIntent: vi.fn().mockReturnValue(true),
+    });
+    const svc = new LifeService(memoryManager as any, qqOff as any, {
+      ownerOpenid: 'openid-1',
+      generateEvent: async () => '{"content":"x","type":"internal"}',
+    });
+    await svc.tick();
+    expect(qqOff.sendProactive).toHaveBeenCalledWith('openid-1', '想告诉轻月粉蝶花开了');
+    expect(memoryManager.completeIntent).toHaveBeenCalledWith('i1');
+  });
+
+  it('tick 扫描到期 intent：delayed-reply 用 LLM 生成兑现消息推送', async () => {
+    freezeTime(14);
+    const { memoryManager, qqOff } = makeMocks({
+      listDueIntents: vi.fn().mockReturnValue([
+        { id: 'i2', type: 'delayed-reply', content: '关于猫的事', triggerAt: Date.now() - 1000, source: 'dialogue', sessionId: 's1' },
+      ]),
+      completeIntent: vi.fn().mockReturnValue(true),
+    });
+    const svc = new LifeService(memoryManager as any, qqOff as any, {
+      ownerOpenid: 'openid-1',
+      generateEvent: async () => '{"content":"x","type":"internal"}',
+      generateIntentMessage: async () => '想好了！关于猫的事，我觉得你说的有道理',
+    });
+    await svc.tick();
+    expect(qqOff.sendProactive).toHaveBeenCalledWith('openid-1', '想好了！关于猫的事，我觉得你说的有道理');
+    expect(memoryManager.completeIntent).toHaveBeenCalledWith('i2');
+  });
+
+  it('tick 扫描到期 intent：推送失败 → 保留 pending 不标记 completed', async () => {
+    freezeTime(14);
+    const { memoryManager, qqOff } = makeMocks({
+      listDueIntents: vi.fn().mockReturnValue([
+        { id: 'i3', type: 'promise', content: '看画', triggerAt: Date.now() - 1000, source: 'dialogue', sessionId: '' },
+      ]),
+      completeIntent: vi.fn().mockReturnValue(true),
+    });
+    qqOff.sendProactive.mockResolvedValue(false);
+    const svc = new LifeService(memoryManager as any, qqOff as any, {
+      ownerOpenid: 'openid-1',
+      generateEvent: async () => '{"content":"x","type":"internal"}',
+    });
+    await svc.tick();
+    expect(memoryManager.completeIntent).not.toHaveBeenCalled();
+  });
+});

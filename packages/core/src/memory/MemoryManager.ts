@@ -351,6 +351,37 @@ export class MemoryManager {
     this.lifeStore.updateState(partial);
   }
 
+  // ===== ★ 8-28 意图系统（ai-life-intent-system）=====
+  // 角色自己的隐式意图：延迟回复 / 承诺兑现 / 主动联系候选（与 reminders 用户显式提醒并列）
+
+  /** 存意图（LLM 隐式产生：对话 [intent:] 标记 POST 解析 / 事件生成 intent 字段） */
+  saveIntent(input: { type: 'delayed-reply' | 'promise' | 'proactive-contact'; content: string; triggerAt: number; source: 'dialogue' | 'life-event'; sessionId?: string }): string {
+    const id = `intent-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    this.lifeStore.saveIntent({
+      id, type: input.type, content: input.content, triggerAt: input.triggerAt,
+      source: input.source, sessionId: input.sessionId, createdAt: new Date().toISOString(),
+    });
+    logger.info(`[Intent] + [${input.type}] ${input.content.slice(0, 40)} (trigger ${new Date(input.triggerAt).toLocaleString()})`);
+    return id;
+  }
+
+  /** 到期未完成的意图（LifeService.tick 扫描处理） */
+  listDueIntents(now: number = Date.now()): Array<{ id: string; type: string; content: string; triggerAt: number; status: string; source: string; sessionId: string; createdAt: string }> {
+    return this.lifeStore.listDueIntents(now);
+  }
+
+  /** 标记完成（处理成功后，防重复触发） */
+  completeIntent(id: string): boolean {
+    const ok = this.lifeStore.markIntentStatus(id, 'completed');
+    if (ok) logger.info(`[Intent] ✓ completed: ${id}`);
+    return ok;
+  }
+
+  /** 取消意图（对话中用户说"不用了"时） */
+  cancelIntent(id: string): boolean {
+    return this.lifeStore.markIntentStatus(id, 'cancelled');
+  }
+
   // ===== ★ 8-27 配角在场（ScenePresence）=====
 
   /** 全部在场状态（含 off-scene，供管理展示） */

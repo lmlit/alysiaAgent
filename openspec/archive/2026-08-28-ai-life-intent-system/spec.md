@@ -512,15 +512,15 @@ await memoryManager.ingest({
 - 集成：sendProactive 表情包解析（mock resolver）
 - E2E（可选）：真实 LLM 生成一次事件
 
-**★ 8-28 意图系统（ai-life-intent-system，参考 HDSI intent 表）**：
-- `ai_life_intents` 表：角色自己的隐式意图（与 reminders 用户显式提醒并列）。
-  type: delayed-reply(想想再答复) | promise(承诺到期兑现) | proactive-contact(主动联系候选)
-- 产生来源双通道：
-  ① 事件生成（life.ts）：LLM 事件 JSON 带 `intent` 字段（can_contact=false 时存，
-     delay_hours 1-72 钳制后重查推送）——"想告诉轻月但正在忙"不丢弃
-  ② 对话 POST 解析（llm-agent.ts）：`[intent:类型|内容|延迟小时数]` 标记（与 [表情包:xxx]
-     同模式，不走工具调用——隐式意愿 LLM 不会主动调工具），解析后剥离用户不可见
-- 到期处理（LifeService.tick 扫描）：proactive-contact 直接推送；delayed-reply/promise
-  用 generateIntentMessage 回调生成自然兑现消息 → sendProactive；成功 completed 防重复，
-  失败保留 pending 下次再查
-- MemoryManager：saveIntent / listDueIntents / completeIntent / cancelIntent
++ **★ 8-28 意图系统（ai-life-intent-system，参考 HDSI intent 表）**：
++ - `ai_life_intents` 表：角色自己的隐式意图（与 reminders 用户显式提醒并列）。
++   type: delayed-reply(想想再答复) | promise(承诺到期兑现) | proactive-contact(主动联系候选)
++ - 产生来源双通道：
++   ① 事件生成（life.ts）：LLM 事件 JSON 带 `intent` 字段（can_contact=false 时存，
++      delay_hours 1-72 钳制后重查推送）——"想告诉轻月但正在忙"不丢弃
++   ② 对话 POST 解析（llm-agent.ts）：`[intent:类型|内容|延迟小时数]` 标记（与 [表情包:xxx]
++      同模式，不走工具调用——隐式意愿 LLM 不会主动调工具），解析后剥离用户不可见
++ - 到期处理（LifeService.tick 扫描）：proactive-contact 直接推送；delayed-reply/promise
++   用 generateIntentMessage 回调生成自然兑现消息 → sendProactive；成功 completed 防重复，
++   失败保留 pending 下次再查
++ - MemoryManager：saveIntent / listDueIntents / completeIntent / cancelIntent

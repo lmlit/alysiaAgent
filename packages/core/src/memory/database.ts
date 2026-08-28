@@ -139,6 +139,23 @@ export function initializeDatabase(db: Database.Database): void {
       updated_at  TEXT NOT NULL
     );
 
+    -- ★ 8-28 意图系统（ai-life-intent-system，参考 HDSI intent 表）：
+    --   角色自己产生的隐式意图（与 reminders 用户显式提醒并列）。
+    --   type: delayed-reply(想想再答复) | promise(承诺到期兑现) | proactive-contact(主动联系候选)
+    --   status: pending | due | completed | cancelled
+    CREATE TABLE IF NOT EXISTS ai_life_intents (
+      id          TEXT PRIMARY KEY,
+      type        TEXT NOT NULL,          -- 'delayed-reply' | 'promise' | 'proactive-contact'
+      content     TEXT NOT NULL,          -- 意图内容描述
+      trigger_at  INTEGER NOT NULL,       -- 最早触发时间（epoch ms）
+      status      TEXT NOT NULL DEFAULT 'pending',  -- pending | due | completed | cancelled
+      source      TEXT NOT NULL DEFAULT 'dialogue', -- 'dialogue'(对话) | 'life-event'(事件)
+      session_id  TEXT DEFAULT '',        -- 来源会话（延迟回复用）
+      created_at  TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_intents_due ON ai_life_intents(status, trigger_at);
+
     -- ★ 8-12 提醒持久化（reminder-sqlite-persistence）：容器重启不丢失
     CREATE TABLE IF NOT EXISTS reminders (
       id          TEXT PRIMARY KEY,

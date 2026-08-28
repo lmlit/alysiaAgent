@@ -6,6 +6,27 @@ import { AgentRunner } from '../../agent/runner.js';
 import { MessageChain } from '../../platform/chain.js';
 import { logger } from '../../utils/logger.js';
 
+// ★ 8-28 意图标记协议（ai-life-intent-system）：LLM 在回复末尾加 [intent:类型|内容|延迟小时数]，
+//   POST 阶段解析存 ai_life_intents + 从回复剥离（用户不可见）。与 [表情包:xxx] 同模式。
+export const INTENT_REGEX = /\[intent:(delayed-reply|promise)\|([^|\]]+)\|(\d+)\]/g;
+
+/** 解析意图标记：返回剥离后的文本 + 意图列表（纯函数，便于单测） */
+export function parseIntentMarks(text: string): {
+  text: string;
+  intents: Array<{ type: 'delayed-reply' | 'promise'; content: string; hours: number }>;
+} {
+  const intents: Array<{ type: 'delayed-reply' | 'promise'; content: string; hours: number }> = [];
+  for (const m of text.matchAll(INTENT_REGEX)) {
+    intents.push({
+      type: m[1] as 'delayed-reply' | 'promise',
+      content: String(m[2]).trim().slice(0, 200),
+      hours: Math.max(1, Math.min(72, parseInt(m[3], 10) || 1)),
+    });
+  }
+  // 剥离标记后压缩残留多空格（"先答应你 [intent:...] 回头" → "先答应你 回头"）
+  return { text: text.replace(INTENT_REGEX, '').replace(/ {2,}/g, ' ').trim(), intents };
+}
+
 /**
  * LLMAgentStage — the core onion-model stage.
  *
@@ -85,6 +106,15 @@ export class LLMAgentStage implements Stage {
       systemPrompt += `\n\n[群聊提醒]\n当前说话人: "${currentSpeaker}"。请只回复这个人，不要回复之前其他人的问题。如果对方只是 @你 没有说具体的事，简短友好地回应即可，不要翻旧账。`;
     }
 
+    // ★ 8-28 意图协议（ai-life-intent-system）：想延迟回复或承诺时在回复末尾加标记，
+    //   POST 阶段解析存 ai_life_intents + 剥离（用户不可见）——"想想再答复/明天给你看"
+    if (event.getMessageType() === MessageType.PRIVATE) {
+      systemPrompt += '\n\n[意图使用]\n如果你想延迟回复（"让我想想，晚点告诉你"）或做出承诺（"明天给你看…"），' +
+        '在回复末尾加标记: [intent:类型|内容|延迟小时数]。类型: delayed-reply（想想再答复）| promise（承诺到期兑现）。' +
+        '内容: 简短描述你要做的事。延迟小时数: 1-72 的整数。标记会被系统自动剥离，用户看不到。' +
+        '只在真的想延迟或承诺时加，不要每条都加。';
+    }
+
     // ★ 表情包协议：模型在文案中插入 [表情包:名字] 标记，发送时解析发图。
     //   仅私聊注入 — QQ 官方 API 群聊被动媒体消息不可用（40011000），群聊不发图。
     if (event.getMessageType() === MessageType.PRIVATE) {
@@ -157,6 +187,34 @@ export class LLMAgentStage implements Stage {
       .join(' ');
     logger.info(`[LLMAgent] ← ${event.messageStr.slice(0, 60).replace(/\n/g, ' ')}`);
     logger.info(`[LLMAgent] → ${replyText.slice(0, 120).replace(/\n/g, ' ')} (${Date.now() - start}ms)`);
+
+    // ★ 8-28 意图解析（ai-life-intent-system）：POST 阶段解析 [intent:类型|内容|延迟小时数] 标记——
+    //   延迟回复/承诺是角色隐式意愿（不走工具调用），与 [表情包:xxx] 同模式；解析后从回复剥离（用户不可见）
+    try {
+      const parsed = parseIntentMarks(replyText);
+      for (const intent of parsed.intents) {
+        this.ctx.memoryManager.saveIntent({
+          type: intent.type,
+          content: intent.content,
+          triggerAt: Date.now() + intent.hours * 3_600_000,
+          source: 'dialogue',
+          sessionId: event.unifiedMsgOrigin,
+        });
+        logger.info(`[Intent] dialogue+ [${intent.type}] ${intent.content.slice(0, 30)} +${intent.hours}h`);
+      }
+      if (parsed.text !== replyText) {
+        // 剥离标记（用户不可见）——修改 chain 的 plain 组件文本
+        for (const comp of result.chain.getComponents()) {
+          if (comp.type === 'plain' && (comp as { text?: string }).text) {
+            const c = comp as { text?: string };
+            const cleaned = (c.text ?? '').replace(INTENT_REGEX, '').trim();
+            if (cleaned !== c.text) c.text = cleaned;
+          }
+        }
+      }
+    } catch (err: any) {
+      logger.warn(`[LLMAgent] intent parse failed: ${err.message}`);
+    }
 
     event.setExtra('response_chain', result.chain);
 

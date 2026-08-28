@@ -30,6 +30,9 @@ export interface LifeOpts {
    *  与 generateEvent 分离：generateEvent 的 systemPrompt 强制输出 JSON，
    *  复用会导致摘要被存成 JSON 文本污染摘要层。缺失则跳过摘要生成（降级）。 */
   generateSummary?: (context: string) => Promise<string>;
+  /** ★ 8-28 意图兑现消息生成器（ai-life-intent-system）：delayed-reply/promise 到期时
+   *  生成自然兑现消息（纯文本，昔涟语气）。缺失则直接推 intent.content 原文（降级）。 */
+  generateIntentMessage?: (context: string) => Promise<string>;
   /** ★ 今天已主动联系的内容（ProactiveService.getTodayActivity），
    *  注入事件生成器避免重复打扰（如问候后生成"早上好"类事件）。 */
   todayProactive?: () => string;
@@ -133,6 +136,9 @@ export class LifeService {
     // 亲密度更新
     this.updateIntimacy();
 
+    // ★ 8-28 意图到期扫描（ai-life-intent-system）：处理到期的 delayed-reply/promise/proactive-contact
+    await this.processDueIntents(now);
+
     // ★ 8-27 对话余波：聊完天 15min 后生成 internal 余波（不推送只记录）
     await this.maybeGenerateFollowUp(now);
 
@@ -193,6 +199,18 @@ export class LifeService {
     // ★ 世界书命中统计（spec §7 ②）：事件引用了世界书条目 → hit_count+1
     if (evt.wb_entry_id) this.memoryManager.bumpWorldbookHit(evt.wb_entry_id);
 
+    // ★ 8-28 意图落库（ai-life-intent-system）：事件想推送但 can_contact=false（正在忙/不适合）→
+    //   存 intent，delay_hours 后 tick 重查 Agency Window 再推送——不丢弃"未来要做的事"
+    if (evt.can_contact === false && evt.intent) {
+      this.memoryManager.saveIntent({
+        type: 'proactive-contact',
+        content: evt.intent.content,
+        triggerAt: now.getTime() + evt.intent.delayHours * 3_600_000,
+        source: 'life-event',
+      });
+      logger.info(`[Intent] event deferred (can_contact=false): ${evt.intent.content.slice(0, 40)} +${evt.intent.delayHours}h`);
+    }
+
     // ★ 8-27 在场推导 + 情绪累积（事件入库后）
     this.updatePresenceFromEvent(evt.content);
     this.updateMoodValue(evt.mood_shift, now);
@@ -226,6 +244,42 @@ export class LifeService {
     this.state.nextEventAt = Date.now() + this.clampIntervalHours(evt.next_in_hours);
     this.saveState();
     this.scheduleNextEvent();
+  }
+
+  // ── ★ 8-28 意图到期处理（ai-life-intent-system）─────────────────
+
+  /** 扫描到期意图并处理：
+   *  - proactive-contact：直接推送（事件生成时已表达"想对轻月说的话"）
+   *  - delayed-reply / promise：LLM 生成自然兑现消息 → 推送
+   *  成功 → completed（不重复触发）；失败 → 保留 pending 下次 tick 再查 */
+  private async processDueIntents(now: Date): Promise<void> {
+    try {
+      const due = this.memoryManager.listDueIntents(now.getTime()) as Array<{ id: string; type: string; content: string; triggerAt: number; source: string; sessionId: string }>;
+      if (due.length === 0) return;
+      for (const intent of due) {
+        try {
+          let message = intent.content;
+          if (intent.type === 'delayed-reply' || intent.type === 'promise') {
+            // LLM 生成自然兑现消息（有回调则用，无则推原文降级）
+            if (this.opts.generateIntentMessage) {
+              const ctx = `【你之前说的】${intent.content}`;
+              message = ((await this.opts.generateIntentMessage(ctx)) ?? intent.content).trim();
+            }
+          }
+          const ok = await this.qqOff.sendProactive(this.opts.ownerOpenid, message);
+          if (ok) {
+            this.memoryManager.completeIntent(intent.id);
+            logger.info(`[Intent] due ${intent.type} fulfilled → completed: ${intent.content.slice(0, 40)}`);
+          } else {
+            logger.info(`[Intent] due ${intent.type} push failed, keep pending: ${intent.content.slice(0, 40)}`);
+          }
+        } catch (err: any) {
+          logger.warn(`[Intent] due ${intent.type} processing failed, keep pending: ${err.message}`);
+        }
+      }
+    } catch (err: any) {
+      logger.warn(`[Intent] due scan failed: ${err.message}`);
+    }
   }
 
   // ── ★ 8-27 对话余波（conversation-follow-up 简化）──────────────
@@ -320,6 +374,8 @@ export class LifeService {
     continuation_of?: string;
     /** ★ 8-27 Agency Window：此刻是否方便联系轻月（false → 降级 internal 不推送） */
     can_contact?: boolean;
+    /** ★ 8-28 意图（ai-life-intent-system）：can_contact=false 时存 intent，delay 后重查推送 */
+    intent?: { type: 'proactive-contact'; delayHours: number; content: string };
     /** ★ 8-27 模板回落标记：模板事件不参与 post-check（非 LLM 输出） */
     fromTemplate?: boolean;
   } | null> {
@@ -401,6 +457,11 @@ export class LifeService {
         const nextHours = Number(parsed.next_in_hours);
         // ★ 8-27 mood_shift 钳制 -5..+5（非法忽略）；can_contact 默认 true
         const shift = Number(parsed.mood_shift);
+        // ★ 8-28 意图解析（ai-life-intent-system）：事件 JSON intent 字段 → 存 intent 重查
+        const intent = parsed.intent;
+        const parsedIntent = intent && typeof intent === 'object' && intent.type === 'proactive-contact' && intent.content
+          ? { type: 'proactive-contact' as const, delayHours: Math.max(0.5, Math.min(72, Number(intent.delay_hours) || 1)), content: String(intent.content).trim() }
+          : undefined;
         return {
           content: String(parsed.content).trim(),
           type: deepNight ? 'internal' : (parsed.type === 'chat' ? 'chat' : 'internal'),
@@ -412,6 +473,7 @@ export class LifeService {
           next_in_hours: isFinite(nextHours) ? nextHours : undefined,
           continuation_of: contId && todayIds.has(contId) ? contId : undefined,
           can_contact: parsed.agency?.can_contact === false ? false : true,
+          intent: parsedIntent,
         };
       }
     } catch (err: any) {

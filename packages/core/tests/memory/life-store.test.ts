@@ -116,3 +116,32 @@ describe('LifeStore', () => {
     expect(cat('分享')).toBeGreaterThanOrEqual(11);
   });
 });
+
+describe('LifeStore — 8-28 意图系统（ai-life-intent-system）', () => {
+  let db: Database.Database;
+  let store: LifeStore;
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    initializeDatabase(db);
+    store = new LifeStore(db);
+  });
+
+  afterEach(() => { db.close(); });
+
+  it('saveIntent + listDueIntents：到期才返回', () => {
+    const now = Date.now();
+    store.saveIntent({ id: 'i1', type: 'delayed-reply', content: '关于猫的事', triggerAt: now - 1000, source: 'dialogue', sessionId: 's1', createdAt: new Date().toISOString() });
+    store.saveIntent({ id: 'i2', type: 'promise', content: '看画', triggerAt: now + 3600_000, source: 'dialogue', createdAt: new Date().toISOString() });
+    const due = store.listDueIntents(now);
+    expect(due.map(i => i.id)).toEqual(['i1']);
+    expect(due[0].sessionId).toBe('s1');
+  });
+
+  it('markIntentStatus：pending → completed / cancelled；重复标记不生效', () => {
+    store.saveIntent({ id: 'i1', type: 'promise', content: 'x', triggerAt: Date.now() - 1000, source: 'dialogue', createdAt: new Date().toISOString() });
+    expect(store.markIntentStatus('i1', 'completed')).toBe(true);
+    expect(store.markIntentStatus('i1', 'cancelled')).toBe(false); // 已 completed 不再变
+    expect(store.listDueIntents(Date.now())).toHaveLength(0); // 完成的不再出现
+  });
+});
