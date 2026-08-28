@@ -525,7 +525,7 @@ await memoryManager.ingest({
   失败保留 pending 下次再查
 - MemoryManager：saveIntent / listDueIntents / completeIntent / cancelIntent
 
-**★ 8-28 思考中提示移除（remove-thinking-indicator）**：
-模型回复延迟 5 秒时发送的"思考中"轻交互提示（THINKING_BY_CATEGORY 场景话术池）已整体移除——
-adapter 不再挂 timer/sendQuickReply；coalescer/types 的 cancel_thinking 引用同步清理；
-对应测试删除。用户确认当前不需要该设计。
++ **★ 8-28 思考中提示移除（remove-thinking-indicator）**：
++ 模型回复延迟 5 秒时发送的"思考中"轻交互提示（THINKING_BY_CATEGORY 场景话术池）已整体移除——
++ adapter 不再挂 timer/sendQuickReply；coalescer/types 的 cancel_thinking 引用同步清理；
++ 对应测试删除。用户确认当前不需要该设计。

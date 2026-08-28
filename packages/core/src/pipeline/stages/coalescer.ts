@@ -84,10 +84,6 @@ export class CoalescerStage implements Stage {
       this.abortRegistry.abort(sessionId);
       const bucket = this.getOrCreateBucket(sessionId);
       bucket.events.push(event);
-      // ★ 8-10 取消本消息的"思考中"timer（已合并，回复统一出，不再单独提示）；
-      //   在途事件（合并基底）的 timer 保留——回复确实在途，提示语义正确
-      const cancelThinking = event.getExtra('cancel_thinking') as (() => void) | undefined;
-      cancelThinking?.();
       if (!bucket.capTimer) {
         // 兜底上限：正常路径由 onGenerationAborted 即时 flush，此处防回调丢失悬挂
         bucket.capTimer = setTimeout(() => {
@@ -145,12 +141,6 @@ export class CoalescerStage implements Stage {
     this.buckets.delete(sessionId);
     if (bucket.capTimer) clearTimeout(bucket.capTimer);
     if (bucket.events.length === 0) return;
-
-    // ★ 8-10 兜底：桶内事件的"思考中"timer 统一取消（capTimer 兜底路径防漏）
-    for (const ev of bucket.events) {
-      const cancelThinking = ev.getExtra('cancel_thinking') as (() => void) | undefined;
-      cancelThinking?.();
-    }
 
     const base = abortedEvent ?? this.inFlightEvents.get(sessionId);
     if (!base) {
