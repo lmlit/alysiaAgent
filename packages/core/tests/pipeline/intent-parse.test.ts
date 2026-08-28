@@ -5,13 +5,15 @@ describe('parseIntentMarks — 8-28 意图标记解析（ai-life-intent-system�
   it('delayed-reply：解析 + 剥离标记，用户不可见', () => {
     const { text, intents } = parseIntentMarks('让我想想你说的猫的事，晚点告诉你哈 [intent:delayed-reply|关于猫的事|2]');
     expect(text).toBe('让我想想你说的猫的事，晚点告诉你哈');
-    expect(intents).toEqual([{ type: 'delayed-reply', content: '关于猫的事', hours: 2 }]);
+    expect(intents[0]).toMatchObject({ type: 'delayed-reply', content: '关于猫的事', hours: 2 });
+    expect(intents[0].evidence).toContain('晚点告诉你');
   });
 
   it('promise：解析 + 剥离', () => {
     const { text, intents } = parseIntentMarks('明天给你看迷迷画的花 [intent:promise|给轻月看迷迷画的画|24]');
     expect(text).toBe('明天给你看迷迷画的花');
-    expect(intents).toEqual([{ type: 'promise', content: '给轻月看迷迷画的画', hours: 24 }]);
+    expect(intents[0]).toMatchObject({ type: 'promise', content: '给轻月看迷迷画的画', hours: 24 });
+    expect(intents[0].evidence).toContain('明天给你看迷迷画的花');
   });
 
   it('多标记：全部解析 + 全部剥离', () => {

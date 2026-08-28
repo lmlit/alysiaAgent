@@ -10,17 +10,24 @@ import { logger } from '../../utils/logger.js';
 //   POST 阶段解析存 ai_life_intents + 从回复剥离（用户不可见）。与 [表情包:xxx] 同模式。
 export const INTENT_REGEX = /\[intent:(delayed-reply|promise)\|([^|\]]+)\|(\d+)\]/g;
 
-/** 解析意图标记：返回剥离后的文本 + 意图列表（纯函数，便于单测） */
+/** 解析意图标记：返回剥离后的文本 + 意图列表（纯函数，便于单测）。
+ *  ★ 8-28 evidence（承诺闭环）：标记所在的原句（承诺原文，到期裁决还原语气） */
 export function parseIntentMarks(text: string): {
   text: string;
-  intents: Array<{ type: 'delayed-reply' | 'promise'; content: string; hours: number }>;
+  intents: Array<{ type: 'delayed-reply' | 'promise'; content: string; hours: number; evidence: string }>;
 } {
-  const intents: Array<{ type: 'delayed-reply' | 'promise'; content: string; hours: number }> = [];
+  const intents: Array<{ type: 'delayed-reply' | 'promise'; content: string; hours: number; evidence: string }> = [];
   for (const m of text.matchAll(INTENT_REGEX)) {
+    // 标记所在句：向前找分句边界（。！？…），向后到分句边界
+    const start = Math.max(0, text.lastIndexOf('。', m.index) + 1, text.lastIndexOf('！', m.index) + 1, text.lastIndexOf('？', m.index) + 1, text.lastIndexOf('…', m.index) + 1);
+    const after = text.slice((m.index ?? 0) + m[0].length);
+    const endMatch = after.search(/[。！？…]/);
+    const end = endMatch >= 0 ? (m.index ?? 0) + m[0].length + endMatch + 1 : text.length;
     intents.push({
       type: m[1] as 'delayed-reply' | 'promise',
       content: String(m[2]).trim().slice(0, 200),
       hours: Math.max(1, Math.min(72, parseInt(m[3], 10) || 1)),
+      evidence: text.slice(start, end).trim().slice(0, 300),
     });
   }
   // 剥离标记后压缩残留多空格（"先答应你 [intent:...] 回头" → "先答应你 回头"）
@@ -199,6 +206,7 @@ export class LLMAgentStage implements Stage {
           triggerAt: Date.now() + intent.hours * 3_600_000,
           source: 'dialogue',
           sessionId: event.unifiedMsgOrigin,
+          evidence: intent.evidence, // ★ 8-28 承诺原文备份（承诺闭环）
         });
         logger.info(`[Intent] dialogue+ [${intent.type}] ${intent.content.slice(0, 30)} +${intent.hours}h`);
       }

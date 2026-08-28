@@ -106,23 +106,21 @@ describe('LifeService', () => {
     expect(memoryManager.ingest).toHaveBeenCalled(); // ★ 8-09 C：internal 也回写记忆
   });
 
-  it('deep night forces internal type — chat event stored as internal, never pushed', async () => {
-    freezeTime(2); // 本地 02:00（深夜 [0,7)）
+  it('★ 8-28 深夜抑制关闭：深夜 chat 类型不再被强制转 internal，正常推送', async () => {
+    freezeTime(2); // 本地 02:00（深夜 [0,7)——抑制已关闭，类型交 LLM）
     vi.spyOn(Math, 'random').mockReturnValue(0.1);
     const { memoryManager, qqOff } = makeMocks();
     const svc = new LifeService(memoryManager as any, qqOff as any, {
       ownerOpenid: 'openid-1',
-      generateEvent: async () => '{"content":"深夜看星星","type":"chat","mood_delta":"平静"}',
+      generateEvent: async () => '{"content":"深夜想说的话","type":"chat","mood_delta":"平静"}',
       deepNightHours: [0, 7],
     });
     await svc.tick();
-    // LLM 返回 chat 类型，但深夜被强制转 internal 存储
+    // chat 类型保留（不再强制 internal）+ 正常推送（深夜不再是推送门条件）
     expect(memoryManager.recordLifeEvent).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'internal', content: '深夜看星星' })
+      expect.objectContaining({ type: 'chat', content: '深夜想说的话' })
     );
-    // 深夜不推送（但回写记忆——AI 生活记录完整）
-    expect(qqOff.sendProactive).not.toHaveBeenCalled();
-    expect(memoryManager.ingest).toHaveBeenCalled(); // ★ 8-09 C：internal 也回写记忆
+    expect(qqOff.sendProactive).toHaveBeenCalledWith('openid-1', '深夜想说的话');
   });
 
   it('LLM 裸文本（无 JSON 外壳）→ 宽容解析直接作为事件内容并推送（8-09）', async () => {
@@ -142,8 +140,8 @@ describe('LifeService', () => {
     expect(qqOff.sendProactive).toHaveBeenCalledWith('openid-1', '那夜为云描的月光，已随风陪我过了第三日。');
   });
 
-  it('裸文本 + 深夜 → 强制 internal，不推送（8-09）', async () => {
-    freezeTime(2); // 本地 02:00（深夜 [0,7)）
+  it('★ 8-28 深夜抑制关闭：裸文本深夜 → chat 类型 + 推送（不再强制 internal）', async () => {
+    freezeTime(2); // 本地 02:00（深夜 [0,7)——抑制已关闭）
     vi.spyOn(Math, 'random').mockReturnValue(0.1);
     const { memoryManager, qqOff } = makeMocks();
     const svc = new LifeService(memoryManager as any, qqOff as any, {
@@ -153,9 +151,9 @@ describe('LifeService', () => {
     });
     await svc.tick();
     expect(memoryManager.recordLifeEvent).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'internal', content: '深夜的独白。' })
+      expect.objectContaining({ type: 'chat', content: '深夜的独白。' })
     );
-    expect(qqOff.sendProactive).not.toHaveBeenCalled();
+    expect(qqOff.sendProactive).toHaveBeenCalledWith('openid-1', '深夜的独白。');
   });
 
   it('generateEvent 抛异常 → 模板 fallback 强制 internal，不推送（8-09）', async () => {
@@ -982,7 +980,7 @@ describe('LifeService — 8-28 意图系统（ai-life-intent-system）', () => {
     expect(memoryManager.completeIntent).toHaveBeenCalledWith('i1');
   });
 
-  it('tick 扫描到期 intent：delayed-reply 用 LLM 生成兑现消息推送', async () => {
+  it('tick 扫描到期 intent：delayed-reply 三选一裁决 → fulfill 兑现推送', async () => {
     freezeTime(14);
     const { memoryManager, qqOff } = makeMocks({
       listDueIntents: vi.fn().mockReturnValue([
@@ -993,11 +991,70 @@ describe('LifeService — 8-28 意图系统（ai-life-intent-system）', () => {
     const svc = new LifeService(memoryManager as any, qqOff as any, {
       ownerOpenid: 'openid-1',
       generateEvent: async () => '{"content":"x","type":"internal"}',
-      generateIntentMessage: async () => '想好了！关于猫的事，我觉得你说的有道理',
+      generateIntentMessage: async () => '{"action":"fulfill","content":"想好了！关于猫的事，我觉得你说的有道理"}',
     });
     await svc.tick();
     expect(qqOff.sendProactive).toHaveBeenCalledWith('openid-1', '想好了！关于猫的事，我觉得你说的有道理');
     expect(memoryManager.completeIntent).toHaveBeenCalledWith('i2');
+  });
+
+  it('tick 扫描到期 intent：裁决 defer → 延期重排 + 推送延期说明（defer_count 上限内）', async () => {
+    freezeTime(14);
+    const { memoryManager, qqOff } = makeMocks({
+      listDueIntents: vi.fn().mockReturnValue([
+        { id: 'i4', type: 'promise', content: '看画', triggerAt: Date.now() - 1000, source: 'dialogue', sessionId: '', deferCount: 1 },
+      ]),
+      completeIntent: vi.fn().mockReturnValue(true),
+      deferIntent: vi.fn().mockReturnValue(true),
+    });
+    const svc = new LifeService(memoryManager as any, qqOff as any, {
+      ownerOpenid: 'openid-1',
+      generateEvent: async () => '{"content":"x","type":"internal"}',
+      generateIntentMessage: async () => '{"action":"defer","content":"那幅画还差一点，再给我一天","delay_hours":6}',
+    });
+    await svc.tick();
+    // 延期:重排 trigger_at(now+6h)+推送延期说明;不 complete
+    expect(memoryManager.deferIntent).toHaveBeenCalledWith('i4', expect.any(Number));
+    expect(qqOff.sendProactive).toHaveBeenCalledWith('openid-1', '那幅画还差一点，再给我一天');
+    expect(memoryManager.completeIntent).not.toHaveBeenCalled();
+  });
+
+  it('tick 扫描到期 intent：裁决 defer 但已延期 2 次 → 强制兑现', async () => {
+    freezeTime(14);
+    const { memoryManager, qqOff } = makeMocks({
+      listDueIntents: vi.fn().mockReturnValue([
+        { id: 'i5', type: 'promise', content: '看画', triggerAt: Date.now() - 1000, source: 'dialogue', sessionId: '', deferCount: 2 },
+      ]),
+      completeIntent: vi.fn().mockReturnValue(true),
+      deferIntent: vi.fn().mockReturnValue(true),
+    });
+    const svc = new LifeService(memoryManager as any, qqOff as any, {
+      ownerOpenid: 'openid-1',
+      generateEvent: async () => '{"content":"x","type":"internal"}',
+      generateIntentMessage: async () => '{"action":"defer","content":"再等等","delay_hours":6}',
+    });
+    await svc.tick();
+    expect(memoryManager.deferIntent).not.toHaveBeenCalled(); // 超限不再延
+    expect(qqOff.sendProactive).toHaveBeenCalled(); // 强制兑现推送
+    expect(memoryManager.completeIntent).toHaveBeenCalledWith('i5');
+  });
+
+  it('tick 扫描到期 intent：裁决 cancel → 推送歉意说明 + completed', async () => {
+    freezeTime(14);
+    const { memoryManager, qqOff } = makeMocks({
+      listDueIntents: vi.fn().mockReturnValue([
+        { id: 'i6', type: 'promise', content: '帮你查资料', triggerAt: Date.now() - 1000, source: 'dialogue', sessionId: '' },
+      ]),
+      completeIntent: vi.fn().mockReturnValue(true),
+    });
+    const svc = new LifeService(memoryManager as any, qqOff as any, {
+      ownerOpenid: 'openid-1',
+      generateEvent: async () => '{"content":"x","type":"internal"}',
+      generateIntentMessage: async () => '{"action":"cancel","content":"那件事我可能做不到了，对不起"}',
+    });
+    await svc.tick();
+    expect(qqOff.sendProactive).toHaveBeenCalledWith('openid-1', '那件事我可能做不到了，对不起');
+    expect(memoryManager.completeIntent).toHaveBeenCalledWith('i6');
   });
 
   it('tick 扫描到期 intent：推送失败 → 保留 pending 不标记 completed', async () => {

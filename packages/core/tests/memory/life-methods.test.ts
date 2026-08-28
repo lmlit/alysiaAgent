@@ -41,7 +41,7 @@ describe('MemoryManager life methods', () => {
   });
 
   // ★ 8-12 主提示词瘦身（life-prompt-slim）：今天事件只注入最近 3 条
-  it('今天超过 3 条事件 → 只注入最近 3 条（倒序）', () => {
+  it('今天超过 2 条事件 → 只注入最近 2 条（★ 8-28 微叙事适配，原 3 条）', () => {
     for (let i = 1; i <= 5; i++) {
       mm.lifeStore.addEvent({
         id: `e${i}`, createdAt: new Date(Date.now() + i * 1000).toISOString(), // 递增时间
@@ -51,8 +51,8 @@ describe('MemoryManager life methods', () => {
     const inj = mm.getLifeEventInjection();
     expect(inj).toContain('事件5');
     expect(inj).toContain('事件4');
-    expect(inj).toContain('事件3');
-    expect(inj).not.toContain('事件2'); // 最旧的被截断
+    expect(inj).not.toContain('事件3'); // 最旧的被截断
+    expect(inj).not.toContain('事件2');
     expect(inj).not.toContain('事件1');
     // 倒序：事件5 在 事件4 前
     expect(inj.indexOf('事件5')).toBeLessThan(inj.indexOf('事件4'));

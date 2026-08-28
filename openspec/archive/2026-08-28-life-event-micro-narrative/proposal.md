@@ -4,7 +4,7 @@
 
 - **日期**: 2026-08-28
 - **类型**: MODIFY（改现有行为）
-- **状态**: proposed
+- **状态**: archived
 - **影响 spec**: `ai-life-system`
 
 ## 动机（为什么做）

@@ -156,6 +156,9 @@ export function initializeDatabase(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_intents_due ON ai_life_intents(status, trigger_at);
 
+    -- ★ 8-28 承诺闭环（promise-obligation-loop）：原始承诺句备份——到期裁决时 LLM 还原承诺语气
+    -- ALTER TABLE ai_life_intents ADD COLUMN evidence TEXT DEFAULT '';
+
     -- ★ 8-12 提醒持久化（reminder-sqlite-persistence）：容器重启不丢失
     CREATE TABLE IF NOT EXISTS reminders (
       id          TEXT PRIMARY KEY,
@@ -261,6 +264,14 @@ export function initializeDatabase(db: Database.Database): void {
   if (!ltColNames.has('group_name')) {
     db.exec(`ALTER TABLE life_templates ADD COLUMN group_name TEXT DEFAULT 'none'`);
   }
+  // 4) ai_life_intents.evidence（★ 8-28 承诺闭环：原始承诺句备份，到期裁决还原语气）
+  try {
+    db.exec(`ALTER TABLE ai_life_intents ADD COLUMN evidence TEXT DEFAULT ''`);
+  } catch { /* column already exists */ }
+  // 5) ai_life_intents.defer_count（★ 8-28 承诺闭环：延期次数，上限 2 次防无限拖延）
+  try {
+    db.exec(`ALTER TABLE ai_life_intents ADD COLUMN defer_count INTEGER DEFAULT 0`);
+  } catch { /* column already exists */ }
 
   // Seed default singleton rows
   const now = new Date().toISOString();

@@ -524,3 +524,10 @@ await memoryManager.ingest({
   用 generateIntentMessage 回调生成自然兑现消息 → sendProactive；成功 completed 防重复，
   失败保留 pending 下次再查
 - MemoryManager：saveIntent / listDueIntents / completeIntent / cancelIntent
+
++ **★ 8-28 承诺闭环（promise-obligation-loop）**：
++ - 到期三选一裁决（delayed-reply/promise 统一）：fulfill 兑现推送 / defer 延期重排
++   （推送延期说明，defer_count 上限 2 次，超限强制兑现）/ cancel 取消（推送歉意说明，不静默）
++ - evidence 列：解析时备份承诺原句（[intent:] 标记所在句），裁决 prompt 带原文还原语气
++ - 裁决回调：generateIntentMessage 升级为 JSON 输出 {action, content, delay_hours?}
++   ——prompt 带承诺原文/内容/当前状态/已延期次数

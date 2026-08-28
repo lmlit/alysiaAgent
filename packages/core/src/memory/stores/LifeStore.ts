@@ -199,15 +199,16 @@ export class LifeStore {
   /** 意图类型 */
   static INTENT_TYPES = ['delayed-reply', 'promise', 'proactive-contact'] as const;
 
-  saveIntent(t: { id: string; type: string; content: string; triggerAt: number; source: string; sessionId?: string; createdAt: string }): void {
+  saveIntent(t: { id: string; type: string; content: string; triggerAt: number; source: string; sessionId?: string; createdAt: string; evidence?: string }): void {
+    // ★ 8-28 evidence（承诺闭环）：原始承诺句备份（[intent:] 标记所在的那句话原文）
     this.db.prepare(`
-      INSERT OR REPLACE INTO ai_life_intents (id, type, content, trigger_at, status, source, session_id, created_at)
-      VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)
-    `).run(t.id, t.type, t.content, t.triggerAt, t.source, t.sessionId ?? '', t.createdAt);
+      INSERT OR REPLACE INTO ai_life_intents (id, type, content, trigger_at, status, source, session_id, created_at, evidence)
+      VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+    `).run(t.id, t.type, t.content, t.triggerAt, t.source, t.sessionId ?? '', t.createdAt, t.evidence ?? '');
   }
 
   /** 到期未完成的意图（status=pending 且 trigger_at <= now） */
-  listDueIntents(now: number = Date.now()): Array<{ id: string; type: string; content: string; triggerAt: number; status: string; source: string; sessionId: string; createdAt: string }> {
+  listDueIntents(now: number = Date.now()): Array<{ id: string; type: string; content: string; triggerAt: number; status: string; source: string; sessionId: string; createdAt: string; evidence: string; deferCount: number }> {
     const rows = this.db.prepare(
       'SELECT * FROM ai_life_intents WHERE status = ? AND trigger_at <= ? ORDER BY trigger_at ASC'
     ).all('pending', now) as Array<Record<string, unknown>>;
@@ -220,7 +221,15 @@ export class LifeStore {
       source: r.source as string,
       sessionId: (r.session_id as string) ?? '',
       createdAt: r.created_at as string,
+      evidence: (r.evidence as string) ?? '',
+      deferCount: (r.defer_count as number) ?? 0,
     }));
+  }
+
+  /** ★ 8-28 延期（承诺闭环）：重排 trigger_at + defer_count+1（上限由调用方判断） */
+  deferIntent(id: string, newTriggerAt: number): boolean {
+    return this.db.prepare('UPDATE ai_life_intents SET trigger_at = ?, defer_count = defer_count + 1 WHERE id = ? AND status = ?')
+      .run(newTriggerAt, id, 'pending').changes > 0;
   }
 
   /** 标记完成/取消 */

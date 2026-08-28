@@ -525,7 +525,18 @@ await memoryManager.ingest({
   失败保留 pending 下次再查
 - MemoryManager：saveIntent / listDueIntents / completeIntent / cancelIntent
 
-**★ 8-28 思考中提示移除（remove-thinking-indicator）**：
-模型回复延迟 5 秒时发送的"思考中"轻交互提示（THINKING_BY_CATEGORY 场景话术池）已整体移除——
-adapter 不再挂 timer/sendQuickReply；coalescer/types 的 cancel_thinking 引用同步清理；
-对应测试删除。用户确认当前不需要该设计。
+**★ 8-28 生活微叙事（life-event-micro-narrative）**：
+- 事件从"1-2 句快照"→"2-4 句生活切片"：具体时辰、平凡物件、伴随小动作、小意外转折，
+  前因后果自然流动（"因为…才想起…"）；prompt 加【生活切片示范】块（"人时物"平实风格），
+  拒绝纯文学意象堆砌
+- 延续主路径：有【你正在做的事】→ 优先续写推进（进展/波折/完成），自然收尾才开新
+- 深夜抑制关闭：deepNight 不再强制 internal——类型交 LLM，深夜只是安静的时辰提示，
+  推送门去掉深夜条件
+- post-check：长度 ≤80 → ≤150；重复检测前 12 字 → 前 20 字
+- 注入预算：今天 3 条 → 2 条、每条截断 100 字；每日摘要 30 字 → 50 字
+**★ 8-28 承诺闭环（promise-obligation-loop）**：
+- 到期三选一裁决（delayed-reply/promise 统一）：fulfill 兑现推送 / defer 延期重排
+  （推送延期说明，defer_count 上限 2 次，超限强制兑现）/ cancel 取消（推送歉意说明，不静默）
+- evidence 列：解析时备份承诺原句（[intent:] 标记所在句），裁决 prompt 带原文还原语气
+- 裁决回调：generateIntentMessage 升级为 JSON 输出 {action, content, delay_hours?}
+  ——prompt 带承诺原文/内容/当前状态/已延期次数

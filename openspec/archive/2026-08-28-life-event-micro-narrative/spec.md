@@ -524,3 +524,13 @@ await memoryManager.ingest({
   用 generateIntentMessage 回调生成自然兑现消息 → sendProactive；成功 completed 防重复，
   失败保留 pending 下次再查
 - MemoryManager：saveIntent / listDueIntents / completeIntent / cancelIntent
+
++ **★ 8-28 生活微叙事（life-event-micro-narrative）**：
++ - 事件从"1-2 句快照"→"2-4 句生活切片"：具体时辰、平凡物件、伴随小动作、小意外转折，
++   前因后果自然流动（"因为…才想起…"）；prompt 加【生活切片示范】块（"人时物"平实风格），
++   拒绝纯文学意象堆砌
++ - 延续主路径：有【你正在做的事】→ 优先续写推进（进展/波折/完成），自然收尾才开新
++ - 深夜抑制关闭：deepNight 不再强制 internal——类型交 LLM，深夜只是安静的时辰提示，
++   推送门去掉深夜条件
++ - post-check：长度 ≤80 → ≤150；重复检测前 12 字 → 前 20 字
++ - 注入预算：今天 3 条 → 2 条、每条截断 100 字；每日摘要 30 字 → 50 字

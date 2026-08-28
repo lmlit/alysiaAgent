@@ -156,7 +156,8 @@ export class LifeService {
       return;
     }
 
-    // ② 深夜抑制
+    // ② 深夜感知（★ 8-28 深夜抑制已关闭——不再强制 internal，仅保留时间感知供生成上下文；
+    //   深夜的生活由 LLM 自然判断：安静的独处或想说的话都可以，类型不再被压制）
     const [deepStart, deepEnd] = this.opts.deepNightHours ?? [0, 7];
     const hour = now.getHours();
     const deepNight = hour >= deepStart && hour < deepEnd;
@@ -216,7 +217,8 @@ export class LifeService {
     this.updateMoodValue(evt.mood_shift, now);
 
     // ④ 推送判定（8-09：冷却 1h + 每日软上限 + ★ 8-27 Agency Window can_contact）
-    const pushable = evt.type === 'chat' && !deepNight && evt.can_contact !== false;
+    // ★ 8-28 深夜抑制关闭：深夜 chat 事件同样按正常推送门（type=chat && can_contact）
+    const pushable = evt.type === 'chat' && evt.can_contact !== false;
     if (pushable) {
       const cooldownMs = (this.opts.cooldownHours ?? 1) * 3_600_000;
       const inCooldown = now.getTime() - this.state.lastProactiveAt < cooldownMs;
@@ -250,23 +252,47 @@ export class LifeService {
 
   /** 扫描到期意图并处理：
    *  - proactive-contact：直接推送（事件生成时已表达"想对轻月说的话"）
-   *  - delayed-reply / promise：LLM 生成自然兑现消息 → 推送
+   *  - delayed-reply / promise：★ 8-28 三选一裁决（promise-obligation-loop）——
+   *    fulfill 兑现推送 / defer 延期重排（上限 2 次，超限强制兑现）/ cancel 取消并推送歉意说明
    *  成功 → completed（不重复触发）；失败 → 保留 pending 下次 tick 再查 */
   private async processDueIntents(now: Date): Promise<void> {
     try {
-      const due = this.memoryManager.listDueIntents(now.getTime()) as Array<{ id: string; type: string; content: string; triggerAt: number; source: string; sessionId: string }>;
+      const due = this.memoryManager.listDueIntents(now.getTime()) as Array<{ id: string; type: string; content: string; triggerAt: number; source: string; sessionId: string; evidence: string; deferCount: number }>;
       if (due.length === 0) return;
       for (const intent of due) {
         try {
-          let message = intent.content;
-          if (intent.type === 'delayed-reply' || intent.type === 'promise') {
-            // LLM 生成自然兑现消息（有回调则用，无则推原文降级）
-            if (this.opts.generateIntentMessage) {
-              const ctx = `【你之前说的】${intent.content}`;
-              message = ((await this.opts.generateIntentMessage(ctx)) ?? intent.content).trim();
+          if (intent.type === 'proactive-contact') {
+            // 主动联系候选：直接推送（事件生成时已表达的内容）
+            const ok = await this.qqOff.sendProactive(this.opts.ownerOpenid, intent.content);
+            if (ok) {
+              this.memoryManager.completeIntent(intent.id);
+              logger.info(`[Intent] due proactive-contact fulfilled → completed: ${intent.content.slice(0, 40)}`);
+            } else {
+              logger.info(`[Intent] due proactive-contact push failed, keep pending`);
             }
+            continue;
           }
-          const ok = await this.qqOff.sendProactive(this.opts.ownerOpenid, message);
+
+          // delayed-reply / promise：三选一裁决
+          const decision = await this.decideIntent(intent);
+          if (decision.action === 'defer' && intent.deferCount < 2) {
+            // 延期：推送延期说明 + 重排 trigger_at
+            const delayMs = (decision.delayHours ?? 6) * 3_600_000;
+            const nextAt = Date.now() + Math.max(1, Math.min(72, delayMs / 3_600_000)) * 3_600_000;
+            this.memoryManager.deferIntent(intent.id, nextAt);
+            await this.qqOff.sendProactive(this.opts.ownerOpenid, decision.content || `那件事我还没准备好，再给我一点时间…`);
+            logger.info(`[Intent] due ${intent.type} deferred (+${Math.round(delayMs / 3_600_000)}h): ${intent.content.slice(0, 30)}`);
+            continue;
+          }
+          if (decision.action === 'cancel') {
+            // 取消：推送歉意说明（不静默消失）
+            await this.qqOff.sendProactive(this.opts.ownerOpenid, decision.content || `之前说的那件事，我可能做不到了，抱歉…`);
+            this.memoryManager.completeIntent(intent.id);
+            logger.info(`[Intent] due ${intent.type} cancelled with notice: ${intent.content.slice(0, 30)}`);
+            continue;
+          }
+          // fulfill（或延期超限强制兑现）
+          const ok = await this.qqOff.sendProactive(this.opts.ownerOpenid, decision.content || intent.content);
           if (ok) {
             this.memoryManager.completeIntent(intent.id);
             logger.info(`[Intent] due ${intent.type} fulfilled → completed: ${intent.content.slice(0, 40)}`);
@@ -279,6 +305,36 @@ export class LifeService {
       }
     } catch (err: any) {
       logger.warn(`[Intent] due scan failed: ${err.message}`);
+    }
+  }
+
+  /** ★ 8-28 承诺裁决（promise-obligation-loop）：调 generateIntentMessage 裁决回调，
+   *  输入承诺原文/内容/当前状态/延期次数 → 返回 {action: fulfill|defer|cancel, content, delay_hours?}。
+   *  解析失败 → 兜底 fulfill（推原文，不丢承诺）。 */
+  private async decideIntent(intent: { id: string; type: string; content: string; evidence: string; deferCount: number }): Promise<{ action: 'fulfill' | 'defer' | 'cancel'; content?: string; delayHours?: number }> {
+    const fallback = { action: 'fulfill' as const, content: intent.content };
+    try {
+      if (!this.opts.generateIntentMessage) return fallback;
+      const snapshot = this.memoryManager.getLifeSnapshot();
+      const ctx = [
+        `【你当初的承诺】${intent.evidence || intent.content}`,
+        `【承诺内容】${intent.content}`,
+        `【当前状态】你正在: ${snapshot.currentActivity || '发呆'}；心情: ${snapshot.mood || '平静'}`,
+        intent.deferCount > 0 ? `【已延期次数】${intent.deferCount} 次（最多 2 次，第 3 次到期必须兑现或取消）` : '',
+        intent.type === 'delayed-reply' ? '这是你答应过"想想再答复"的事——此刻该给轻月一个答复了。' : '这是你答应过轻月的承诺——此刻该兑现了。',
+      ].join('\n');
+      const raw = ((await this.opts.generateIntentMessage(ctx)) ?? '').replace(/^```(?:json)?\s*|\s*```$/g, '').trim();
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') return fallback;
+      const action = ['fulfill', 'defer', 'cancel'].includes(String(parsed.action)) ? parsed.action as 'fulfill' | 'defer' | 'cancel' : 'fulfill';
+      return {
+        action,
+        content: typeof parsed.content === 'string' && parsed.content.trim() ? parsed.content.trim().slice(0, 200) : undefined,
+        delayHours: Number(parsed.delay_hours) > 0 ? Math.max(1, Math.min(72, Number(parsed.delay_hours))) : undefined,
+      };
+    } catch (err: any) {
+      logger.warn(`[Intent] decide failed, fallback fulfill: ${err.message}`);
+      return fallback;
     }
   }
 
@@ -426,11 +482,16 @@ export class LifeService {
       `【在场角色】${presenceBlock}`,
       `【轻月最近】${this.memoryManager.getUserActivitySummary() || '（暂无）'}`,
       // ★ 8-09 延续机制：沉浸中的事可延续或开启新事件
-      ongoingBlock ? `【你正在做的事】${ongoingBlock}\n你可以选择：继续沉浸其中（JSON 里 continuation_of 填该事件 id），或自然开启一件新的事（不填 continuation_of）。` : '',
+      // ★ 8-28 延续主路径：有正在做的事 → 优先续写推进（进展/波折/完成），自然收尾才开新
+      ongoingBlock ? `【你正在做的事】${ongoingBlock}\n优先续写推进这件事——它有什么进展、波折或变化（比如快做完了/卡住了/被别的事打断）；只有当它自然做完了（书看完/茶喝完/事办完），才开启一件新的事。续写时 JSON 里 continuation_of 填该事件 id，开新事则不填。` : '',
       todayActive ? `【今天已主动联系】今天已经发过: ${todayActive}。请聚焦生活日常本身，不要生成同类问候/祝福内容。` : '',
-      deepNight ? '【注意】现在是深夜，只能生成安静的内部事件（发呆/看书/听雨），不要打扰轻月。' : '',
+      // ★ 8-28 深夜抑制关闭：深夜不再强制 internal——只提示时辰节奏，类型交 LLM 自然判断
+      deepNight ? '【注意】现在是深夜，夜已深了——生活节奏安静下来（可能还在忙手头的事，也可能准备睡了）。' : '',
       // ★ 8-27 对话余波任务（followUp 模式）
       followUp ? '【任务】这是你刚和轻月聊完天后的片刻余波——此刻你的内心在想什么（1-2 句，第一人称内心独白）。不推送、不问候、不需要说给轻月听；安静地记录这一刻（如"想到刚才说的话，有点不好意思"）。' : '',
+      // ★ 8-28 生活切片示范（life-event-micro-narrative）：平实具体的生活味参考——平凡物件、
+      //   具体时辰、伴随小动作、小意外转折；拒绝纯文学意象堆砌
+      '【生活切片示范】（参考这种"活人感"平实风格，不要照抄内容）\n"下午起风了，窗台的多肉被吹得晃。我起身去关窗，顺手把晾了三天没收的袜子收了——指尖碰到布料的潮意，才想起昨天忘收衣服。叠好放进柜子，又坐回沙发，茶几上那个苹果放了几天，皮有点皱了，我拿起来又放回去。"',
       // ★ 8-27 post-check 反馈重试
       retryFeedback ? `【修正提示】上次生成未通过校验：${retryFeedback}。请按提示重新生成。` : '',
     ].filter(Boolean).join('\n');
@@ -445,9 +506,9 @@ export class LifeService {
       } catch {
         // ★ 8-09 裸文本容错：LLM 偶发输出无 JSON 外壳的自然语言（7-16 实测高质量剧情
         //   文本被 JSON.parse 丢弃 → fallback 模板推送 → 剧情链断裂）。
-        //   裸文本直接作为事件内容；type 与 JSON 路径同规则（深夜强制 internal 防打扰）
+        //   裸文本直接作为事件内容；type 默认 chat（★ 8-28 深夜不再强制 internal）
         logger.info(`[Life] bare-text event from LLM (no JSON shell): ${text.slice(0, 100)}`);
-        return { content: text, type: deepNight ? 'internal' : 'chat' };
+        return { content: text, type: 'chat' };
       }
       if (parsed.content) {
         // ★ 防幻觉（终审修复）：reference_event_id 必须命中今天事件 ID 集合，wb_entry_id 必须命中采样世界书 ID
@@ -464,7 +525,8 @@ export class LifeService {
           : undefined;
         return {
           content: String(parsed.content).trim(),
-          type: deepNight ? 'internal' : (parsed.type === 'chat' ? 'chat' : 'internal'),
+          // ★ 8-28 深夜抑制关闭：type 完全交 LLM（深夜也可以是想分享的话，can_contact 兜底）
+          type: parsed.type === 'chat' ? 'chat' : 'internal',
           mood_delta: parsed.mood_delta ? String(parsed.mood_delta) : undefined,
           mood_shift: isFinite(shift) ? Math.max(-5, Math.min(5, Math.round(shift))) : undefined,
           reference_event_id: refId && todayIds.has(refId) ? refId : undefined,
@@ -574,8 +636,8 @@ export class LifeService {
     presentNames: string[],
   ): { ok: boolean; feedback: string } {
     const c = evt.content.trim();
-    // ① 长度 ≤ 80 字
-    if (c.length > 80) return { ok: false, feedback: '内容超过 80 字，压缩到 1-2 句' };
+    // ① 长度 ≤ 150 字（★ 8-28 微叙事放宽：2-4 句生活切片，原 80 字只够一句快照）
+    if (c.length > 150) return { ok: false, feedback: '内容超过 150 字，收成一个生活小片段（2-4 句）' };
     // ② 不硬设定：设定词条黑名单（生活事件里出现即生硬罗列）
     const HARD_SETTING_WORDS = ['黄金裔', '火种', '泰坦', '铁幕', '轮回', '因子', '神权', '负世', '岁月'];
     for (const w of HARD_SETTING_WORDS) {
@@ -588,9 +650,9 @@ export class LifeService {
         if (c.includes(w)) return { ok: false, feedback: '这是对轻月的分享不是报备，去掉公文腔' };
       }
     }
-    // ④ 不重复：与今天已有事件（完全相同/前 12 字相同）
+    // ④ 不重复：与今天已有事件（完全相同/前 20 字相同——★ 8-28 微叙事变长，前 12 字误判率高）
     for (const e of todayEvents) {
-      const a = e.content.slice(0, 12), b = c.slice(0, 12);
+      const a = e.content.slice(0, 20), b = c.slice(0, 20);
       if (e.content === c || (a && b && a === b)) {
         return { ok: false, feedback: '与今天已有事件重复，换一件不一样的事' };
       }

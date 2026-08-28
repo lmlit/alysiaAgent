@@ -354,20 +354,29 @@ export class MemoryManager {
   // ===== ★ 8-28 意图系统（ai-life-intent-system）=====
   // 角色自己的隐式意图：延迟回复 / 承诺兑现 / 主动联系候选（与 reminders 用户显式提醒并列）
 
-  /** 存意图（LLM 隐式产生：对话 [intent:] 标记 POST 解析 / 事件生成 intent 字段） */
-  saveIntent(input: { type: 'delayed-reply' | 'promise' | 'proactive-contact'; content: string; triggerAt: number; source: 'dialogue' | 'life-event'; sessionId?: string }): string {
+  /** 存意图（LLM 隐式产生：对话 [intent:] 标记 POST 解析 / 事件生成 intent 字段）。
+   *  ★ 8-28 evidence：原始承诺句（到期裁决时还原承诺语气） */
+  saveIntent(input: { type: 'delayed-reply' | 'promise' | 'proactive-contact'; content: string; triggerAt: number; source: 'dialogue' | 'life-event'; sessionId?: string; evidence?: string }): string {
     const id = `intent-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
     this.lifeStore.saveIntent({
       id, type: input.type, content: input.content, triggerAt: input.triggerAt,
       source: input.source, sessionId: input.sessionId, createdAt: new Date().toISOString(),
+      evidence: input.evidence,
     });
     logger.info(`[Intent] + [${input.type}] ${input.content.slice(0, 40)} (trigger ${new Date(input.triggerAt).toLocaleString()})`);
     return id;
   }
 
   /** 到期未完成的意图（LifeService.tick 扫描处理） */
-  listDueIntents(now: number = Date.now()): Array<{ id: string; type: string; content: string; triggerAt: number; status: string; source: string; sessionId: string; createdAt: string }> {
+  listDueIntents(now: number = Date.now()): Array<{ id: string; type: string; content: string; triggerAt: number; status: string; source: string; sessionId: string; createdAt: string; evidence: string; deferCount: number }> {
     return this.lifeStore.listDueIntents(now);
+  }
+
+  /** ★ 8-28 延期（承诺闭环）：重排 trigger_at + defer_count+1（上限由 LifeService 判断） */
+  deferIntent(id: string, newTriggerAt: number): boolean {
+    const ok = this.lifeStore.deferIntent(id, newTriggerAt);
+    if (ok) logger.info(`[Intent] ↻ deferred: ${id} → ${new Date(newTriggerAt).toLocaleString()}`);
+    return ok;
   }
 
   /** 标记完成（处理成功后，防重复触发） */
@@ -422,13 +431,17 @@ export class MemoryManager {
     // ★ 8-12 主提示词瘦身（life-prompt-slim）：今天事件只注入最近 3 条（倒序）——
     //   bot 的"当下状态"（正在做的事 + 最近一两件事）够用，更多细节由事件向量
     //   检索（二期②）在相关时召回；预算 ≤ 500 字，超出优先保留事件、丢最旧摘要
-    const MAX_TODAY_EVENTS = 3;
+    // ★ 8-28 微叙事适配（life-event-micro-narrative）：事件 2-4 句变长 → 今天只注入最近
+    //   2 条、每条截断 100 字（完整细节走向量检索召回）
+    const MAX_TODAY_EVENTS = 2;
     const MAX_INJECTION_CHARS = 500;
+    const MAX_EVENT_CHARS = 100;
     const recentToday = [...today].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, MAX_TODAY_EVENTS);
 
     const eventLines = recentToday.map(e => {
       const time = formatLocalTime(new Date(e.createdAt)).slice(-5);
-      return `- 今天 ${time} ${e.content}`;
+      const content = e.content.length > MAX_EVENT_CHARS ? e.content.slice(0, MAX_EVENT_CHARS) + '…' : e.content;
+      return `- 今天 ${time} ${content}`;
     });
     const summaryLines = summaries.map(s => `- ${s.date}: ${s.summary}`);
 
