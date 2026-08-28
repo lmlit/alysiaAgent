@@ -1093,3 +1093,65 @@ describe('LifeService — 8-28 意图系统（ai-life-intent-system）', () => {
     expect(memoryManager.completeIntent).not.toHaveBeenCalled();
   });
 });
+
+describe('LifeService — 8-29 事件/对话拆分（life-event-message-split）', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('chat 事件带 message → 推送 message（对轻月说话），不是 content 叙述', async () => {
+    freezeTime(14);
+    vi.spyOn(Math, 'random').mockReturnValue(0.1);
+    const { memoryManager, qqOff } = makeMocks();
+    const svc = new LifeService(memoryManager as any, qqOff as any, {
+      ownerOpenid: 'openid-1',
+      cooldownHours: 0,
+      generateEvent: async () => '{"content":"收了晾了三天的袜子,想起忘收衣服","type":"chat","message":"轻月,我刚收了晾了三天的袜子——你也总忘收衣服对吧?"}',
+    });
+    await svc.tick();
+    expect(qqOff.sendProactive).toHaveBeenCalledWith('openid-1', '轻月,我刚收了晾了三天的袜子——你也总忘收衣服对吧?');
+    // 入库的仍是 content(生活叙述)
+    expect(memoryManager.recordLifeEvent).toHaveBeenCalledWith(expect.objectContaining({ content: '收了晾了三天的袜子,想起忘收衣服' }));
+  });
+
+  it('chat 事件无 message → 回落推 content（兼容旧行为）', async () => {
+    freezeTime(14);
+    vi.spyOn(Math, 'random').mockReturnValue(0.1);
+    const { qqOff } = makeMocks();
+    const svc = new LifeService(makeMocks().memoryManager as any, qqOff as any, {
+      ownerOpenid: 'openid-1',
+      cooldownHours: 0,
+      generateEvent: async () => '{"content":"在阳台看星星","type":"chat"}',
+    });
+    await svc.tick();
+    expect(qqOff.sendProactive).toHaveBeenCalledWith('openid-1', '在阳台看星星');
+  });
+
+  it('回写记忆的是 message（用户看到的），不是 content', async () => {
+    freezeTime(14);
+    vi.spyOn(Math, 'random').mockReturnValue(0.1);
+    const { memoryManager, qqOff } = makeMocks();
+    const svc = new LifeService(memoryManager as any, qqOff as any, {
+      ownerOpenid: 'openid-1',
+      cooldownHours: 0,
+      generateEvent: async () => '{"content":"生活叙述","type":"chat","message":"对轻月说的话"}',
+    });
+    await svc.tick();
+    expect(memoryManager.ingest).toHaveBeenCalledWith(
+      expect.objectContaining({ payload: expect.objectContaining({ content: '对轻月说的话' }) })
+    );
+  });
+
+  it('can_contact=false + message → intent 存 message（想对轻月说的话）', async () => {
+    freezeTime(14);
+    vi.spyOn(Math, 'random').mockReturnValue(0.1);
+    const { memoryManager, qqOff } = makeMocks({ saveIntent: vi.fn() });
+    const svc = new LifeService(memoryManager as any, qqOff as any, {
+      ownerOpenid: 'openid-1',
+      generateEvent: async () => '{"content":"在忙手头的事","type":"chat","message":"想告诉你粉蝶花开了","agency":{"can_contact":false},"intent":{"type":"proactive-contact","delay_hours":1}}',
+    });
+    await svc.tick();
+    expect(memoryManager.saveIntent).toHaveBeenCalledWith(expect.objectContaining({ content: '想告诉你粉蝶花开了' }));
+  });
+});

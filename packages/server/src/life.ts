@@ -210,14 +210,15 @@ export class LifeService {
 
     // ★ 8-28 意图落库（ai-life-intent-system）：事件想推送但 can_contact=false（正在忙/不适合）→
     //   存 intent，delay_hours 后 tick 重查 Agency Window 再推送——不丢弃"未来要做的事"
+    // ★ 8-29 拆分：intent 存的是 message（对轻月说的话），不是生活叙述 content
     if (evt.can_contact === false && evt.intent) {
       this.memoryManager.saveIntent({
         type: 'proactive-contact',
-        content: evt.intent.content,
+        content: evt.message ?? evt.intent.content,
         triggerAt: now.getTime() + evt.intent.delayHours * 3_600_000,
         source: 'life-event',
       });
-      logger.info(`[Intent] event deferred (can_contact=false): ${evt.intent.content.slice(0, 40)} +${evt.intent.delayHours}h`);
+      logger.info(`[Intent] event deferred (can_contact=false): ${(evt.message ?? evt.intent.content).slice(0, 40)} +${evt.intent.delayHours}h`);
     }
 
     // ★ 8-27 在场推导 + 情绪累积（事件入库后）
@@ -226,28 +227,31 @@ export class LifeService {
 
     // ④ 推送判定（8-09：冷却 1h + 每日软上限 + ★ 8-27 Agency Window can_contact）
     // ★ 8-28 深夜抑制关闭：深夜 chat 事件同样按正常推送门（type=chat && can_contact）
+    // ★ 8-29 拆分：推送 message（对轻月说的话），无 message 回落 content（生活叙述）
     const pushable = evt.type === 'chat' && evt.can_contact !== false;
     if (pushable) {
+      const pushText = evt.message ?? evt.content;
       const cooldownMs = (this.opts.cooldownHours ?? 1) * 3_600_000;
       const inCooldown = now.getTime() - this.state.lastProactiveAt < cooldownMs;
       const overDaily = this.state.chatPushesToday >= (this.opts.maxChatPushesPerDay ?? 5);
-      const ok = !inCooldown && !overDaily && await this.qqOff.sendProactive(this.opts.ownerOpenid, evt.content);
+      const ok = !inCooldown && !overDaily && await this.qqOff.sendProactive(this.opts.ownerOpenid, pushText);
       if (ok) {
         this.state.lastProactiveAt = Date.now();
         this.state.chatPushesToday += 1;
         this.saveState();
         // ★ delivered=1（spec §5）：推送成功标记，Web 端可区分已推送/未推送
         if (evtId) this.memoryManager.markLifeEventDelivered(evtId);
-        logger.info(`[Life] pushed: ${evt.content.slice(0, 50)}`);
+        logger.info(`[Life] pushed: ${pushText.slice(0, 50)}`);
       } else {
-        logger.info(`[Life] chat event degraded to internal (${inCooldown ? 'cooldown' : overDaily ? 'daily cap' : 'push failed'}): ${evt.content.slice(0, 50)}`);
+        logger.info(`[Life] chat event degraded to internal (${inCooldown ? 'cooldown' : overDaily ? 'daily cap' : 'push failed'}): ${pushText.slice(0, 50)}`);
       }
     } else {
       logger.debug(`[Life] internal event (${deepNight ? 'deep night' : evt.can_contact === false ? 'not contactable' : 'internal'}): ${evt.content.slice(0, 50)}`);
     }
 
     // ★ 8-09 C：所有事件回写记忆（chat 推送成功的 + internal）——bot 记得自己在做什么
-    await this.writebackToMemory(evt.content);
+    // ★ 8-29 拆分：回写用户看到的内容（message ?? content）——她记得自己对轻月说过的话
+    await this.writebackToMemory(evt.message ?? evt.content);
 
     // ⑤ 事件驱动调度：nextEventAt = now + next_in_hours（LLM 建议，钳制 30min-8h；
     //    未给 → 默认 2h ± 抖动由 scheduleNextEvent 兜底）
@@ -438,6 +442,9 @@ export class LifeService {
     continuation_of?: string;
     /** ★ 8-27 Agency Window：此刻是否方便联系轻月（false → 降级 internal 不推送） */
     can_contact?: boolean;
+    /** ★ 8-29 事件/对话拆分（life-event-message-split）：type=chat 时对轻月说的话
+     *  （第二人称/口语/互动感）——推送 message,content 只是生活叙述入库 */
+    message?: string;
     /** ★ 8-28 意图（ai-life-intent-system）：can_contact=false 时存 intent，delay 后重查推送 */
     intent?: { type: 'proactive-contact'; delayHours: number; content: string };
     /** ★ 8-27 模板回落标记：模板事件不参与 post-check（非 LLM 输出） */
@@ -542,9 +549,14 @@ export class LifeService {
         // ★ 8-27 mood_shift 钳制 -5..+5（非法忽略）；can_contact 默认 true
         const shift = Number(parsed.mood_shift);
         // ★ 8-28 意图解析（ai-life-intent-system）：事件 JSON intent 字段 → 存 intent 重查
+        //   ★ 8-29 拆分：intent.content 缺失时用 message（对轻月说的话）兜底
         const intent = parsed.intent;
-        const parsedIntent = intent && typeof intent === 'object' && intent.type === 'proactive-contact' && intent.content
-          ? { type: 'proactive-contact' as const, delayHours: Math.max(0.5, Math.min(72, Number(intent.delay_hours) || 1)), content: String(intent.content).trim() }
+        const parsedIntent = intent && typeof intent === 'object' && intent.type === 'proactive-contact'
+          ? {
+              type: 'proactive-contact' as const,
+              delayHours: Math.max(0.5, Math.min(72, Number(intent.delay_hours) || 1)),
+              content: String(intent.content ?? parsed.message ?? '').trim(),
+            }
           : undefined;
         return {
           content: String(parsed.content).trim(),
@@ -558,6 +570,8 @@ export class LifeService {
           next_in_hours: isFinite(nextHours) ? nextHours : undefined,
           continuation_of: contId && todayIds.has(contId) ? contId : undefined,
           can_contact: parsed.agency?.can_contact === false ? false : true,
+          // ★ 8-29 事件/对话拆分：message = 对轻月说的话(仅 chat 时有效,截断 200)
+          message: parsed.type === 'chat' && parsed.message ? String(parsed.message).trim().slice(0, 200) : undefined,
           intent: parsedIntent,
         };
       }
@@ -690,7 +704,7 @@ export class LifeService {
 
   /** 生成后规则校验；返回 { ok, feedback }。不过 → 带反馈重试 1 次 → 回落模板 */
   private postCheck(
-    evt: { content: string; type: string },
+    evt: { content: string; type: string; message?: string },
     todayEvents: Array<{ content: string; type: string }>,
     presentNames: string[],
   ): { ok: boolean; feedback: string } {
@@ -737,6 +751,15 @@ export class LifeService {
     //   等/为/怕/担心"轻月"是围绕用户,想念只是偶发底色不是事件动机
     if (evt.type === 'internal' && /等(轻月|你)回来|为(轻月|你)|怕(轻月|你)|担心(轻月|你)/.test(c)) {
       return { ok: false, feedback: '这件事的动机应该是你自己（我想/我需要/我好奇），不是围绕轻月——想念只是偶发的底色，不要让它成为每件事的理由' };
+    }
+    // ⑨ ★ 8-29 拆分：chat 的 message 是对轻月说话——第二人称、口语互动，不是叙述
+    if (evt.type === 'chat' && evt.message) {
+      const m = evt.message.trim();
+      if (m.length > 150) return { ok: false, feedback: 'message（对轻月说的话）超过 150 字，收成一句自然的分享' };
+      if (m === c) return { ok: false, feedback: 'message 不能是 content 的复述——message 是对轻月说话（第二人称口语），content 是生活叙述' };
+      if (m.includes('她') && !m.includes('他')) {
+        return { ok: false, feedback: 'message 是对轻月说话，要用"你"（第二人称），不要用"她"叙述' };
+      }
     }
     return { ok: true, feedback: '' };
   }

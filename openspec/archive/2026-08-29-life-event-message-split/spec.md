@@ -568,10 +568,3 @@ await memoryManager.ingest({
 + - 节日/问候融入事件生成：todaySpecial 注入【今天是什么日子】——节日氛围自然进事件,不再独立打卡
 + - 触发时间联动：next_in_hours 明确映射（沉浸 3-8h / 无聊想聊 0.5-2h）——修复 LLM 全给默认值
 +   导致事件间隔恒 2.5h 的问题
-
-+ **★ 8-29 事件/对话拆分（life-event-message-split，HDSI script vs interaction.reply）**：
-+ - 事件 JSON 加 message 字段：type=chat 时 content=生活叙述（入库），message=对轻月说的话
-+   （第二人称/口语/互动感）——推送 message，不再把生活日记推给用户
-+ - 无 message 回落 content；回写记忆回写 message（她记得自己对轻月说过的话）
-+ - intent 用 message（想对轻月说的话）；intent.content 缺失时 message 兜底
-+ - post-check ⑨：message 第二人称/长度/不得复述 content
