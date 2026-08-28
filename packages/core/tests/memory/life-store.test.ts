@@ -145,3 +145,22 @@ describe('LifeStore — 8-28 意图系统（ai-life-intent-system）', () => {
     expect(store.listDueIntents(Date.now())).toHaveLength(0); // 完成的不再出现
   });
 });
+
+describe('LifeStore — 8-29 情绪侧端分析 mood_note', () => {
+  let db: Database.Database;
+  let store: LifeStore;
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    initializeDatabase(db);
+    store = new LifeStore(db);
+  });
+
+  afterEach(() => { db.close(); });
+
+  it('moodNote 默认空；updateState 持久化', () => {
+    expect(store.getState().moodNote).toBe('');
+    store.updateState({ moodNote: '这段日子心里像落了雨' });
+    expect(store.getState().moodNote).toContain('落了雨');
+  });
+});

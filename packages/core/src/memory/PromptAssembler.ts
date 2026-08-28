@@ -45,6 +45,13 @@ export class PromptAssembler {
     const toneText = `语气: 形式度=${t(tone.formality, 0)}, 温暖度=${t(tone.warmth, 0.2)}, 幽默感=${t(tone.humor, 0.1)}, 直接程度=${t(tone.directness, 0)}`;
     const styleText = `说话风格: 句子长度=${t(speechStyle.sentence_length, 0)}, 表情使用=${t(speechStyle.emoji_usage, 0)}, 代码倾向=${t(speechStyle.code_heavy, 0)}`;
     const rangeText = `情感表达: 表现力=${t(emotionalRange.expressiveness, 0.1)}, 共情=${t(emotionalRange.empathy, 0.3)}, playful=${t(emotionalRange.playfulness, 0.1)}`;
+    // ★ 8-29 Overlay 注入（persona-overlay-perspective）：证据门槛固化的稳定演化——
+    //   已固化的稳定变化是"她现在的样子"，注入让对话/事件自然体现
+    const overlayNotes = this.personaStore.getOverlayNotes();
+    let overlayBlock = '';
+    if (overlayNotes.length > 0) {
+      overlayBlock = `【你的稳定变化】\n${overlayNotes.map(n => `- ${n.change}（${n.evidence}）`).join('\n')}`;
+    }
     const personaBlock = `[角色设定]
 你是${persona.name}。
 ${toneText}
@@ -52,6 +59,12 @@ ${styleText}
 ${rangeText}`;
     budget.reserve(personaBlock);
     blocks.push(personaBlock);
+    if (overlayBlock) {
+      if (budget.canFit(overlayBlock)) {
+        budget.reserve(overlayBlock);
+        blocks.push(overlayBlock);
+      }
+    }
 
     // User profile — handles both JSON (manual input) and plain text (LLM summary from Cron)
     if (profile.basics && profile.basics !== '{}') {

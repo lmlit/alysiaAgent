@@ -602,3 +602,9 @@ query → Worldbook 匹配 → embed API → LanceDB 向量检索
   同义词容错映射（location/city→identity、interest/hobby/taste→preference、
   current/recent→status、friend/relation→relationship、未命中→transient 兼容兜底）
 - 存量数据不重分类（需重新提取），新提取事实生效
+
++ **★ 8-29 Overlay 稳定演化（persona-overlay-perspective，HDSI Overlay 简化）**：
++ - 证据门槛：PersonaAdapter 同向调整 ≥3 次 → 固化 overlay 备注（persona.overlay_notes 新列）
++   ——单次反馈不固化,达到证据门槛的稳定变化才"成为她现在的样子"
++ - 已固化参数豁免 24h 回归（稳定演化保留,不再拉回默认）
++ - PromptAssembler 注入【你的稳定变化】块（带证据）;getPersonaSnapshot 加 overlayNotes

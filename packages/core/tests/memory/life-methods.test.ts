@@ -264,3 +264,34 @@ describe('MemoryManager life methods', () => {
     expect(mm.getUserActivitySummary()).toContain('看小说');
   });
 });
+
+describe('MemoryManager — 8-29 聊天生活衔接（chat-life-continuity）', () => {
+  let db: Database.Database;
+  let mm: MemoryManager;
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    initializeDatabase(db);
+    const embedService = { embed: async () => [0], dimension: () => 1024 };
+    const llmService = { complete: async () => '{}' };
+    mm = new MemoryManager(db as any, null, embedService as any, llmService as any);
+  });
+
+  afterEach(() => db.close());
+
+  it('30min 内有生活事件 → 返回"你刚才在…"块', () => {
+    mm.recordLifeEvent({ type: 'internal', content: '在阳台看书' });
+    const block = mm.getLifeContinuityBlock();
+    expect(block).toContain('你刚才在');
+    expect(block).toContain('在阳台看书');
+  });
+
+  it('无近期事件 → 空串', () => {
+    expect(mm.getLifeContinuityBlock()).toBe('');
+  });
+
+  it('30min 外的事件 → 空串（久远生活不干扰对话）', () => {
+    mm.lifeStore.addEvent({ id: 'old', createdAt: new Date(Date.now() - 2 * 3600_000).toISOString(), type: 'internal', content: '两小时前的事' });
+    expect(mm.getLifeContinuityBlock()).toBe('');
+  });
+});

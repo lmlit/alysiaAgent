@@ -159,6 +159,28 @@ export class PersonaStore {
     }
   }
 
+  // ===== ★ 8-29 Overlay（persona-overlay-perspective）=====
+  // 证据门槛固化的稳定人格演化备注（多次同向调整才固化，单次不算）——HDSI Overlay 简化
+
+  appendOverlayNote(note: { dimension: string; change: string; evidence: string; appliedAt: string }): void {
+    const current = this.getOverlayNotes();
+    // 同维度覆盖旧备注（最新演化状态）
+    const filtered = current.filter(n => n.dimension !== note.dimension);
+    filtered.push(note);
+    this.db.prepare('UPDATE persona SET overlay_notes = ?, updated_at = ? WHERE is_active = 1')
+      .run(JSON.stringify(filtered.slice(-10)), new Date().toISOString());
+  }
+
+  getOverlayNotes(): Array<{ dimension: string; change: string; evidence: string; appliedAt: string }> {
+    const persona = this.get();
+    try {
+      const raw = JSON.parse((persona as any).overlay_notes ?? '[]') as Array<{ dimension: string; change: string; evidence: string; appliedAt: string }>;
+      return Array.isArray(raw) ? raw : [];
+    } catch {
+      return [];
+    }
+  }
+
   setName(name: string): void {
     this.db.prepare('UPDATE persona SET name = ?, updated_at = ? WHERE is_active = 1')
       .run(name, new Date().toISOString());

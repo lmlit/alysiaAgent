@@ -169,6 +169,17 @@ async function main() {
         });
         return resp.role === 'assistant' ? resp.completionText.trim() : '';
       },
+      // ★ 8-29 情绪侧端分析（mood-side-analysis）：深度阈值后生成描述性氛围（"这段日子…"）
+      generateMoodNote: async (context: string) => {
+        const resp = await core.providerManager.textChatWithFallback({
+          prompt: context,
+          sessionId: 'life-mood-note',
+          systemPrompt: '你是昔涟。根据你的情绪累积和最近的生活，用一句 30 字以内的话描述这段日子的情绪氛围（第一人称，自然平实，不堆砌意象；可以低落可以明亮，如实即可）。直接输出这句话本身，不要解释、不要 JSON。',
+          // 低温/忠
+          sampling: { ...DEFAULT_SAMPLING.life.generateSummary },
+        });
+        return resp.role === 'assistant' ? resp.completionText.trim() : '';
+      },
       // ★ 感知今天已发的问候/节日（ProactiveService），事件生成避免重复打扰
       todayProactive: () => proactive?.getTodayActivity() ?? '',
     });

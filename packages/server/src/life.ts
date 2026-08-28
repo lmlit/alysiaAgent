@@ -33,6 +33,9 @@ export interface LifeOpts {
   /** ★ 8-28 意图兑现消息生成器（ai-life-intent-system）：delayed-reply/promise 到期时
    *  生成自然兑现消息（纯文本，昔涟语气）。缺失则直接推 intent.content 原文（降级）。 */
   generateIntentMessage?: (context: string) => Promise<string>;
+  /** ★ 8-29 情绪侧端分析（mood-side-analysis）：mood_value 深度阈值后生成描述性氛围
+   *  （纯文本，"这段日子…"）。缺失则跳过（降级，mood_note 保持空）。 */
+  generateMoodNote?: (context: string) => Promise<string>;
   /** ★ 今天已主动联系的内容（ProactiveService.getTodayActivity），
    *  注入事件生成器避免重复打扰（如问候后生成"早上好"类事件）。 */
   todayProactive?: () => string;
@@ -47,12 +50,14 @@ interface LifeState {
   nextEventAt: number;
   /** ★ 8-09：今日 chat 推送计数（软上限，跨天重置） */
   chatPushesToday: number;
+  /** ★ 8-29 情绪侧端分析：上次生成 mood_note 的时间（冷却 6h） */
+  moodNoteAnalyzedAt: number;
 }
 
 export class LifeService {
   /** ★ 8-09 事件驱动调度：setInterval 每小时 → nextEventAt 精确到点（事件内容决定间隔） */
   private eventTimer: ReturnType<typeof setTimeout> | null = null;
-  private state: LifeState = { lastProactiveAt: 0, lastSummaryDate: null, nextEventAt: 0, chatPushesToday: 0 };
+  private state: LifeState = { lastProactiveAt: 0, lastSummaryDate: null, nextEventAt: 0, chatPushesToday: 0, moodNoteAnalyzedAt: 0 };
   /** ★ 8-09 停止标志：stop 后不排程（防重启竞态） */
   private stopped = false;
 
@@ -111,6 +116,7 @@ export class LifeService {
         lastSummaryDate: s.lastSummaryDate ?? null,
         nextEventAt: s.nextEventAt ?? 0,
         chatPushesToday: s.chatPushesToday ?? 0,
+        moodNoteAnalyzedAt: s.moodNoteAnalyzedAt ?? 0,
       };
     } catch { /* fresh start */ }
   }
@@ -466,8 +472,8 @@ export class LifeService {
       ? '此刻只有你一个人，安安静静的——不要凭空召唤其他角色'
       : `这些配角此刻在你身边/可互动（只与他们交集，列表外的一律不出现）：\n${presentNames.map(n => `- ${n}`).join('\n')}`;
 
-    // ★ 8-27 心情块（情绪惯性）：mood_value 极性影响事件风格
-    const moodBlock = this.buildMoodBlock(snapshot.moodValue ?? 0);
+    // ★ 8-27 心情块（情绪惯性）：mood_value 极性 + 8-29 mood_note 氛围描述影响事件风格
+    const moodBlock = this.buildMoodBlock(snapshot.moodValue ?? 0, snapshot.moodNote ?? '');
 
     // ★ 今天已主动联系内容（ProactiveService 感知，避免重复打扰）
     const todayActive = this.opts.todayProactive?.() ?? '';
@@ -552,11 +558,12 @@ export class LifeService {
 
   // ── ★ 8-27 情绪惯性（mood_value）───────────────────
 
-  /** 【心情】块：mood_value 极性 → 事件风格指引 */
-  private buildMoodBlock(mv: number): string {
-    if (mv >= 15) return `情绪累积: +${mv}（最近心情偏开心——事件可以明亮、有暖意）`;
-    if (mv <= -15) return `情绪累积: ${mv}（最近心情偏低沉——事件可以安静、柔软一些）`;
-    return `情绪累积: ${mv}（心情平稳）`;
+  /** 【心情】块：mood_value 极性 + ★ 8-29 侧端分析 mood_note（深度阈值后的描述性氛围） */
+  private buildMoodBlock(mv: number, moodNote: string = ''): string {
+    const note = moodNote ? `；${moodNote}` : '';
+    if (mv >= 15) return `情绪累积: +${mv}（最近心情偏开心——事件可以明亮、有暖意）${note}`;
+    if (mv <= -15) return `情绪累积: ${mv}（最近心情偏低沉——事件可以安静、柔软一些）${note}`;
+    return `情绪累积: ${mv}（心情平稳）${note}`;
   }
 
   /** mood_value 累积：同方向加成 / 反方向衰减 / 8h 回归 0（按事件间隔线性回归）。
@@ -582,7 +589,18 @@ export class LifeService {
       mv = Math.max(-100, Math.min(100, mv));
       // mood 文本联动极性（与 LifeView 心情映射兼容：平静/开心/低落）
       const moodText = mv >= 15 ? '开心' : mv <= -15 ? '低落' : '平静';
-      this.memoryManager.updateLifeState({ moodValue: mv, mood: moodText });
+      // ★ 8-29 侧端分析（mood-side-analysis）：深度阈值 |mv|≥30 且 6h 冷却 → fire-and-forget
+      //   生成描述性氛围 mood_note；回落到 |mv|<30 → 清空
+      let moodNote = snapshot.moodNote ?? '';
+      if (Math.abs(mv) >= 30 && !moodNote && now.getTime() - this.state.moodNoteAnalyzedAt > 6 * 3_600_000) {
+        this.state.moodNoteAnalyzedAt = now.getTime();
+        this.saveState();
+        this.analyzeMoodNote(mv, now); // fire-and-forget
+      } else if (Math.abs(mv) < 30 && moodNote) {
+        moodNote = '';
+        logger.info('[Life] mood_note cleared (|mood_value| < 30)');
+      }
+      this.memoryManager.updateLifeState({ moodValue: mv, mood: moodText, moodNote });
       // ★ 8-28 情绪惯性漂移（memory-character-perspective）：极性跨 ±15 阈值变化 →
       //   触发人格自然漂移（连续开心 → playfulness、连续低落 → empathy，走 5 道护栏）
       const newPolar = mv >= 15 ? 'pos' : mv <= -15 ? 'neg' : 'flat';
@@ -593,6 +611,30 @@ export class LifeService {
       logger.debug(`[Life] mood_value ${snapshot.moodValue} → ${mv} (shift ${s})`);
     } catch (err: any) {
       logger.warn(`[Life] mood_value update failed: ${err.message}`);
+    }
+  }
+
+  /** ★ 8-29 情绪侧端分析（mood-side-analysis）：mood_value 深度阈值后,LLM 根据最近生活
+   *  生成一句描述性氛围（"这段日子…"），注入【心情】块影响事件风格与对话。失败不阻塞（冷却后重试）。 */
+  private async analyzeMoodNote(mv: number, now: Date): Promise<void> {
+    try {
+      if (!this.opts.generateMoodNote) return;
+      const recentEvents = (this.memoryManager.listLifeEvents(2) as any[])
+        .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+        .slice(0, 5)
+        .map((e: any) => `- ${e.content.slice(0, 50)}`)
+        .join('\n');
+      const note = ((await this.opts.generateMoodNote(
+        `【当前情绪累积】${mv}（正=开心，负=低落）\n【最近的生活】\n${recentEvents || '（暂无）'}\n请用一句 30 字以内的话描述这段日子你的情绪氛围（第一人称，自然，如"这段日子心里像落了雨，做什么都提不起劲"；也可以写暖的）。`,
+      )) ?? '').trim().slice(0, 60);
+      if (note) {
+        this.memoryManager.updateLifeState({ moodNote: note });
+        logger.info(`[Life] mood_note: ${note}`);
+      } else {
+        logger.info('[Life] mood_note analysis returned empty, will retry after cooldown');
+      }
+    } catch (err: any) {
+      logger.warn(`[Life] mood_note analysis failed: ${err.message}`);
     }
   }
 

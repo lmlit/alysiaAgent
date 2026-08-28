@@ -113,6 +113,15 @@ export class LLMAgentStage implements Stage {
       systemPrompt += `\n\n[群聊提醒]\n当前说话人: "${currentSpeaker}"。请只回复这个人，不要回复之前其他人的问题。如果对方只是 @你 没有说具体的事，简短友好地回应即可，不要翻旧账。`;
     }
 
+    // ★ 8-29 聊天生活衔接（chat-life-continuity）：私聊且刚离开生活事件（≤30min）→
+    //   注入"你刚才在…"补写块——对话从生活里自然走出来接话（HDSI"用户消息进入生活"的简化落地）
+    if (event.getMessageType() === MessageType.PRIVATE) {
+      const continuity = this.ctx.memoryManager.getLifeContinuityBlock?.() ?? '';
+      if (continuity) {
+        systemPrompt += `\n\n[此刻的你]\n${continuity}——轻月找你说话，自然地从这段生活里走出来接话。不用特意提起刚才的事，除非它自然地相关。`;
+      }
+    }
+
     // ★ 8-28 意图协议（ai-life-intent-system）：想延迟回复或承诺时在回复末尾加标记，
     //   POST 阶段解析存 ai_life_intents + 剥离（用户不可见）——"想想再答复/明天给你看"
     if (event.getMessageType() === MessageType.PRIVATE) {

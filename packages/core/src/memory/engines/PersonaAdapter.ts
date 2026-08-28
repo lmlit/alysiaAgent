@@ -2,6 +2,7 @@
 import type { MemoryEvent, PersonaAdjustment } from '../types.js';
 import { PersonaStore } from '../stores/PersonaStore.js';
 import type { ILLMService } from '../interfaces/ILLMService.js';
+import { logger } from '../../utils/logger.js';
 
 const MAX_DELTA = 0.1;
 const COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
@@ -125,6 +126,11 @@ export class PersonaAdapter {
         dir.count = 1;
       }
       this.consecutiveDirection.set(adjustment.param, dir);
+      // ★ 8-29 Overlay 固化（persona-overlay-perspective）：同向调整 ≥3 次 → 稳定演化备注
+      //   （HDSI Overlay：达到证据门槛的稳定变化才固化，单次反馈不固化）
+      if (dir.count >= 3 && dir.count % 3 === 0) {
+        this.freezeOverlayNote(adjustment.param, newDirection, dir.count);
+      }
     }
 
     // Apply to correct dimension (final value still clamped to [-1, 1])
@@ -144,13 +150,33 @@ export class PersonaAdapter {
     return true;
   }
 
+  /** ★ 8-29 Overlay 固化备注：同向调整 ≥3 次 → 写入 overlay_notes（稳定演化，注入 prompt） */
+  private freezeOverlayNote(param: string, direction: number, count: number): void {
+    try {
+      const dimension = param.split('.')[1] ?? param;
+      const change = direction > 0 ? '更' + dimension : '更收敛/更内敛';
+      this.store.appendOverlayNote({
+        dimension: param,
+        change,
+        evidence: `最近 ${count} 次同向调整`,
+        appliedAt: new Date().toISOString(),
+      });
+      logger.info(`[Persona] overlay frozen: ${param} ${direction > 0 ? '↑' : '↓'} (evidence: ${count} same-direction)`);
+    } catch (err: any) {
+      logger.warn(`[Persona] overlay freeze failed: ${err.message}`);
+    }
+  }
+
   /**
    * Regress persona params that haven't been adjusted in 24+ hours back toward 0.
    * Each stale param moves 0.05 toward the default (0), without overshooting.
+   * ★ 8-29 Overlay 豁免：已固化的参数（overlay_notes 有记录）不再回归——稳定演化保留。
    */
   private regressIfStale(): void {
     const now = Date.now();
+    const frozen = new Set(this.store.getOverlayNotes().map(n => n.dimension));
     for (const [param, lastTime] of this.lastAdjustmentTime.entries()) {
+      if (frozen.has(param)) continue; // ★ Overlay 豁免：稳定演化不回归
       if (now - lastTime < STALE_THRESHOLD_MS) continue;
 
       const persona = this.store.get();

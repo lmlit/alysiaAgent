@@ -253,3 +253,47 @@ describe('PersonaAdapter — 8-28 情绪惯性漂移（memory-character-perspect
     expect(adapter.adjustFromMood(40)).toBe(false); // 冷却中
   });
 });
+
+describe('PersonaAdapter — 8-29 Overlay 固化（persona-overlay-perspective）', () => {
+  let db: Database.Database;
+  let store: PersonaStore;
+  let adapter: PersonaAdapter;
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    initializeDatabase(db);
+    store = new PersonaStore(db);
+    adapter = new PersonaAdapter(store, mockLLM);
+  });
+
+  afterEach(() => { db.close(); });
+
+  it('同向调整 ≥3 次 → 固化 overlay 备注（证据门槛）', () => {
+    // 清冷却,连续 3 次同向
+    (adapter as any).lastAdjustmentTime = new Map();
+    adapter.apply({ param: 'emotional_range.playfulness', delta: 0.05, reason: 'a' });
+    (adapter as any).lastAdjustmentTime = new Map();
+    adapter.apply({ param: 'emotional_range.playfulness', delta: 0.05, reason: 'b' });
+    (adapter as any).lastAdjustmentTime = new Map();
+    adapter.apply({ param: 'emotional_range.playfulness', delta: 0.05, reason: 'c' });
+    const notes = store.getOverlayNotes();
+    expect(notes.length).toBeGreaterThanOrEqual(1);
+    expect(notes[0].dimension).toBe('emotional_range.playfulness');
+    expect(notes[0].evidence).toContain('3 次同向');
+  });
+
+  it('已固化参数豁免 24h 回归（稳定演化保留）', () => {
+    store.appendOverlayNote({ dimension: 'tone.warmth', change: '更温暖', evidence: '测试', appliedAt: new Date().toISOString() });
+    (adapter as any).lastAdjustmentTime.set('tone.warmth', Date.now() - 25 * 3600_000); // 25h 前
+    adapter.apply({ param: 'tone.formality', delta: 0.05, reason: 'other' }); // 触发 regressIfStale
+    const persona = store.get();
+    const tone = JSON.parse(persona.tone);
+    expect(tone.warmth).toBe(0.2); // 未回归（仍默认值 0.2,未被拉向 0）
+  });
+
+  it('getPersonaSnapshot 返回 overlayNotes', () => {
+    // 通过 MemoryManager 快照验证在 integration 测试中;此处验证 store 层
+    store.appendOverlayNote({ dimension: 'x', change: '更 x', evidence: 'e', appliedAt: new Date().toISOString() });
+    expect(store.getOverlayNotes()).toHaveLength(1);
+  });
+});

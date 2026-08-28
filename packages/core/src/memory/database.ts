@@ -272,6 +272,14 @@ export function initializeDatabase(db: Database.Database): void {
   try {
     db.exec(`ALTER TABLE ai_life_intents ADD COLUMN defer_count INTEGER DEFAULT 0`);
   } catch { /* column already exists */ }
+  // 6) ai_life_state.mood_note（★ 8-29 情绪侧端分析：深度阈值后 LLM 生成的描述性氛围）
+  try {
+    db.exec(`ALTER TABLE ai_life_state ADD COLUMN mood_note TEXT DEFAULT ''`);
+  } catch { /* column already exists */ }
+  // 7) persona.overlay_notes（★ 8-29 Overlay：证据门槛固化的稳定人格演化备注，JSON array）
+  try {
+    db.exec(`ALTER TABLE persona ADD COLUMN overlay_notes TEXT NOT NULL DEFAULT '[]'`);
+  } catch { /* column already exists */ }
 
   // Seed default singleton rows
   const now = new Date().toISOString();

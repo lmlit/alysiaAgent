@@ -341,14 +341,29 @@ export class MemoryManager {
   // ===== AI 主动生活系统（v4）=====
 
   /** ★ 生活状态快照（Web 展示）。★ 8-27 增量扩展 moodValue（情绪累积值）与 updatedAt（8h 回归基准） */
-  getLifeSnapshot(): { currentActivity: string; mood: string; intimacy: number; moodValue: number; updatedAt: string } {
+  getLifeSnapshot(): { currentActivity: string; mood: string; intimacy: number; moodValue: number; moodNote: string; updatedAt: string } {
     const s = this.lifeStore.getState();
-    return { currentActivity: s.currentActivity, mood: s.mood, intimacy: s.intimacy, moodValue: s.moodValue, updatedAt: s.updatedAt };
+    return { currentActivity: s.currentActivity, mood: s.mood, intimacy: s.intimacy, moodValue: s.moodValue, moodNote: s.moodNote, updatedAt: s.updatedAt };
   }
 
-  /** 更新 AI 实时状态（活动/心情/亲密度/moodValue），亲密度由 LifeService 每小时推导后传入 */
-  updateLifeState(partial: { currentActivity?: string; mood?: string; intimacy?: number; moodValue?: number }): void {
+  /** 更新 AI 实时状态（活动/心情/亲密度/moodValue/moodNote），亲密度由 LifeService 每小时推导后传入 */
+  updateLifeState(partial: { currentActivity?: string; mood?: string; intimacy?: number; moodValue?: number; moodNote?: string }): void {
     this.lifeStore.updateState(partial);
+  }
+
+  /** ★ 8-29 聊天生活衔接（chat-life-continuity）：距上次生活事件 ≤30min →
+   *  "你刚才在…"补写块（用户消息进来时,对话自然从生活里走出来接话）。
+   *  无近期事件返回空串。 */
+  getLifeContinuityBlock(): string {
+    try {
+      const events = this.lifeStore.getEventsSince(new Date(Date.now() - 30 * 60_000).toISOString())
+        .filter(e => e.origin !== 'followup');
+      if (events.length === 0) return '';
+      const last = events[events.length - 1];
+      return `你刚才在: ${last.content.slice(0, 60)}（${formatLocalTime(new Date(last.createdAt)).slice(-5)}）`;
+    } catch {
+      return '';
+    }
   }
 
   // ===== ★ 8-28 意图系统（ai-life-intent-system）=====
@@ -959,7 +974,7 @@ export class MemoryManager {
   }
 
   /** ★ 获取人格快照（Web 端人格状态展示）。 */
-  getPersonaSnapshot(): { name: string; tone: Record<string, number>; speechStyle: Record<string, number>; emotionalRange: Record<string, number>; memoryConfig: MemoryConfig } {
+  getPersonaSnapshot(): { name: string; tone: Record<string, number>; speechStyle: Record<string, number>; emotionalRange: Record<string, number>; memoryConfig: MemoryConfig; overlayNotes: Array<{ dimension: string; change: string; evidence: string; appliedAt: string }> } {
     const persona = this.personaStore.get();
     const memoryConfig = this.personaStore.getMemoryConfig();
     return {
@@ -968,6 +983,8 @@ export class MemoryManager {
       speechStyle: JSON.parse(persona.speech_style),
       emotionalRange: JSON.parse(persona.emotional_range),
       memoryConfig,
+      // ★ 8-29 Overlay（persona-overlay-perspective）：证据门槛固化的稳定演化
+      overlayNotes: this.personaStore.getOverlayNotes(),
     };
   }
 

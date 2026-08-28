@@ -548,13 +548,3 @@ await memoryManager.ingest({
 +   （continuation_of 引导）；其他 → 间隔补写引导（覆盖间隔不写瞬间）
 + - 长间隔（重启/隔夜）自然补写这段时间的生活，重启空白顺带解决
 + - 替代 8-09 延续块（【你正在做的事】并入【上次事件】）
-
-+ **★ 8-29 聊天生活衔接（chat-life-continuity）**：
-+ - 用户消息进来（私聊）时,30min 内有生活事件 → 注入【此刻的你】块("你刚才在 {事件}——
-+   自然地从这段生活里走出来接话")——HDSI"用户消息进入生活"的简化落地,对话从生活走出
-+ - MemoryManager.getLifeContinuityBlock():30min 内最近事件 → 补写块;无则空
-
-+ **★ 8-29 情绪侧端分析（mood-side-analysis，HDSI Alter 简化）**：
-+ - mood_value 深度阈值 |mv|≥30 且 6h 冷却 → 侧端 LLM 生成描述性氛围 mood_note
-+   （"这段日子心里像落了雨…"）——注入【心情】块与事件生成 context,情绪参与叙事氛围
-+ - 回落到 |mv|<30 → 清空;分析失败不阻塞（冷却后重试）
