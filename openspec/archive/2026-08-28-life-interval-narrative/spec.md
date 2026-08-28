@@ -540,11 +540,3 @@ await memoryManager.ingest({
 - evidence 列：解析时备份承诺原句（[intent:] 标记所在句），裁决 prompt 带原文还原语气
 - 裁决回调：generateIntentMessage 升级为 JSON 输出 {action, content, delay_hours?}
   ——prompt 带承诺原文/内容/当前状态/已延期次数
-
-+ **★ 8-28 间隔叙事补写（life-interval-narrative）**：
-+ - 事件覆盖"从上次事件到现在"的时间（HDSI advance 式补写），不再只写此刻瞬间——
-+   每个事件 = 上次事件的延续 + 间隔生活（进展/变化/被打断/小波折，停在哪里）
-+ - 【上次事件】块注入生成 prompt：8h 内 internal 且 30min 无互动 → 延续候选
-+   （continuation_of 引导）；其他 → 间隔补写引导（覆盖间隔不写瞬间）
-+ - 长间隔（重启/隔夜）自然补写这段时间的生活，重启空白顺带解决
-+ - 替代 8-09 延续块（【你正在做的事】并入【上次事件】）

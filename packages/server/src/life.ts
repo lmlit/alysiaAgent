@@ -450,9 +450,9 @@ export class LifeService {
       .map((s: any) => `- ${s.date}: ${s.summary}`);
     const todayBlock = [...todayLines, ...summaries].join('\n');
 
-    // ★ 8-09 延续机制（决策 2）：最近 8h 内的 internal 事件 = "正在做的事"（可延续）；
-    //   最近 30min 有用户互动 → 重置沉浸，不注入延续块（刚聊完天，更该开启新事件）
-    const ongoingBlock = this.buildOngoingBlock(todayIds);
+    // ★ 8-28 间隔叙事（life-interval-narrative）：最近事件 = 生活起点——事件覆盖
+    //   "从上次事件到现在"的时间（不再只写此刻瞬间）；8h 内 internal 同时承担延续候选
+    const lastEventBlock = this.buildLastEventBlock(todayIds);
 
     // ★ 世界书背景（spec §7 ①）：行格式带 [wb: wb_xxx]，LLM 引用时返回 wb_entry_id
     //   ★ 8-27 分层随机已下沉到 getWorldbookSample（life_event 3 + text 2，截断 200）
@@ -481,9 +481,8 @@ export class LifeService {
       `【你的人设背景】${wbBlock || '（暂无）'}`,
       `【在场角色】${presenceBlock}`,
       `【轻月最近】${this.memoryManager.getUserActivitySummary() || '（暂无）'}`,
-      // ★ 8-09 延续机制：沉浸中的事可延续或开启新事件
-      // ★ 8-28 延续主路径：有正在做的事 → 优先续写推进（进展/波折/完成），自然收尾才开新
-      ongoingBlock ? `【你正在做的事】${ongoingBlock}\n优先续写推进这件事——它有什么进展、波折或变化（比如快做完了/卡住了/被别的事打断）；只有当它自然做完了（书看完/茶喝完/事办完），才开启一件新的事。续写时 JSON 里 continuation_of 填该事件 id，开新事则不填。` : '',
+      // ★ 8-28 间隔叙事：上次事件 → 现在的生活补写（HDSI advance 式）
+      lastEventBlock ? `【上次事件】${lastEventBlock}` : '',
       todayActive ? `【今天已主动联系】今天已经发过: ${todayActive}。请聚焦生活日常本身，不要生成同类问候/祝福内容。` : '',
       // ★ 8-28 深夜抑制关闭：深夜不再强制 internal——只提示时辰节奏，类型交 LLM 自然判断
       deepNight ? '【注意】现在是深夜，夜已深了——生活节奏安静下来（可能还在忙手头的事，也可能准备睡了）。' : '',
@@ -677,25 +676,36 @@ export class LifeService {
     return { ok: true, feedback: '' };
   }
 
-  /** ★ 8-09 延续机制：最近 8h 内 internal 事件 = "正在做的事"（可延续）。
-   *  条件：① 存在 8h 内的 internal 事件；② 最近 chatLockMinutes 无用户互动（聊天后重置沉浸）。
-   *  返回形如 "在阳台看书（15:30）"，无可延续则空串。 */
-  private buildOngoingBlock(todayIds: Set<string>): string {
+  /** ★ 8-28 间隔叙事（life-interval-narrative，替代 8-09 延续块）：
+   *  最近事件 = 生活起点。事件覆盖"从上次事件到现在"的时间——
+   *  - 8h 内 internal 且 30min 无互动 → 同时是延续候选（continuation_of 引导，todayIds 放行）
+   *  - 其他 → 间隔补写引导（进展/变化/被打断，停在哪里）
+   *  返回形如 "10:00 你在: 泡茶…\n现在距上次事件已过 4 小时——覆盖这中间的时间…" 的引导块；无事件返回空。 */
+  private buildLastEventBlock(todayIds: Set<string>): string {
     try {
+      const events = (this.memoryManager.listLifeEvents(2) as any[])
+        .filter((e: any) => e.origin !== 'followup')
+        .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      const latest = events[0];
+      if (!latest) return '';
+      const lastAt = new Date(latest.createdAt);
+      const hoursGap = Math.max(0, Math.round((Date.now() - lastAt.getTime()) / 3_600_000 * 10) / 10);
+
+      // 延续候选：8h 内 internal 且 30min 无用户互动（聊天后重置沉浸）
       const lockMinutes = this.opts.chatLockMinutes ?? 30;
       const recent = this.memoryManager.getRecentMessages(
         this.sessionId(), 100, new Date(Date.now() - lockMinutes * 60_000),
       ).filter((m: any) => m.role === 'user');
-      if (recent.length > 0) return ''; // 用户互动后重置沉浸——不提示延续
-
-      const candidates = (this.memoryManager.listLifeEvents(2) as any[])
-        .filter((e: any) => e.type === 'internal' && Date.now() - new Date(e.createdAt).getTime() < 8 * 3_600_000)
-        .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-      const latest = candidates[0];
-      if (!latest) return '';
-      // ★ 跨午夜边缘的延续候选（昨天 23:xx 的 internal）→ 加入今天 ID 集合供 continuation_of 防幻觉校验放行
-      todayIds.add(latest.id);
-      return `${latest.content}（${formatLocalTime(new Date(latest.createdAt))}）`;
+      const canContinue = latest.type === 'internal' && Date.now() - lastAt.getTime() < 8 * 3_600_000 && recent.length === 0;
+      if (canContinue) {
+        // ★ 跨午夜边缘的延续候选 → 加入今天 ID 集合供 continuation_of 防幻觉校验放行
+        todayIds.add(latest.id);
+        const time = formatLocalTime(lastAt);
+        return `${time} 你正在: ${latest.content.slice(0, 60)}\n优先续写推进这件事——它有什么进展、波折或变化（快做完了/卡住了/被别的事打断）；只有当它自然做完了，才开启新的事。续写时 JSON 里 continuation_of 填该事件 id（${latest.id}），开新事则不填。`;
+      }
+      const time = formatLocalTime(lastAt);
+      const gapNote = hoursGap >= 1 ? `（已过 ${hoursGap} 小时）` : '';
+      return `${time} 你上次在做: ${latest.content.slice(0, 60)}${gapNote}\n事件要覆盖从上次事件到现在的时间——这中间你经历了什么（进展/变化/被打断/小波折）？现在正停在哪里？不要只写此刻的一瞬间。`;
     } catch {
       return '';
     }

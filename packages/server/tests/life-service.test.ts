@@ -496,7 +496,7 @@ describe('LifeService — 剧情延续与推送节奏（8-09）', () => {
     vi.restoreAllMocks();
   });
 
-  it('延续注入：8h 内 internal 事件 → prompt 含【你正在做的事】，continuation_of 透传', async () => {
+  it('★ 8-28 间隔叙事：8h 内 internal 事件 → prompt 含【上次事件】延续引导，continuation_of 透传', async () => {
     freezeTime(14);
     const ctx: string[] = [];
     const { memoryManager } = makeMocks({
@@ -509,11 +509,30 @@ describe('LifeService — 剧情延续与推送节奏（8-09）', () => {
       generateEvent: async (c: string) => { ctx.push(c); return '{"content":"继续看书","type":"internal","continuation_of":"life-1"}'; },
     });
     await svc.tick();
-    expect(ctx[0]).toContain('【你正在做的事】');
+    expect(ctx[0]).toContain('【上次事件】');
     expect(ctx[0]).toContain('在阳台看书');
+    expect(ctx[0]).toContain('continuation_of');
     expect(memoryManager.recordLifeEvent).toHaveBeenCalledWith(
       expect.objectContaining({ continuationOf: 'life-1' })
     );
+  });
+
+  it('★ 8-28 间隔叙事：非延续事件（间隔补写）→ prompt 含间隔覆盖引导', async () => {
+    freezeTime(14);
+    const ctx: string[] = [];
+    const { memoryManager } = makeMocks({
+      listLifeEvents: vi.fn().mockReturnValue([
+        { id: 'life-9', content: '泡了杯茶', type: 'chat', createdAt: new Date(Date.now() - 4 * 3_600_000).toISOString() },
+      ]),
+    });
+    const svc = new LifeService(memoryManager as any, {} as any, {
+      ownerOpenid: 'openid-1',
+      generateEvent: async (c: string) => { ctx.push(c); return '{"content":"x","type":"internal"}'; },
+    });
+    await svc.tick();
+    expect(ctx[0]).toContain('【上次事件】');
+    expect(ctx[0]).toContain('覆盖从上次事件到现在');
+    expect(ctx[0]).toContain('泡了杯茶');
   });
 
   it('用户互动后重置沉浸：聊天锁命中 → 不生成事件（延续上下文不注入）', async () => {
