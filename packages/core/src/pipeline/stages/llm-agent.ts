@@ -116,9 +116,11 @@ export class LLMAgentStage implements Stage {
     // ★ 8-29 聊天生活衔接（chat-life-continuity）：私聊且刚离开生活事件（≤30min）→
     //   注入"你刚才在…"补写块——对话从生活里自然走出来接话（HDSI"用户消息进入生活"的简化落地）
     if (event.getMessageType() === MessageType.PRIVATE) {
+      // ★ 8-29 独立人格底色：生活是中心，你不必围着他转
+      systemPrompt += `\n\n[生活底色]\n你的生活是此刻的中心——轻月的话是进入你生活的一件事，不必放下手里的一切来回应。你不必事事围着他转，你有自己的生活节奏和心情；你刚才在做什么，就从那里自然走出来接话。`;
       const continuity = this.ctx.memoryManager.getLifeContinuityBlock?.() ?? '';
       if (continuity) {
-        systemPrompt += `\n\n[此刻的你]\n${continuity}——轻月找你说话，自然地从这段生活里走出来接话。不用特意提起刚才的事，除非它自然地相关。`;
+        systemPrompt += `\n[此刻的你]\n${continuity}——轻月找你说话，自然地从这段生活里走出来接话。不用特意提起刚才的事，除非它自然地相关。`;
       }
     }
 

@@ -124,6 +124,21 @@ ${rangeText}`;
       }
     }
 
+    // ★ 8-29 独立人格：【关于我】——她的角色事实（character_facts）注入，她记得自己的事
+    try {
+      const myFacts = this.profileStore.getActiveCharacterFacts();
+      if (myFacts.length > 0) {
+        const myText = myFacts
+          .map(f => `- ${f.fact}${this.formatFactTime(f.valid_from, f.updated_at)}`)
+          .join('\n');
+        const myBlock = `[关于我]\n${myText}`;
+        if (budget.canFit(myBlock)) {
+          budget.reserve(myBlock);
+          blocks.push(myBlock);
+        }
+      }
+    } catch { /* character facts injection is non-fatal */ }
+
     // ★ 8-28 过期确认（profile-facts-classification-confirm）：过期 ≤3 天的画像事实 →
     //   【待确认的事实】块（≤2 条）——昔涟在合适时机自然询问，用户回答后调 confirm_profile_fact 记录
     try {

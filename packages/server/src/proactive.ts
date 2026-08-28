@@ -471,6 +471,13 @@ export class ProactiveService {
     return m ? m[1] : null;
   }
 
+  /** ★ 8-29 今天是什么日子（LifeService 事件生成感知用）：节日/节气名（未发祝福也返回，
+   *  事件生成自然带节日氛围）。非节日返回空串。 */
+  todaySpecial(): string {
+    const f = this.todayFestival();
+    return f ? `${f.name}（${f.greeting ?? ''}）` : '';
+  }
+
   /** ★ 今天已主动联系的内容摘要（LifeService 感知用，避免重复打扰）。
    *  返回如 "早安问候、立秋节日祝福"；今天没发过则返回空串。 */
   getTodayActivity(): string {

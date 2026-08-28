@@ -182,6 +182,8 @@ async function main() {
       },
       // ★ 感知今天已发的问候/节日（ProactiveService），事件生成避免重复打扰
       todayProactive: () => proactive?.getTodayActivity() ?? '',
+      // ★ 8-29 今天是什么日子（节日/节气 → 事件生成自然带氛围,不再独立打卡）
+      todaySpecial: () => proactive?.todaySpecial() ?? '',
     });
     life.start();
   }

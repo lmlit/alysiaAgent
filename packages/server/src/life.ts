@@ -39,6 +39,8 @@ export interface LifeOpts {
   /** ★ 今天已主动联系的内容（ProactiveService.getTodayActivity），
    *  注入事件生成器避免重复打扰（如问候后生成"早上好"类事件）。 */
   todayProactive?: () => string;
+  /** ★ 8-29 今天是什么日子（ProactiveService.todaySpecial）：节日/节气 → 事件生成自然带氛围 */
+  todaySpecial?: () => string;
   /** 去重状态持久化文件 */
   stateFile?: string;
 }
@@ -460,6 +462,16 @@ export class LifeService {
     //   "从上次事件到现在"的时间（不再只写此刻瞬间）；8h 内 internal 同时承担延续候选
     const lastEventBlock = this.buildLastEventBlock(todayIds);
 
+    // ★ 8-29 独立人格:她惦记的事(未完成的 promise/proactive intent)——愿望驱动生活
+    let pendingIntentBlock = '';
+    try {
+      pendingIntentBlock = (this.memoryManager.listDueIntents(Date.now() + 24 * 3_600_000) as any[])
+        .filter((i: any) => i.type === 'proactive-contact' || i.type === 'promise')
+        .slice(0, 2)
+        .map((i: any) => `- ${i.content.slice(0, 50)}`)
+        .join('\n');
+    } catch { /* non-fatal */ }
+
     // ★ 世界书背景（spec §7 ①）：行格式带 [wb: wb_xxx]，LLM 引用时返回 wb_entry_id
     //   ★ 8-27 分层随机已下沉到 getWorldbookSample（life_event 3 + text 2，截断 200）
     const wbSample = this.memoryManager.getWorldbookSample(5);
@@ -480,13 +492,19 @@ export class LifeService {
 
     const context = [
       `【当前时间】${formatLocalTime()}`,
+      // ★ 8-29 特定时间/节日:事件生成自然带节日氛围或对轻月的节日心意(不再是独立打卡)
+      this.opts.todaySpecial?.() ? `【今天是什么日子】今天是${this.opts.todaySpecial()}——事件可以自然带上节日的气息,如果想到轻月,节日的分享可以是事件的一部分。` : '',
+      // ★ 8-29 触发时间联动(日常状态决定下次事件何时来——实测 LLM 全给默认值,明确映射修正)
+      '【间隔建议】next_in_hours 由你此刻的状态决定,不要给固定值:正沉浸在一件事里(书没看完/活没干完)→ 3-8h;刚做完事、有点无聊、或想找轻月聊天 → 0.5-2h;忙手头的事但想到了轻月 → 2-4h。',
       `【当前状态】你正在: ${snapshot.currentActivity || '发呆'}；心情: ${snapshot.mood || '平静'}`,
       `【心情】${moodBlock}`,
       `【亲密度】与轻月: ${snapshot.intimacy}/100`,
       `【今天的生活】${todayBlock || '（还没有特别的事）'}`,
       `【你的人设背景】${wbBlock || '（暂无）'}`,
       `【在场角色】${presenceBlock}`,
-      `【轻月最近】${this.memoryManager.getUserActivitySummary() || '（暂无）'}`,
+      // ★ 8-29 独立人格:移除【轻月最近】(她的生活不围绕轻月)——轻月只在 chat 分享/偶发想念中出现
+      // 【你惦记的事】(未完成的 intent):她的愿望驱动生活,不是随机开新
+      pendingIntentBlock ? `【你惦记的事】${pendingIntentBlock}——这些是你自己惦记的事,可以自然地推进它们。` : '',
       // ★ 8-28 间隔叙事：上次事件 → 现在的生活补写（HDSI advance 式）
       lastEventBlock ? `【上次事件】${lastEventBlock}` : '',
       todayActive ? `【今天已主动联系】今天已经发过: ${todayActive}。请聚焦生活日常本身，不要生成同类问候/祝福内容。` : '',
@@ -715,6 +733,11 @@ export class LifeService {
         return { ok: false, feedback: `"${name}"此刻不在场，不要让他/她出现` };
       }
     }
+    // ⑧ ★ 8-29 独立人格：internal 事件的动机围绕自己（我想/我需要/我好奇）——
+    //   等/为/怕/担心"轻月"是围绕用户,想念只是偶发底色不是事件动机
+    if (evt.type === 'internal' && /等(轻月|你)回来|为(轻月|你)|怕(轻月|你)|担心(轻月|你)/.test(c)) {
+      return { ok: false, feedback: '这件事的动机应该是你自己（我想/我需要/我好奇），不是围绕轻月——想念只是偶发的底色，不要让它成为每件事的理由' };
+    }
     return { ok: true, feedback: '' };
   }
 
@@ -869,7 +892,14 @@ export class LifeService {
 
       // 主动占比：用户消息首条占比（连续 user 消息只计一条）
       const userFirst = msgs.filter((m: any, i: number) => m.role === 'user' && (i === 0 || msgs[i - 1]?.role !== 'user')).length;
-      const activeScore = Math.min(14, userFirst * 3);
+      // ★ 8-29 独立人格：亲密度加"她主动"维度——她主动推送成功的事件数（delivered=1）
+      //   她也有想找你的时刻，关系不单由"你找她的频率"决定
+      let selfInitiated = 0;
+      try {
+        selfInitiated = (this.memoryManager.listLifeEvents(7) as any[])
+          .filter((e: any) => e.delivered === 1).length;
+      } catch { /* non-fatal */ }
+      const activeScore = Math.min(14, userFirst * 3 + selfInitiated * 2);
 
       const base = 30;
       const raw = Math.max(10, Math.min(100, base + freqScore + longScore + activeScore));
