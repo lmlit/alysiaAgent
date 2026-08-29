@@ -101,7 +101,13 @@ export class LifeService {
     }
     this.eventTimer = setTimeout(() => {
       this.eventTimer = null;
-      this.tick().catch(err => logger.error('[Life] tick:', err));
+      this.tick().catch(err => {
+        // ★ 8-30 life-schedule-renewal (P1-6)：tick 异常也要续期——锁一定续，不静默停摆
+        logger.error('[Life] tick:', err);
+        this.state.nextEventAt = Date.now() + this.baseIntervalMs();
+        this.saveState();
+        this.scheduleNextEvent();
+      });
     }, Math.max(0, nextAt - now));
     logger.debug(`[Life] next event at ${new Date(nextAt).toLocaleString()} (+${Math.round((nextAt - now) / 1000)}s)`);
   }
@@ -172,9 +178,9 @@ export class LifeService {
 
     // ③ 生成事件（LLM 建议间隔 next_in_hours 由 evt 带回）
     // ★ 8-27 post-check：LLM 输出过 7 条校验，不过 → 带反馈重试 1 次 → 仍不过回落模板
+    // ★ 8-30 近 24h 滑动窗口（life-schedule-renewal）：跨 0 点连续性——post-check 重复/独处检测也看 24h
     const todayKey = localDateKey();
-    const todayEvents = this.memoryManager.listLifeEvents(2)
-      .filter((e: any) => localDateKeyFromISO(e.createdAt) === todayKey);
+    const todayEvents = this.memoryManager.listLifeEvents(1);
     const presentNames = this.memoryManager.listPresentCharacters() as string[];
 
     let evt = await this.generateEvent(deepNight);
@@ -193,7 +199,14 @@ export class LifeService {
         }
       }
     }
-    if (!evt) return;
+    // ★ 8-30 life-schedule-renewal (P1-6)：生成失败也要续期（保底）——不再静默停摆
+    if (!evt) {
+      this.state.nextEventAt = Date.now() + this.baseIntervalMs();
+      this.saveState();
+      this.scheduleNextEvent();
+      logger.warn('[Life] event generation failed (LLM + template both empty), renewed lock with base interval');
+      return;
+    }
 
     // 存储 + 更新状态（recordLifeEvent 返回事件 id，供推送成功后标记 delivered）
     const evtId = this.memoryManager.recordLifeEvent({
@@ -253,11 +266,32 @@ export class LifeService {
     // ★ 8-29 拆分：回写用户看到的内容（message ?? content）——她记得自己对轻月说过的话
     await this.writebackToMemory(evt.message ?? evt.content);
 
-    // ⑤ 事件驱动调度：nextEventAt = now + next_in_hours（LLM 建议，钳制 30min-8h；
-    //    未给 → 默认 2h ± 抖动由 scheduleNextEvent 兜底）
-    this.state.nextEventAt = Date.now() + this.clampIntervalHours(evt.next_in_hours);
+    // ⑤ 锁续期（life-schedule-renewal）：成功按模型建议(0.5-8h 钳制)/缺失按时段保底；
+    //    next_in_hours 观测日志——验证模型决策（实测 LLM 常不给值）
+    const intervalMs = this.intervalMs(evt);
+    this.state.nextEventAt = Date.now() + intervalMs;
     this.saveState();
     this.scheduleNextEvent();
+    logger.info(`[Life] lock renewed +${(intervalMs / 3_600_000).toFixed(1)}h (model: ${evt.next_in_hours ?? 'default'})`);
+  }
+
+  /** ★ 8-30 锁续期：模型建议 0.5-8h 钳制；缺失 → 时段保底（白天 1h / 夜间 2h） */
+  private intervalMs(evt: { next_in_hours?: number }): number {
+    const hours = evt.next_in_hours;
+    if (typeof hours === 'number' && isFinite(hours)) {
+      return Math.min(Math.max(hours, 0.5), 8) * 3_600_000;
+    }
+    return this.baseIntervalMs();
+  }
+
+  /** ★ 8-30 时段保底（life-schedule-renewal）：白天 defaultIntervalHours（默认 1h）/
+   *  夜间(默认 0-7h) 2h——她睡着/安静的夜节奏放慢，减少编造夜间活动；
+   *  模型给值始终优先（想聊可提前、沉浸可延长） */
+  private baseIntervalMs(): number {
+    const [deepStart, deepEnd] = this.opts.deepNightHours ?? [0, 7];
+    const hour = new Date().getHours();
+    const deepNight = hour >= deepStart && hour < deepEnd;
+    return (deepNight ? 2 : (this.opts.defaultIntervalHours ?? 1)) * 3_600_000;
   }
 
   // ── ★ 8-28 意图到期处理（ai-life-intent-system）─────────────────
@@ -393,12 +427,6 @@ export class LifeService {
     }
   }
 
-  /** next_in_hours 钳制：0.5-8h；非法/缺失 → 0（触发 scheduleNextEvent 默认间隔兜底） */
-  private clampIntervalHours(nextInHours?: number): number {
-    if (typeof nextInHours !== 'number' || !isFinite(nextInHours)) return 0;
-    return Math.min(Math.max(nextInHours, 0.5), 8) * 3_600_000;
-  }
-
   /** owner 私聊会话 ID */
   private sessionId(): string {
     return `qq-official-1:private:private_${this.opts.ownerOpenid}`;
@@ -452,22 +480,26 @@ export class LifeService {
   } | null> {
     const snapshot = this.memoryManager.getLifeSnapshot();
 
-    // ★ 剧情链（spec §8）：今天的事件逐条带 [id: life-xxx] 注入（LLM 只能引用今天的事件），
+    // ★ 剧情链（spec §8）：近 24h 滑动窗口（life-schedule-renewal 8-30——跨 0 点连续性：
+    //   23:00 睡下 → 0:30 触发时仍看得到），事件逐条带 [id: life-xxx] 注入（LLM 只能引用窗口内事件），
     //   近 7 天摘要不带 ID（summary 行仅作回顾，不可被引用）
     const todayKey = localDateKey();
-    const todayEvents = this.memoryManager.listLifeEvents(2)
-      .filter((e: any) => localDateKeyFromISO(e.createdAt) === todayKey);
-    const todayIds: Set<string> = new Set(todayEvents.map((e: any) => e.id));
-    const todayLines = todayEvents.map((e: any) =>
-      `[id: ${e.id}] ${formatLocalTime(new Date(e.createdAt)).slice(-5)} ${e.content}`);
+    const windowEvents = this.memoryManager.listLifeEvents(1); // ASC，天然 24h 窗口
+    const windowIds: Set<string> = new Set(windowEvents.map((e: any) => e.id));
+    const windowLines = windowEvents.slice(-8).map((e: any) => {
+      // 跨天日期标注：今天的只标时间，昨天的标"昨天 HH:MM"（24h 窗口最多跨 1 天）
+      const isToday = localDateKeyFromISO(e.createdAt) === todayKey;
+      const time = formatLocalTime(new Date(e.createdAt)).slice(-5);
+      return `[id: ${e.id}] ${isToday ? time : `昨天${time}`} ${String(e.content).slice(0, 60)}`;
+    });
     const summaries = this.memoryManager.listLifeSummaries(7)
       .filter((s: any) => s.date !== todayKey)
       .map((s: any) => `- ${s.date}: ${s.summary}`);
-    const todayBlock = [...todayLines, ...summaries].join('\n');
+    const todayBlock = [...windowLines, ...summaries].join('\n');
 
     // ★ 8-28 间隔叙事（life-interval-narrative）：最近事件 = 生活起点——事件覆盖
     //   "从上次事件到现在"的时间（不再只写此刻瞬间）；8h 内 internal 同时承担延续候选
-    const lastEventBlock = this.buildLastEventBlock(todayIds);
+    const lastEventBlock = this.buildLastEventBlock(windowIds);
 
     // ★ 8-29 世界观底色:统一字段(与聊天 persona 注入同一数据源)
     const worldviewBlock = this.memoryManager.getWorldviewBlock?.() ?? '';
@@ -569,11 +601,11 @@ export class LifeService {
           type: parsed.type === 'chat' ? 'chat' : 'internal',
           mood_delta: parsed.mood_delta ? String(parsed.mood_delta) : undefined,
           mood_shift: isFinite(shift) ? Math.max(-5, Math.min(5, Math.round(shift))) : undefined,
-          reference_event_id: refId && todayIds.has(refId) ? refId : undefined,
+          reference_event_id: refId && windowIds.has(refId) ? refId : undefined,
           wb_entry_id: wbId && wbIds.has(wbId) ? wbId : undefined,
-          // 8-09：next_in_hours 钳制在 tick（clampIntervalHours）；continuation_of 须命中今天事件
+          // 8-09：next_in_hours 钳制在 tick（intervalMs）；continuation_of 须命中窗口内事件
           next_in_hours: isFinite(nextHours) ? nextHours : undefined,
-          continuation_of: contId && todayIds.has(contId) ? contId : undefined,
+          continuation_of: contId && windowIds.has(contId) ? contId : undefined,
           can_contact: parsed.agency?.can_contact === false ? false : true,
           // ★ 8-29 事件/对话拆分：message = 对轻月说的话(仅 chat 时有效,截断 200)
           message: parsed.type === 'chat' && parsed.message ? String(parsed.message).trim().slice(0, 200) : undefined,
@@ -774,7 +806,7 @@ export class LifeService {
    *  - 8h 内 internal 且 30min 无互动 → 同时是延续候选（continuation_of 引导，todayIds 放行）
    *  - 其他 → 间隔补写引导（进展/变化/被打断，停在哪里）
    *  返回形如 "10:00 你在: 泡茶…\n现在距上次事件已过 4 小时——覆盖这中间的时间…" 的引导块；无事件返回空。 */
-  private buildLastEventBlock(todayIds: Set<string>): string {
+  private buildLastEventBlock(windowIds: Set<string>): string {
     try {
       const events = (this.memoryManager.listLifeEvents(2) as any[])
         .filter((e: any) => e.origin !== 'followup')
@@ -785,20 +817,39 @@ export class LifeService {
       const hoursGap = Math.max(0, Math.round((Date.now() - lastAt.getTime()) / 3_600_000 * 10) / 10);
 
       // 延续候选：8h 内 internal 且 30min 无用户互动（聊天后重置沉浸）
+      // ★ 8-30 链限制（life-schedule-renewal）：连续 internal ≥3 → 强制开新事——
+      //   1h 保底节奏下 8h 窗口能续 8 次,会流水账(同一件事写 8 小时)。零迁移近似:
+      //   continuation_of 未持久化,用连续 internal 链长近似(她沉浸做的事通常是 internal 流)
       const lockMinutes = this.opts.chatLockMinutes ?? 30;
       const recent = this.memoryManager.getRecentMessages(
         this.sessionId(), 100, new Date(Date.now() - lockMinutes * 60_000),
       ).filter((m: any) => m.role === 'user');
-      const canContinue = latest.type === 'internal' && Date.now() - lastAt.getTime() < 8 * 3_600_000 && recent.length === 0;
+      let internalStreak = 0;
+      for (const e of events) {
+        if (e.type !== 'internal') break;
+        internalStreak++;
+      }
+      const canContinue = latest.type === 'internal'
+        && Date.now() - lastAt.getTime() < 8 * 3_600_000
+        && recent.length === 0
+        && internalStreak < 3;
       if (canContinue) {
-        // ★ 跨午夜边缘的延续候选 → 加入今天 ID 集合供 continuation_of 防幻觉校验放行
-        todayIds.add(latest.id);
+        // ★ 8-30 窗口化后 latest 天然在 windowIds 里(24h 内),不再需要跨午夜 hack
         const time = formatLocalTime(lastAt);
         return `${time} 你正在: ${latest.content.slice(0, 60)}\n优先续写推进这件事——它有什么进展、波折或变化（快做完了/卡住了/被别的事打断）；只有当它自然做完了，才开启新的事。续写时 JSON 里 continuation_of 填该事件 id（${latest.id}），开新事则不填。`;
       }
       const time = formatLocalTime(lastAt);
+      // ★ 8-30 补写强度随间隔渐变（life-schedule-renewal）：短间隔"此刻即间隔"(1h 里她就是连续
+      //   做同一件事,此刻 = 间隔的全部);中间隔轻引导;长间隔(沉浸/重启)重补写——幕间 advance
+      //   语义不变(每个事件覆盖间隔),只是短间隔不诱导编造
       const gapNote = hoursGap >= 1 ? `（已过 ${hoursGap} 小时）` : '';
-      return `${time} 你上次在做: ${latest.content.slice(0, 60)}${gapNote}\n事件要覆盖从上次事件到现在的时间——这中间你经历了什么（进展/变化/被打断/小波折）？现在正停在哪里？不要只写此刻的一瞬间。`;
+      if (hoursGap > 2) {
+        return `${time} 你上次在做: ${latest.content.slice(0, 60)}${gapNote}\n事件要覆盖从上次事件到现在的时间——这中间你经历了什么（进展/变化/被打断/小波折）？现在正停在哪里？不要只写此刻的一瞬间。`;
+      }
+      if (hoursGap > 1) {
+        return `${time} 你上次在做: ${latest.content.slice(0, 60)}${gapNote}\n如果这件事有进展或变化,自然地带上它;没有就写此刻正在发生的事。`;
+      }
+      return `${time} 你上次在做: ${latest.content.slice(0, 60)}\n此刻自然延续它,或自然地开启一件新的事——写当下正在发生的,不必回头补述。`;
     } catch {
       return '';
     }

@@ -119,9 +119,10 @@ async function main() {
     const life = new LifeService(core.memoryManager, qqOff, {
       ownerOpenid: config.bot.ownerId,
       // ★ 8-09 事件驱动调度：概率门已移除（life.ts 内部不再消费 probability）；
-      //   chat 推送冷却 2h → 1h；每日 chat 软上限 5 条（超限降级 internal）
+      //   chat 推送冷却 1h；★ 8-30 每日 chat 软上限 5 → 20（life-schedule-renewal：
+      //   实测问候 3 条/天零错误码,QQ 配额无忧;打扰由 1h 冷却 + 20 上限 + 时段保底控制）
       cooldownHours: 1,
-      maxChatPushesPerDay: 5,
+      maxChatPushesPerDay: 20,
       chatLockMinutes: 30,
       stateFile: `${config.server.dataDir}/life-state.json`,
       // ★ LLM 事件生成：woke 模式，昔涟身份

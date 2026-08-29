@@ -36,9 +36,7 @@ migrated: 2026-08-07
 |--------|------|
 | 事件库 | 世界书人设背景（采样注入）+ 通用模板 + LLM 自创 |
 | 事件驱动调度（8-09） | 概率门移除；LLM `next_in_hours` 建议间隔（0.5-8h 钳制，沉浸/想聊可变） |
-| 锁续期（8-30, life-schedule-renewal） | 每次触发=锁续期：成功按模型建议(0.5-8h)/失败 1h 保底/异常 try-catch 兜底——锁一定续，永不静默停摆（P1-6） |
-| 时段保底（8-30） | 模型缺失/失败时：白天(7-24h) 1h / 夜间(0-7h) 2h——睡觉节奏放慢；模型给值始终优先（想聊可提前、沉浸可延长） |
-| 主动聊天冷却 | ≥1 小时（8-09 从 2h 缩短）+ 每日 chat 软上限 5 → **20**（8-30：实测问候 3 条/天零错误码，QQ 配额无忧；打扰由冷却+上限+时段保底控制） |
+| 主动聊天冷却 | ≥1 小时（8-09 从 2h 缩短）+ 每日 chat 软上限 5 条 |
 | 聊天锁 | 30 分钟内有用户互动 → 跳过本轮并顺延重排 |
 | 窗口外事件 | 照常生成（生活积累），窗口内尝试推送 |
 | 事件时间感知 | 生成器/事件流注入/判定器全部注入当前本地时间 |
@@ -165,28 +163,27 @@ CREATE TABLE life_templates (
 ## 5. 事件判定器（8-09 起：事件驱动调度，替代每小时 tick + 概率门）
 
 ```
-启动 → scheduleNextEvent(): 用持久化 nextEventAt；已过/缺失 → 重排 now + 默认1h(±30min抖动)
+启动 → scheduleNextEvent(): 用持久化 nextEventAt；已过/缺失 → 重排 now + 默认2h(±30min抖动)
       ↓ 到点
 tick() {
-  if (最近30分钟有用户互动) { 顺延重排; return; }   // 聊天锁
+  if (最近30分钟有用户互动) return;            // 聊天锁（顺延重排下一次）
   const deepNight = now.hour 在 0-7;
 
   const event = await 事件生成器(deepNight);    // LLM，带回 next_in_hours / continuation_of
-  if (!event) {                                  // ★ 8-30 锁续期(P1-6)：失败也续期,不停摆
-    nextEventAt = now + 时段保底(白天1h/夜间2h); 持久化; scheduleNextEvent(); return;
-  }
   存入 ai_life_events;
 
-  // ★ 8-27 Agency Window：推送门加"方便联系"条件（can_contact 来自事件 JSON）
-  if (event.type === 'chat' && 冷却通过 && 未超日上限 && event.can_contact !== false) {
-    const ok = await sendProactive(ownerOpenid, event.message ?? event.content);  // 8-29 推送 message
+  // ★ 8-27 Agency Window：推送门加"方便联系"条件（can_contact 来自事件 JSON，
+  //   反映角色当前活动/心情/环境是否适合联系轻月——如沉浸中/心情低落不想说话 → false）
+  if (event.type === 'chat' && !deepNight && 冷却通过 && 未超日上限 && event.can_contact !== false) {
+    const ok = await sendProactive(ownerOpenid, event.content);  // 长文案自动分段
     if (ok) { delivered = 1; 回写EventStore; }
   }
-  // can_contact === false → intent 落库(delay 后重查)或降级 internal 入库不推送
+  // can_contact === false → 降级 internal 入库不推送（生活积累，等下一次事件）
   // 冷却中 / 超日上限 → chat 降级 internal（照常入库不推送）
+  // 窗口外/deepNight：积累，等补叙（二期）
 
-  nextEventAt = now + intervalMs(event);         // ★ 8-30 锁续期：模型建议 0.5-8h 钳制;缺失 → 时段保底
-  持久化 state.json; scheduleNextEvent();        // 异常时 setTimeout 回调 catch 兜底续期
+  nextEventAt = now + clamp(LLM 建议 next_in_hours, 0.5h, 8h);  // 未建议 → 默认2h抖动
+  持久化 state.json; scheduleNextEvent();
 }
 ```
 
@@ -197,21 +194,6 @@ tick() {
 - 重启**重排不补发**（nextEventAt 已过 → 默认间隔重排，错过即错过）
 - chat 推送冷却 2h → **1h**；新增**每日 chat 软上限**（默认 5 条，超限降级 internal）
 - 聊天锁命中 → 重置沉浸（不注入延续块）+ 顺延重排
-
-**8-30 锁续期**（change: life-schedule-renewal，实证：服务器 33h 停摆 = P1-6 bug 真实发生）：
-- **锁一定续**：成功按模型建议(0.5-8h)；生成失败(LLM+模板全空) → 时段保底续期；
-  tick 抛异常 → setTimeout 回调 catch 后兜底续期——不再静默停摆
-- **时段保底**：白天(7-24h) 1h / 夜间(0-7h) 2h——她睡觉/安静的夜节奏放慢，
-  减少编造夜间活动；模型给值始终优先（想聊给 0.5h → 深夜也能提前聊）
-- **每日 chat 软上限 5 → 20**（8-30：实测问候 3 条/天零错误码，QQ 配额无忧；
-  打扰由 1h 冷却 + 20 上限 + 时段保底控制）
-- **补写强度随间隔渐变**（间隔叙事改）：≤1h 此刻即间隔（短间隔她就是连续做同一件事，
-  此刻=间隔全部）/ 1-2h 轻引导 / >2h 重补写（覆盖从上次到现在）——幕间 advance 语义不变
-- **延续链限制**：连续 internal ≥3 → 不再引导续写同一件事（防 1h 保底节奏下流水账，
-  零迁移近似：continuation_of 未持久化，用连续 internal 链长）
-- **剧情链 → 近 24h 滑动窗口**（listLifeEvents(1)）：跨 0 点连续性（23:00 睡下 → 0:30 仍看到）；
-  跨天日期标注（昨天23:00）；上限 8 条；ID 集合窗口化后延续候选跨午夜 hack 删除
-- **next_in_hours 观测日志**：事件日志带 `(model: 2.5|default)`——验证模型决策
 
 **聊天锁实现**：`EventStore.getRecentBySession(umo, 1, new Date(Date.now()-30min))` 有记录 → 跳过。
 
