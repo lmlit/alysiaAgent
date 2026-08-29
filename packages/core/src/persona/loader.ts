@@ -14,6 +14,9 @@ const PERSONA_DIR = __dirname;
 const PERSONA_FILES = [
   'soul.md',        // 人格核心 — 最重要，加载顺序第一
   'identity.md',    // 角色定位
+  // ★ 8-29 世界观底色（worldview-base-field）：跨世界之窗/独立人格/生活中心——
+  //   聊天 system prompt 与事件生成每轮注入的同一底色字段
+  'worldview.md',
   'system.md',      // 系统规则
   'talk_system.md', // 纯聊天规则
   '01_default.md',  // 默认风格
@@ -41,6 +44,16 @@ const FILE_META: Record<string, { content_type: 'text' | 'life_event' | 'image';
 function readPersonaFile(filename: string): string {
   try {
     return readFileSync(resolve(PERSONA_DIR, filename), 'utf-8').trim();
+  } catch {
+    return '';
+  }
+}
+
+/** ★ 8-29 世界观底色（worldview-base-field）：统一底色字段——聊天与事件生成同一数据源。
+ *  读 worldview.md；失败返回空串。 */
+export function readWorldviewBlock(): string {
+  try {
+    return readFileSync(resolve(PERSONA_DIR, 'worldview.md'), 'utf-8').trim();
   } catch {
     return '';
   }

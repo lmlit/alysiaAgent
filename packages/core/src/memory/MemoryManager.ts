@@ -13,6 +13,7 @@ import type { LifeEvent } from './stores/LifeStore.js';
 import { WorldbookMatcher } from './engines/WorldbookMatcher.js';
 import { PersonaAdapter } from './engines/PersonaAdapter.js';
 import { ProfileExtractor } from './engines/ProfileExtractor.js';
+import { readWorldviewBlock } from '../persona/loader.js';
 import { RealtimeProcessor } from './processors/RealtimeProcessor.js';
 import { SessionEndProcessor } from './processors/SessionEndProcessor.js';
 import { CronProcessor } from './processors/CronProcessor.js';
@@ -79,6 +80,8 @@ export class MemoryManager {
   private worldbookStore: WorldbookStore;
   private codeContextStore: CodeContextStore;
   private lifeStore: LifeStore;
+  /** ★ 8-29 世界观底色缓存（worldview-base-field） */
+  private _worldviewBlock: string = '';
   private worldbookMatcher: WorldbookMatcher;
   private personaAdapter: PersonaAdapter;
   private profileExtractor: ProfileExtractor;
@@ -349,6 +352,19 @@ export class MemoryManager {
   /** 更新 AI 实时状态（活动/心情/亲密度/moodValue/moodNote），亲密度由 LifeService 每小时推导后传入 */
   updateLifeState(partial: { currentActivity?: string; mood?: string; intimacy?: number; moodValue?: number; moodNote?: string }): void {
     this.lifeStore.updateState(partial);
+  }
+
+  /** ★ 8-29 世界观底色（worldview-base-field）：统一底色字段（跨世界之窗/独立人格/生活中心）——
+   *  聊天经 persona 文件注入,事件生成经此方法取同一数据源。缓存读取。 */
+  getWorldviewBlock(): string {
+    if (!this._worldviewBlock) {
+      try {
+        this._worldviewBlock = readWorldviewBlock();
+      } catch {
+        this._worldviewBlock = '';
+      }
+    }
+    return this._worldviewBlock;
   }
 
   /** ★ 8-29 聊天生活衔接（chat-life-continuity）：距上次生活事件 ≤30min →

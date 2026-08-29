@@ -295,3 +295,25 @@ describe('MemoryManager — 8-29 聊天生活衔接（chat-life-continuity）', 
     expect(mm.getLifeContinuityBlock()).toBe('');
   });
 });
+
+describe('MemoryManager — 8-29 世界观底色（worldview-base-field）', () => {
+  let db: Database.Database;
+  let mm: MemoryManager;
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    initializeDatabase(db);
+    const embedService = { embed: async () => [0], dimension: () => 1024 };
+    const llmService = { complete: async () => '{}' };
+    mm = new MemoryManager(db as any, null, embedService as any, llmService as any);
+  });
+
+  afterEach(() => db.close());
+
+  it('getWorldviewBlock 返回统一底色（跨世界之窗/独立生活）', () => {
+    const block = mm.getWorldviewBlock();
+    expect(block).toContain('跨世界之窗');
+    expect(block).toContain('独立');
+    expect(block.length).toBeGreaterThan(50);
+  });
+});

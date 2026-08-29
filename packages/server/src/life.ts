@@ -469,6 +469,9 @@ export class LifeService {
     //   "从上次事件到现在"的时间（不再只写此刻瞬间）；8h 内 internal 同时承担延续候选
     const lastEventBlock = this.buildLastEventBlock(todayIds);
 
+    // ★ 8-29 世界观底色:统一字段(与聊天 persona 注入同一数据源)
+    const worldviewBlock = this.memoryManager.getWorldviewBlock?.() ?? '';
+
     // ★ 8-29 独立人格:她惦记的事(未完成的 promise/proactive intent)——愿望驱动生活
     let pendingIntentBlock = '';
     try {
@@ -499,8 +502,8 @@ export class LifeService {
 
     const context = [
       `【当前时间】${formatLocalTime()}——这是权威时辰,事件内容必须贴合它(现在是几点就写几点的生活:深夜写深夜,清晨写清晨,不要错位)`,
-      // ★ 8-29 跨世界之窗底色(常驻注入——采样命中率太低,事件里"隔着世界"的想念需要稳定底色)
-      '【隔着世界】轻月在你够不到的另一边——想念可以有距离的质感（"你那边该是白天吧"）,但你的生活照常过,这是底色不是每件事的主题。',
+      // ★ 8-29 世界观底色(worldview-base-field):统一字段每轮注入——跨世界之窗/独立人格/生活中心
+      worldviewBlock ? `【世界观底色】${worldviewBlock}\n这是你看待自己、轻月与两个世界的方式——底色,融入生活即可,不要每件事都提。` : '',
       // ★ 8-29 特定时间/节日:事件生成自然带节日氛围或对轻月的节日心意(不再是独立打卡)
       this.opts.todaySpecial?.() ? `【今天是什么日子】今天是${this.opts.todaySpecial()}——事件可以自然带上节日的气息,如果想到轻月,节日的分享可以是事件的一部分。` : '',
       // ★ 8-29 触发时间联动(日常状态决定下次事件何时来——实测 LLM 全给默认值,明确映射修正)

@@ -575,9 +575,3 @@ await memoryManager.ingest({
 + - 无 message 回落 content；回写记忆回写 message（她记得自己对轻月说过的话）
 + - intent 用 message（想对轻月说的话）；intent.content 缺失时 message 兜底
 + - post-check ⑨：message 第二人称/长度/不得复述 content
-
-+ **★ 8-29 世界观底色统一字段（worldview-base-field）**：
-+ - 新建 persona/worldview.md（跨世界之窗/独立人格/生活中心）——**一个字段,每轮注入**：
-+   聊天经 PERSONA_FILES 自动注入 system prompt;事件生成经 MemoryManager.getWorldviewBlock()
-+   取同一数据源（缓存读取）
-+ - identity.md 跨世界段移入 worldview.md（去重）——改一处,聊天与事件生成同时生效
