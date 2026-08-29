@@ -22,7 +22,7 @@ export interface ServerConfig {
   telegram: { token: string };
   qq?: QQConfig;
   qq_official?: QQOfficialConfig;
-  server: { port: number; dataDir: string; workspaceDir: string };
+  server: { port: number; dataDir: string; workspaceDir: string; webuiToken?: string };
   features?: { codeMode?: boolean; shell?: boolean; filesystem?: boolean; streaming?: boolean };
   /** ★ 8-10 采样参数统一配置（7 槽位，缺省走 core DEFAULT_SAMPLING floor） */
   sampling?: DeepPartial<SamplingConfig>;
@@ -76,6 +76,8 @@ export function loadConfig(path: string): ServerConfig {
       port: data.server?.port ?? 6185,
       dataDir: data.server?.dataDir ?? './data',
       workspaceDir: data.server?.workspaceDir ?? './data/workspace',
+      // ★ 8-29 cr-p0-webui-auth：WebUI Bearer token（${ALYSIA_WEBUI_TOKEN} env 注入）
+      webuiToken: data.server?.webuiToken ?? '',
     },
     features: data.features ?? { codeMode: false },
     sampling: data.sampling ?? undefined,

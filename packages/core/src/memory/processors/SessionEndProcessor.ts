@@ -1,6 +1,7 @@
 // src/memory/processors/SessionEndProcessor.ts
 import type { MemoryEvent, Conversation } from '../types.js';
 import { PROCESSED_SUMMARY } from '../types.js';
+import { logger } from '../../utils/logger.js';
 import type { EventStore } from '../stores/EventStore.js';
 import type { ConversationStore } from '../stores/ConversationStore.js';
 import type { ProfileStore } from '../stores/ProfileStore.js';
@@ -147,7 +148,8 @@ export class SessionEndProcessor {
         key_decisions: parsed.key_decisions || [],
         character_perspective: typeof parsed.character_perspective === 'string' ? parsed.character_perspective.slice(0, 200) : '',
       };
-    } catch {
+    } catch (err: any) {
+      logger.warn(`[SessionEnd] summary LLM failed, using default: ${err.message}`);
       return defaultSummary;
     }
   }

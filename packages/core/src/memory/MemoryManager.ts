@@ -260,12 +260,21 @@ export class MemoryManager {
     return true;
   }
 
-  /** ★ 8-15 WebUI 会话删除（彻底）：清空该会话的事件流与摘要（用户主动删除,日志留痕） */
-  deleteSession(sessionId: string): boolean {
+  /** ★ 8-15 WebUI 会话删除（彻底）：清空该会话的事件流与摘要（用户主动删除,日志留痕）
+   *  ★ 8-29 cr-p0-delete-cleanup：同步清理向量——已删内容不再被 [相关记忆] 召回 */
+  async deleteSession(sessionId: string): Promise<boolean> {
     const origin = sessionId.startsWith('webui:private:') ? sessionId : `webui:private:${sessionId}`;
     const before = (this.db.prepare('SELECT COUNT(*) c FROM events WHERE session_id = ?').get(origin) as any)?.c ?? 0;
+    // 先取向量 id（SQLite 行删除后无法再查）
+    const evtIds = (this.db.prepare('SELECT id FROM events WHERE session_id = ?').all(origin) as any[]).map(r => r.id as string);
+    const convIds = (this.db.prepare('SELECT id FROM conversations WHERE session_id = ?').all(origin) as any[]).map(r => r.id as string);
     this.eventStore.deleteBySession(origin);
     this.conversationStore.deleteBySession(origin);
+    if (this.vectorStore) {
+      const results = await Promise.allSettled([...evtIds, ...convIds].map(id => this.vectorStore!.delete(id)));
+      const failed = results.filter(r => r.status === 'rejected').length;
+      if (failed > 0) logger.warn(`[Session] vector cleanup ${failed}/${evtIds.length + convIds.length} failed for ${origin}`);
+    }
     logger.info(`[Session] deleted ${origin} (${before} events)`);
     return true;
   }
@@ -508,7 +517,7 @@ export class MemoryManager {
           type: input.type,
           created_at: now,
         }))
-        .catch(() => { /* embedding failure is non-fatal */ });
+        .catch((err: any) => logger.warn(`[Life] event embed failed: ${err.message}`));
     }
     return id;
   }
@@ -764,8 +773,9 @@ export class MemoryManager {
         [...convResults, ...knowledgeResults, ...eventResults, ...lifeResults],
         knobs,
       ).slice(0, req.limit);
-    } catch {
+    } catch (err: any) {
       // Fallback: SQLite LIKE search when embed API fails
+      logger.warn(`[Memory] vector search failed, fallback to text search: ${err.message}`);
       // 知识库升级为搜 chunk 全文（之前只搜标题，几乎搜不到内容）
       retrieved = this.applyKnobsToRetrieved([
         ...this.conversationStore.searchByText(req.query, req.limit),
@@ -1070,7 +1080,9 @@ export class MemoryManager {
             doc_id: docId,
             chunk_index: i,
           });
-        } catch { /* embedding failure non-fatal */ }
+        } catch (err: any) {
+          logger.warn(`[Knowledge] chunk embed failed (${docId} #${i}): ${err.message}`);
+        }
       }
     }
 
@@ -1094,9 +1106,16 @@ export class MemoryManager {
     this.knowledgeStore.archive(docId);
   }
 
-  /** 彻底删除知识文档 + chunks */
-  deleteKnowledgeDoc(docId: string): void {
+  /** 彻底删除知识文档 + chunks（★ 8-29 cr-p0-delete-cleanup：同步清理向量） */
+  async deleteKnowledgeDoc(docId: string): Promise<void> {
+    // 先取 chunk ids（deleteDoc 后 chunks 表已清）
+    const chunkIds = (this.db.prepare('SELECT id FROM knowledge_chunks WHERE doc_id = ?').all(docId) as any[]).map(r => r.id as string);
     this.knowledgeStore.deleteDoc(docId);
+    if (this.vectorStore) {
+      const results = await Promise.allSettled(chunkIds.map(id => this.vectorStore!.delete(id)));
+      const failed = results.filter(r => r.status === 'rejected').length;
+      if (failed > 0) logger.warn(`[Knowledge] vector cleanup ${failed}/${chunkIds.length} failed for doc ${docId}`);
+    }
   }
 
   // ===== ★ 角色系统（v3）=====

@@ -36,8 +36,31 @@ import { existsSync, readFileSync, statSync, writeFileSync, unlinkSync } from 'f
 import { basename, dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 
-export function createWebuiApp(core: AlysiaCore) {
+/** ★ 8-29 cr-p0-webui-auth：WebUI 管理面板鉴权选项
+ *  requireAuth=true（服务模式）：所有 /api/* 校验 `Authorization: Bearer <token>`，
+ *  缺失/错误 → 401；token 未配置 → 全拒（fail closed，杜绝零鉴权裸奔）。
+ *  requireAuth=false（桌面模式，绑 127.0.0.1）：免鉴权，保持本地工具体验。
+ *  /api/health 始终豁免——容器 healthcheck 无 token 可配。 */
+export interface WebuiAuthOptions {
+  webuiToken?: string;
+  requireAuth?: boolean;
+}
+
+export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
+  const { webuiToken = '', requireAuth = false } = opts;
   const app = Fastify({ logger: false });
+
+  // ★ 8-29 cr-p0-webui-auth：全局 auth 钩子（chat 路由 registerChatRoutes 同受保护）
+  if (requireAuth) {
+    app.addHook('onRequest', async (req: any, reply: any) => {
+      if (req.url === '/api/health') return; // 容器 healthcheck 豁免
+      const auth = String(req.headers.authorization ?? '');
+      if (!webuiToken || auth !== `Bearer ${webuiToken}`) {
+        return reply.code(401).send({ error: 'unauthorized' });
+      }
+    });
+  }
+
   // ★ 8-15 WebUI 聊天端点（webui-chat-endpoints）：prompt/stream/messages/pending
   registerChatRoutes(app, core);
 
@@ -132,7 +155,7 @@ export function createWebuiApp(core: AlysiaCore) {
     if (!String(id).startsWith('webui:')) {
       return reply.code(403).send({ ok: false, error: 'QQ 会话不可删除' });
     }
-    core.memoryManager.deleteSession(id);
+    await core.memoryManager.deleteSession(id);
     return { ok: true };
   });
 
@@ -207,7 +230,7 @@ export function createWebuiApp(core: AlysiaCore) {
   });
 
   app.delete('/api/knowledge/:id', async (req) => {
-    core.memoryManager.deleteKnowledgeDoc((req.params as any).id);
+    await core.memoryManager.deleteKnowledgeDoc((req.params as any).id);
     return { ok: true };
   });
 

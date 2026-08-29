@@ -1,7 +1,7 @@
 import * as PIXI from "pixi.js";
 import { Live2DModel } from "pixi-live2d-display/cubism4";
 import type { HitAreaDef } from "./interaction";
-import { type Live2DTarget } from "../../shared/live2d-actions";
+import { type Live2DTarget } from "./actions";
 
 export type { HitAreaDef } from "./interaction";
 

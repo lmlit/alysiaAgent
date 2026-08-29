@@ -5,6 +5,10 @@
 > 目标: 为 WebUI 管理面板（Fastify + Vue）提供完整的后端接口清单
 > ★ 约束: **后续开发服务端功能时，新增/修改 core 方法必须先对照本文档**，
 >   确保不破坏 Web 端接口契约，避免 Web 端开发时返工回归。
+> ★ 鉴权（2026-08-29, cr-p0-webui-auth）: 服务模式下所有 `/api/*` 需
+>   `Authorization: Bearer <server.webuiToken>`（`/api/health` 豁免，桌面模式免鉴权）。
+>   前端: `setWebuiToken(token)` 存 localStorage 后自动附加；401 → 登录遮罩。
+>   契约见 `openspec/specs/server-hardening/spec.md` §6。
 
 ## 0. 服务端开发约束（必读）
 

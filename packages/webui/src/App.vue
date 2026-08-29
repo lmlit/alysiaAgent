@@ -8,10 +8,21 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useAppStore, THEMES } from './stores/app';
 import { modules } from './modules';
-import { Heart, Sparkle, Clapperboard, Minus, X } from 'lucide-vue-next';
+import { setWebuiToken } from './api/client';
+import { Heart, Sparkle, Clapperboard, Minus, X, KeyRound } from 'lucide-vue-next';
 
 const app = useAppStore();
 const online = ref(false);
+// ★ 8-29 cr-p0-webui-auth：服务模式 401 → 登录遮罩（token 存 localStorage 后重载）
+const locked = ref(false);
+const tokenInput = ref('');
+
+function submitToken() {
+  const t = tokenInput.value.trim();
+  if (!t) return;
+  setWebuiToken(t);
+  location.reload();
+}
 const dockOpen = ref(false);
 /** ★ 昔涟形象位:GET /api/portrait(服务端 data/portrait.<ext>),hover 可图形化更换 */
 const portraitSrc = ref('');
@@ -121,6 +132,8 @@ const shellClass = computed(() => ({
 let pingTimer: ReturnType<typeof setInterval> | null = null;
 
 onMounted(() => {
+  // ★ 8-29 cr-p0-webui-auth：无 token 探测 /api/stats → 401 即锁定（health 豁免不探测）
+  fetch('/api/stats').then(r => { if (r.status === 401) locked.value = true; }).catch(() => {});
   fetch('/api/portrait', { method: 'HEAD' })
     .then(r => { if (r.ok) portraitSrc.value = '/api/portrait?v=' + Date.now(); })
     .catch(() => {});
@@ -137,6 +150,16 @@ onUnmounted(() => {
 </script>
 
 <template>
+  <!-- ★ 8-29 cr-p0-webui-auth：登录遮罩 -->
+  <div v-if="locked" class="auth-lock">
+    <form class="auth-card" @submit.prevent="submitToken">
+      <KeyRound :size="22" stroke-width="1.8" class="auth-icon" />
+      <h2>输入访问口令</h2>
+      <p class="auth-hint">管理面板已启用鉴权，请输入 server.webuiToken（ALYSIA_WEBUI_TOKEN）</p>
+      <input v-model="tokenInput" type="password" class="auth-input" placeholder="Bearer token" autofocus />
+      <button type="submit" class="auth-btn">解锁</button>
+    </form>
+  </div>
   <div class="shell" :class="shellClass">
     <!-- ★ Dock 侧栏:56px 图标条,悬停展开;聊天页收起 -->
     <aside class="dock" @mouseenter="dockOpen = true" @mouseleave="dockOpen = false">
@@ -370,5 +393,38 @@ onUnmounted(() => {
   position: relative; /* 聊天视图 absolute 填充锚点 */
   overflow-y: auto;
   padding: 24px 28px;
+}
+
+/* ★ 8-29 cr-p0-webui-auth：登录遮罩 */
+.auth-lock {
+  position: fixed; inset: 0; z-index: 999;
+  display: grid; place-items: center;
+  background: radial-gradient(1200px 800px at 30% 20%, rgba(236, 72, 153, 0.12), transparent),
+              var(--aw-bg);
+}
+.auth-card {
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+  width: 320px; padding: 28px 24px;
+  border-radius: var(--aw-radius-lg);
+  background: var(--aw-bg-raised);
+  border: 1px solid var(--aw-border-strong);
+  box-shadow: var(--aw-glow-soft);
+}
+.auth-icon { color: var(--aw-pink-2); }
+.auth-card h2 { margin: 0; font-size: var(--aw-fs-lg); color: var(--aw-text-strong); }
+.auth-hint { margin: 0; font-size: var(--aw-fs-xs); color: var(--aw-text-dim); text-align: center; }
+.auth-input {
+  width: 100%; padding: 9px 12px;
+  background: var(--aw-bg-input); color: var(--aw-text);
+  border: 1px solid var(--aw-border); border-radius: var(--aw-radius-sm);
+  font-family: inherit; font-size: var(--aw-fs-sm);
+}
+.auth-input:focus { outline: none; border-color: var(--aw-pink-2); }
+.auth-btn {
+  width: 100%; padding: 9px 0;
+  background: var(--aw-grad-brand); color: #fff;
+  border: none; border-radius: var(--aw-radius-sm);
+  font-family: inherit; font-size: var(--aw-fs-sm); font-weight: 600;
+  cursor: pointer;
 }
 </style>

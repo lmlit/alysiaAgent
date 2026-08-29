@@ -223,8 +223,47 @@ describe('MemoryManager', () => {
     const docs = manager.listKnowledgeDocs();
     expect(docs).toHaveLength(2);
 
-    manager.deleteKnowledgeDoc(docs[0].id);
+    await manager.deleteKnowledgeDoc(docs[0].id);
     expect(manager.listKnowledgeDocs()).toHaveLength(1);
+  });
+
+  // ★ 8-29 cr-p0-delete-cleanup：删除同步清向量——已删内容不再被召回
+  it('deleteKnowledgeDoc → 同步删除 chunks 向量', async () => {
+    const deleted: string[] = [];
+    const vectorStore: IVectorStore = {
+      insert: async () => {},
+      search: async () => [],
+      delete: async (id: string) => { deleted.push(id); },
+      count: async () => 0,
+    };
+    const mm = new MemoryManager(db, vectorStore, mockEmbed, mockLLM);
+    await mm.importKnowledge({ title: '文档A', content: '第一段内容。第二段内容。' });
+
+    const docs = mm.listKnowledgeDocs();
+    expect(docs).toHaveLength(1);
+    await mm.deleteKnowledgeDoc(docs[0].id);
+    expect(deleted.length).toBeGreaterThan(0);
+    expect(deleted.every(id => id.startsWith(`chunk_${docs[0].id}`))).toBe(true);
+  });
+
+  // ★ 8-29 cr-p0-delete-cleanup：会话删除同步清事件+摘要向量
+  it('deleteSession → 同步删除 events/conversations 向量', async () => {
+    const deleted: string[] = [];
+    const vectorStore: IVectorStore = {
+      insert: async () => {},
+      search: async () => [],
+      delete: async (id: string) => { deleted.push(id); },
+      count: async () => 0,
+    };
+    const mm = new MemoryManager(db, vectorStore, mockEmbed, mockLLM);
+    await mm.ingest({
+      id: 'evt-1', session_id: 'webui:private:u1', source: 'chat', type: 'message',
+      payload: { content: '你好', role: 'user' }, importance: 0.5,
+      created_at: new Date().toISOString(),
+    } as any);
+
+    await mm.deleteSession('u1');
+    expect(deleted).toContain('evt-1');
   });
 
   // ── v3 角色系统 ─────────────────────────────────────

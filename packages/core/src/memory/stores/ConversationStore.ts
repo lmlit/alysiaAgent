@@ -51,17 +51,17 @@ export class ConversationStore {
   }
 
   /** ★ 8-09 会话隔离：sessionId 可选——private 会话只取 private 摘要，group 只取同群。
-   *  不传则保持旧行为（全库最近）。 */
+   *  不传则保持旧行为（全库最近）。
+   *  ★ 8-29 修复（cr-p0-session-isolation）：完整 sessionId 精确匹配。
+   *  旧实现 group 分支 `LIKE '平台:group:%'` 会捞同平台所有群的摘要、private 分支
+   *  `LIKE '%:private:%'` 跨平台混入——群 A 的聊天内容会注入群 B 的 prompt。 */
   getRecent(limit: number, sessionId?: string): Conversation[] {
     let rows: Record<string, unknown>[];
     if (!sessionId) {
       rows = this.db.prepare('SELECT * FROM conversations ORDER BY started_at DESC LIMIT ?').all(limit) as Record<string, unknown>[];
-    } else if (sessionId.includes(':group:')) {
-      rows = this.db.prepare('SELECT * FROM conversations WHERE session_id LIKE ? ORDER BY started_at DESC LIMIT ?')
-        .all(`${sessionId.split(':group:')[0]}:group:%`, limit) as Record<string, unknown>[];
     } else {
-      rows = this.db.prepare("SELECT * FROM conversations WHERE session_id LIKE '%:private:%' ORDER BY started_at DESC LIMIT ?")
-        .all(limit) as Record<string, unknown>[];
+      rows = this.db.prepare('SELECT * FROM conversations WHERE session_id = ? ORDER BY started_at DESC LIMIT ?')
+        .all(sessionId, limit) as Record<string, unknown>[];
     }
     return rows.map(r => this.rowToConv(r));
   }

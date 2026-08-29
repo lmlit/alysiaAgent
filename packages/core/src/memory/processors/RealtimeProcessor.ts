@@ -1,6 +1,7 @@
 // src/memory/processors/RealtimeProcessor.ts
 import type { MemoryEvent } from '../types.js';
 import { PROCESSED_PROFILE, PROCESSED_PERSONA, PROCESSED_KNOWLEDGE } from '../types.js';
+import { logger } from '../../utils/logger.js';
 import type { EventStore } from '../stores/EventStore.js';
 import type { ProfileStore } from '../stores/ProfileStore.js';
 import type { WorldbookMatcher } from '../engines/WorldbookMatcher.js';
@@ -90,8 +91,9 @@ export class RealtimeProcessor {
           session_id: event.session_id,
           created_at: event.created_at,
         });
-      } catch {
+      } catch (err: any) {
         // Embedding failure is non-fatal — continue processing
+        logger.warn(`[Realtime] embed failed (${event.id.slice(0, 24)}): ${err.message}`);
       }
     }
 

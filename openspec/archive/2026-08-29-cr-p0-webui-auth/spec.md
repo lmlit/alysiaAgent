@@ -91,19 +91,3 @@ migrated: 2026-08-07
 - **healthcheck IPv4**（8-08）：compose healthcheck 必须用 `127.0.0.1` 而非
   `localhost`——alpine busybox 将 localhost 解析为 IPv6 `::1`，服务只监听 IPv4
   `0.0.0.0` → 恒 refused → 容器恒 unhealthy（实测 FailingStreak 1238）
-
-## 6. WebUI 鉴权（2026-08-29，change: cr-p0-webui-auth）
-
-WebUI 管理面板零鉴权绑 0.0.0.0 是 P0 隐私风险（公网部署下任意设备可读画像/会话、
-删数据、经 /api/chat/stream 烧 LLM 额度）：
-
-- **服务模式强制鉴权**：所有 `/api/*` 校验 `Authorization: Bearer <token>`，
-  缺失/错误 → 401。chat 路由（registerChatRoutes）同受全局钩子保护
-- **token 来源**：config.yml `server.webuiToken: "${ALYSIA_WEBUI_TOKEN}"`
-  （env 注入，与 ownerId 同机制）；compose environment 必须透传 ALYSIA_WEBUI_TOKEN
-- **fail closed**：服务模式未配置 token → 全部拒绝（401）+ 启动 logger.warn 提示配置
-  ——杜绝零鉴权裸奔
-- **桌面模式**（ALYSIA_DESKTOP=1）：绑 127.0.0.1 + 免鉴权（本地工具体验不变）
-- **/api/health 豁免**：容器 healthcheck 无 token 可配（compose healthcheck 不受影响）
-- **前端**：localStorage `webui_token` 附加 Authorization 头；401 → 登录遮罩
-  （输入 token 后重载）；静态资源不鉴权（SPA 壳可加载，数据保护点在 API）

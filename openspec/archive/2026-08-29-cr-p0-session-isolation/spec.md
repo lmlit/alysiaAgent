@@ -523,19 +523,6 @@ active fact 永久固化（valid_until=null）→ `getUserActivitySummary` 按 c
 
 EventStore 新增 getActiveSessions(since)；构造签名加 vectorStore 参数。
 
-### 5.5 CR 修复（2026-08-29，change: cr-p0-session-isolation / cr-p0-delete-cleanup）
-
-1. **会话摘要精确隔离**：ConversationStore.getRecent(limit, sessionId) 按**完整 sessionId
-   精确匹配**（`session_id = ?`），不再按平台前缀 LIKE——旧实现 group 分支
-   `LIKE '平台:group:%'` 会捞同平台所有群的摘要、private 分支 `LIKE '%:private:%'`
-   跨平台混入（群 A 的聊天内容注入群 B 的 prompt）。EventStore 本就用 `=` 精确匹配，无同类问题。
-2. **删除同步清向量**：deleteSession / deleteKnowledgeDoc 在删 SQLite 行后同步调用
-   `vectorStore.delete(id)`（先取 id 再删，行删除后无法反查）；向量删除失败 warn 不阻断
-   （日志可见，可后续重建）。已删内容不再被 [相关记忆] 召回。
-3. **空 catch 补日志**（不静默吞错）：SessionEndProcessor 摘要失败 / RealtimeProcessor
-   与 recordLifeEvent 的 embed 失败 / MemoryManager 向量检索失败降级文本 / importKnowledge
-   chunk embed 失败——全部 `logger.warn(上下文 + err.message)`。
-
 ## 6. 完整数据流
 
 ### 读路径

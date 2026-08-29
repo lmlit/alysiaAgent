@@ -15,10 +15,26 @@ export class ApiError extends Error {
   }
 }
 
+// ★ 8-29 cr-p0-webui-auth：Bearer token 持久化（localStorage）
+const TOKEN_KEY = 'webui_token';
+export function getWebuiToken(): string {
+  try { return localStorage.getItem(TOKEN_KEY) ?? ''; } catch { return ''; }
+}
+export function setWebuiToken(token: string): void {
+  try {
+    if (token) localStorage.setItem(TOKEN_KEY, token);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch { /* private mode */ }
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const headers: Record<string, string> = {};
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
+  const token = getWebuiToken();
+  if (token) headers['Authorization'] = `Bearer ${token}`;
   const res = await fetch(path, {
     method,
-    headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+    headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
@@ -38,9 +54,12 @@ export function streamChat(
   onFrame: (frame: Record<string, unknown>) => void,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const token = getWebuiToken();
+    if (token) headers['Authorization'] = `Bearer ${token}`;
     fetch(path, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(body),
     })
       .then(async (res) => {

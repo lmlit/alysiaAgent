@@ -254,11 +254,16 @@ async function main() {
   process.once('SIGTERM', shutdown);
 
   // ★ WebUI 管理面板（Fastify 路由层，每条路由 = core 方法的真实调用方）
+  // ★ 8-29 cr-p0-webui-auth：服务模式强制鉴权（桌面模式绑 127.0.0.1 免鉴权）
   try {
     const { createWebuiApp } = await import('./webui/server.js');
-    const webui = createWebuiApp(core);
-    await webui.listen({ port: config.server.port, host: '0.0.0.0' });
+    const webuiToken = config.server.webuiToken ?? '';
+    const webui = createWebuiApp(core, { webuiToken, requireAuth: !IS_DESKTOP });
+    await webui.listen({ port: config.server.port, host: IS_DESKTOP ? '127.0.0.1' : '0.0.0.0' });
     logger.info(`WebUI on http://localhost:${config.server.port} (routes exercise all core methods)`);
+    if (!IS_DESKTOP && !webuiToken) {
+      logger.warn('[WebUI] ⚠️ 未配置 server.webuiToken（config.yml 或 ALYSIA_WEBUI_TOKEN 环境变量）——/api/* 已全部拒绝(401)。配置后重启生效');
+    }
   } catch (err: any) {
     logger.error('WebUI init failed:', err.message);
   }
