@@ -23,6 +23,8 @@ services:
       - EMBED_BASE_URL=https://open.bigmodel.cn/api/paas/v4
       - EMBED_API_KEY=${EMBED_API_KEY}
       - EMBED_MODEL=embedding-2
+      # ★ 8-30 cr-p0-webui-auth：WebUI 鉴权 token 透传（缺失 → /api/* 全 401 fail closed）
+      - ALYSIA_WEBUI_TOKEN=${ALYSIA_WEBUI_TOKEN}
     volumes:
       - ./data:/app/data        # 数据库、日志、LanceDB 持久化
       - ./config.yml:/app/config.yml:ro
