@@ -365,7 +365,10 @@ export class MemoryManager {
 
   /** ★ 8-29 世界观底色（worldview-base-field）：统一底色字段（跨世界之窗/独立人格/生活中心）——
    *  聊天经 persona 文件注入,事件生成经此方法取同一数据源。缓存读取。 */
-  getWorldviewBlock(): string {
+  /** ★ 8-29 世界观底色；★ 8-30 集中化（worldview-centralize）：按节提取——
+   *  'all' 全文（life.ts 事件注入用）/ 'window' 跨世界之窗节 / 'life' 独立生活+生活中心节
+   *  （llm-agent 聊天强化块用）。唯一数据源 persona/worldview.md,修改只改那里。 */
+  getWorldviewBlock(section: 'all' | 'window' | 'life' = 'all'): string {
     if (!this._worldviewBlock) {
       try {
         this._worldviewBlock = readWorldviewBlock();
@@ -373,7 +376,16 @@ export class MemoryManager {
         this._worldviewBlock = '';
       }
     }
-    return this._worldviewBlock;
+    if (section === 'all') return this._worldviewBlock;
+    // 按 `## ` 分节提取（节内含使用引导行）
+    const sectionOf = (title: string): string => {
+      const re = new RegExp(`## ${title}[\\s\\S]*?(?=\\n## |$)`);
+      const m = this._worldviewBlock.match(re);
+      return m ? m[0].trim() : '';
+    };
+    if (section === 'window') return sectionOf('跨世界之窗');
+    // 'life'：独立的生活 + 生活是中心
+    return [sectionOf('独立的生活'), sectionOf('生活是中心')].filter(Boolean).join('\n\n');
   }
 
   /** ★ 8-29 聊天生活衔接（chat-life-continuity）：距上次生活事件 ≤30min →

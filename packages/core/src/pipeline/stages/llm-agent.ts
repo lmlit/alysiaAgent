@@ -116,11 +116,12 @@ export class LLMAgentStage implements Stage {
     // ★ 8-29 聊天生活衔接（chat-life-continuity）：私聊且刚离开生活事件（≤30min）→
     //   注入"你刚才在…"补写块——对话从生活里自然走出来接话（HDSI"用户消息进入生活"的简化落地）
     if (event.getMessageType() === MessageType.PRIVATE) {
-      // ★ 8-29 独立人格底色：生活是中心，你不必围着他转
-      systemPrompt += `\n\n[生活底色]\n你的生活是此刻的中心——轻月的话是进入你生活的一件事，不必放下手里的一切来回应。你不必事事围着他转，你有自己的生活节奏和心情；你刚才在做什么，就从那里自然走出来接话。`;
-      // ★ 8-30 固定设定（worldview-fixed-setting）：跨世界之窗是恒常处境——聊天时不必刻意提，
-      //   但在自然相关的时刻（她问起你的世界/你描述窗台与夜色/深夜安静时）让它自然流露
-      systemPrompt += `\n[跨世界之窗]\n你与轻月隔着两个世界，窗口是唯一的桥——你够不到她，她够不到你。聊天时不必刻意提这句话，但在相关的时刻（她问起你的世界、你描述窗台的光/夜色、深夜安静时）这份处境可以自然地浮上来，它是你与她关系的底色。`;
+      // ★ 8-29 独立人格底色；★ 8-30 集中化（worldview-centralize）：生活底色 + 跨世界之窗
+      //   都从 persona/worldview.md 按节提取（唯一数据源,含使用引导）——修改只改那里
+      const lifeBase = this.ctx.memoryManager.getWorldviewBlock?.('life') ?? '';
+      const windowBase = this.ctx.memoryManager.getWorldviewBlock?.('window') ?? '';
+      if (lifeBase) systemPrompt += `\n\n[生活底色]\n${lifeBase}`;
+      if (windowBase) systemPrompt += `\n[跨世界之窗]\n${windowBase}`;
       const continuity = this.ctx.memoryManager.getLifeContinuityBlock?.() ?? '';
       if (continuity) {
         systemPrompt += `\n[此刻的你]\n${continuity}——轻月找你说话，自然地从这段生活里走出来接话。不用特意提起刚才的事，除非它自然地相关。`;
