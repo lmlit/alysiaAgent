@@ -1227,6 +1227,75 @@ describe('LifeService — 8-28 意图系统（ai-life-intent-system）', () => {
   });
 });
 
+describe('LifeService — 8-31 每日反思（life-reflection-loop）', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('跨天触发：生成反思 → adjustments 走 recordReflection + insight + reflection 入库', async () => {
+    freezeTime(23); // 本地 23:00
+    vi.spyOn(Math, 'random').mockReturnValue(0.1);
+    let ctx = '';
+    const recordReflection = vi.fn().mockReturnValue({ appliedAdjustments: 1, blockedAdjustments: 0, insightAdded: true, reflectionSaved: true });
+    const { memoryManager } = makeMocks({
+      listLifeEvents: vi.fn().mockReturnValue([
+        { id: 'life-1', content: '和轻月聊了聊', type: 'chat', createdAt: '2026-08-06T20:00:00' },
+      ]),
+      listLifeSummaries: vi.fn().mockReturnValue([{ date: '2026-08-05', summary: '画了一天的画' }]),
+      getPersonaSnapshot: vi.fn().mockReturnValue({ tone: { warmth: 0.5 }, speechStyle: {}, emotionalRange: {} }),
+      getLifeSnapshot: vi.fn().mockReturnValue({ currentActivity: '', mood: '', intimacy: 30, moodValue: 12, moodNote: '', updatedAt: '' }),
+      recordReflection,
+    });
+    const svc = new LifeService(memoryManager as any, {} as any, {
+      ownerOpenid: 'openid-1',
+      generateReflection: async (c: string) => { ctx = c; return '{"reflection":"今天和人聊天时,我发现自己其实很享受被需要的时刻","adjustments":[{"param":"tone.warmth","delta":0.03,"reason":"被需要的感觉很温暖"}],"insight":"我其实很享受被需要的时刻"}'; },
+    });
+    await svc.tick();
+    // context 含反思材料
+    expect(ctx).toContain('【今天的生活】');
+    expect(ctx).toContain('【当前人格参数】');
+    expect(ctx).toContain('mood_value: 12');
+    // 应用：adjustments + insight + reflection
+    expect(recordReflection).toHaveBeenCalledWith(expect.objectContaining({
+      reflection: '今天和人聊天时,我发现自己其实很享受被需要的时刻',
+      insight: '我其实很享受被需要的时刻',
+      adjustments: [{ param: 'tone.warmth', delta: 0.03, reason: '被需要的感觉很温暖' }],
+    }));
+    // 成功后置位冷却
+    expect((svc as any).state.reflectionDate).toBe('2026-08-06');
+  });
+
+  it('冷却：同一天不重复反思', async () => {
+    freezeTime(23);
+    const gen = vi.fn().mockResolvedValue('{"reflection":"x"}');
+    const { memoryManager } = makeMocks({ listLifeEvents: vi.fn().mockReturnValue([{ id: 'l1', content: 'a', type: 'internal', createdAt: '2026-08-06T10:00:00' }]) });
+    const svc = new LifeService(memoryManager as any, {} as any, { ownerOpenid: 'openid-1', generateReflection: gen });
+    (svc as any).state.reflectionDate = '2026-08-06'; // 今天已反思
+    await svc.tick();
+    expect(gen).not.toHaveBeenCalled();
+  });
+
+  it('失败不置位：LLM 抛错 → 下次 tick 重试', async () => {
+    freezeTime(23);
+    const gen = vi.fn().mockRejectedValue(new Error('LLM down'));
+    const { memoryManager } = makeMocks({ listLifeEvents: vi.fn().mockReturnValue([{ id: 'l1', content: 'a', type: 'internal', createdAt: '2026-08-06T10:00:00' }]) });
+    const svc = new LifeService(memoryManager as any, {} as any, { ownerOpenid: 'openid-1', generateReflection: gen });
+    await svc.tick();
+    expect((svc as any).state.reflectionDate).toBeNull(); // 未置位 → 可重试
+    expect(gen).toHaveBeenCalledTimes(1);
+  });
+
+  it('无反思材料（无事件无摘要）→ 跳过', async () => {
+    freezeTime(23);
+    const gen = vi.fn();
+    const { memoryManager } = makeMocks({ listLifeEvents: vi.fn().mockReturnValue([]), listLifeSummaries: vi.fn().mockReturnValue([]) });
+    const svc = new LifeService(memoryManager as any, {} as any, { ownerOpenid: 'openid-1', generateReflection: gen });
+    await svc.tick();
+    expect(gen).not.toHaveBeenCalled();
+  });
+});
+
 describe('LifeService — 8-29 事件/对话拆分（life-event-message-split）', () => {
   afterEach(() => {
     vi.useRealTimers();

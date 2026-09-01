@@ -280,6 +280,10 @@ export function initializeDatabase(db: Database.Database): void {
   try {
     db.exec(`ALTER TABLE persona ADD COLUMN overlay_notes TEXT NOT NULL DEFAULT '[]'`);
   } catch { /* column already exists */ }
+  // 8) ai_life_state.reflection（★ 8-31 每日反思闭环 life-reflection-loop：LLM 生成的行为反思）
+  try {
+    db.exec(`ALTER TABLE ai_life_state ADD COLUMN reflection TEXT DEFAULT ''`);
+  } catch { /* column already exists */ }
 
   // Seed default singleton rows
   const now = new Date().toISOString();

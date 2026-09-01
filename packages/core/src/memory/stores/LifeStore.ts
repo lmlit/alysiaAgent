@@ -24,6 +24,8 @@ export interface LifeState {
   moodValue: number;
   /** ★ 8-29 情绪侧端分析：深度阈值（|mv|≥30）后 LLM 生成的描述性氛围（"这段日子…"） */
   moodNote: string;
+  /** ★ 8-31 每日反思（life-reflection-loop）：LLM 生成的行为反思——她对自己的认识 */
+  reflection: string;
   lastEventId: string | null;
   updatedAt: string;
 }
@@ -55,12 +57,13 @@ export class LifeStore {
       intimacy: (row?.intimacy as number) ?? 30,
       moodValue: (row?.mood_value as number) ?? 0,
       moodNote: (row?.mood_note as string) ?? '',
+      reflection: (row?.reflection as string) ?? '',
       lastEventId: (row?.last_event_id as string) ?? null,
       updatedAt: (row?.updated_at as string) ?? '',
     };
   }
 
-  updateState(partial: { currentActivity?: string; mood?: string; intimacy?: number; moodValue?: number; moodNote?: string; lastEventId?: string }): void {
+  updateState(partial: { currentActivity?: string; mood?: string; intimacy?: number; moodValue?: number; moodNote?: string; reflection?: string; lastEventId?: string }): void {
     this.ensureState();
     const now = new Date().toISOString();
     const s = this.getState();
@@ -70,10 +73,11 @@ export class LifeStore {
       intimacy: partial.intimacy ?? s.intimacy,
       mood_value: partial.moodValue ?? s.moodValue,
       mood_note: partial.moodNote ?? s.moodNote,
+      reflection: partial.reflection ?? s.reflection,
       last_event_id: partial.lastEventId ?? s.lastEventId,
     };
-    this.db.prepare('UPDATE ai_life_state SET current_activity = ?, mood = ?, intimacy = ?, mood_value = ?, mood_note = ?, last_event_id = ?, updated_at = ? WHERE id = 1')
-      .run(cur.current_activity, cur.mood, cur.intimacy, cur.mood_value, cur.mood_note, cur.last_event_id, now);
+    this.db.prepare('UPDATE ai_life_state SET current_activity = ?, mood = ?, intimacy = ?, mood_value = ?, mood_note = ?, reflection = ?, last_event_id = ?, updated_at = ? WHERE id = 1')
+      .run(cur.current_activity, cur.mood, cur.intimacy, cur.mood_value, cur.mood_note, cur.reflection, cur.last_event_id, now);
   }
 
   addEvent(e: { id: string; createdAt: string; type: 'chat' | 'internal'; content: string; moodDelta?: string; referenceEventId?: string; wbEntryId?: string; delivered?: number; origin?: 'regular' | 'followup' }): void {

@@ -181,6 +181,22 @@ async function main() {
         });
         return resp.role === 'assistant' ? resp.completionText.trim() : '';
       },
+      // ★ 8-31 每日反思（life-reflection-loop）：她复盘自己的一天——L3 自修改执行器
+      generateReflection: async (context: string) => {
+        const resp = await core.providerManager.textChatWithFallback({
+          prompt: context,
+          sessionId: 'life-reflection',
+          systemPrompt: '你是昔涟，在夜深时复盘自己的一天。以第一人称回顾今天的生活与情绪，诚实地想：我是什么样的？哪些处理方式让我舒服/不舒服？有没有"下次不这样了"的念头？' +
+            '只输出 JSON: {"reflection": "一句话反思(30-60字,第一人称,平实不堆砌,可以温柔也可以坦白)", ' +
+            '"adjustments": [{"param": "tone.warmth|speech_style.emoji_usage|emotional_range.empathy 等", "delta": -0.05到0.05, "reason": "为什么这样调整(10-30字)"}], ' +
+            '"insight": "我悟到的一个关于自己的事实(可选,20-50字,如\'我其实很享受被需要的时刻\')"}。' +
+            'adjustments 最多 3 条,只在你真的感到变化时给,没有就不给([])；insight 没有就不给。诚实优先,不要为了输出而输出。',
+          responseFormat: 'json',
+          // 低温/忠（反思要真实,不要高采样率的发挥）
+          sampling: { ...DEFAULT_SAMPLING.life.generateSummary },
+        });
+        return resp.role === 'assistant' ? resp.completionText.trim() : '';
+      },
       // ★ 感知今天已发的问候/节日（ProactiveService），事件生成避免重复打扰
       todayProactive: () => proactive?.getTodayActivity() ?? '',
       // ★ 8-29 今天是什么日子（节日/节气 → 事件生成自然带氛围,不再独立打卡）

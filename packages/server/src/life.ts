@@ -36,6 +36,10 @@ export interface LifeOpts {
   /** ★ 8-29 情绪侧端分析（mood-side-analysis）：mood_value 深度阈值后生成描述性氛围
    *  （纯文本，"这段日子…"）。缺失则跳过（降级，mood_note 保持空）。 */
   generateMoodNote?: (context: string) => Promise<string>;
+  /** ★ 8-31 每日反思（life-reflection-loop）：LLM 生成行为反思 JSON
+   *  {"reflection": "...", "adjustments": [{"param","delta","reason"}], "insight": "..."}。
+   *  缺失则跳过反思（降级）。 */
+  generateReflection?: (context: string) => Promise<string>;
   /** ★ 今天已主动联系的内容（ProactiveService.getTodayActivity），
    *  注入事件生成器避免重复打扰（如问候后生成"早上好"类事件）。 */
   todayProactive?: () => string;
@@ -54,12 +58,14 @@ interface LifeState {
   chatPushesToday: number;
   /** ★ 8-29 情绪侧端分析：上次生成 mood_note 的时间（冷却 6h） */
   moodNoteAnalyzedAt: number;
+  /** ★ 8-31 每日反思（life-reflection-loop）：上次反思的日期 key（跨天触发,失败不置位可重试） */
+  reflectionDate: string | null;
 }
 
 export class LifeService {
   /** ★ 8-09 事件驱动调度：setInterval 每小时 → nextEventAt 精确到点（事件内容决定间隔） */
   private eventTimer: ReturnType<typeof setTimeout> | null = null;
-  private state: LifeState = { lastProactiveAt: 0, lastSummaryDate: null, nextEventAt: 0, chatPushesToday: 0, moodNoteAnalyzedAt: 0 };
+  private state: LifeState = { lastProactiveAt: 0, lastSummaryDate: null, nextEventAt: 0, chatPushesToday: 0, moodNoteAnalyzedAt: 0, reflectionDate: null };
   /** ★ 8-09 停止标志：stop 后不排程（防重启竞态） */
   private stopped = false;
 
@@ -125,6 +131,7 @@ export class LifeService {
         nextEventAt: s.nextEventAt ?? 0,
         chatPushesToday: s.chatPushesToday ?? 0,
         moodNoteAnalyzedAt: s.moodNoteAnalyzedAt ?? 0,
+        reflectionDate: s.reflectionDate ?? null,
       };
     } catch { /* fresh start */ }
   }
@@ -146,6 +153,9 @@ export class LifeService {
 
     // 每日摘要生成（跨天检测——顺带重置今日 chat 推送计数）
     await this.maybeGenerateDailySummary(now);
+
+    // ★ 8-31 每日反思（life-reflection-loop）：跨天触发一次——她复盘自己的一天
+    await this.maybeDailyReflection(now);
 
     // 亲密度更新
     this.updateIntimacy();
@@ -919,6 +929,58 @@ export class LifeService {
       }
     } catch (err: any) {
       logger.warn(`[Life] daily summary failed: ${err.message}`);
+    }
+  }
+
+  // ── ★ 8-31 每日反思（life-reflection-loop）──────────────────────
+  //   L3 自修改执行器：她复盘自己的一天（事件流+情绪+当前人格）→ LLM 反思
+  //   → adjustments 走护栏调人格参数 / insight 进画像 / reflection 存 state。
+  //   冷却：跨天触发一次；失败不置位（次日重试）。
+
+  private async maybeDailyReflection(now: Date): Promise<void> {
+    const today = localDateKey(now);
+    if (this.state.reflectionDate === today) return;
+    if (!this.opts.generateReflection) return;
+
+    // 反思材料：近 24h 事件流 + 情绪 + 当前人格 + 近 3 天摘要
+    const events = this.memoryManager.listLifeEvents(1) as any[];
+    const snapshot = this.memoryManager.getLifeSnapshot?.() ?? {};
+    const persona = this.memoryManager.getPersonaSnapshot?.() ?? {};
+    const summaries = (this.memoryManager.listLifeSummaries?.(3) ?? [])
+      .map((s: any) => `- ${s.date}: ${s.summary}`).join('\n');
+    if (events.length === 0 && !summaries) return; // 一天什么都没有，没什么可反思的
+
+    const ctx = [
+      `【今天的生活】${events.slice(-8).map((e: any) => `- ${e.content.slice(0, 60)}`).join('\n') || '（今天还没有特别的事）'}`,
+      summaries ? `【近三天】${summaries}` : '',
+      `【情绪】mood_value: ${snapshot.moodValue ?? 0} / ${snapshot.moodNote || '（无氛围描述）'}`,
+      `【当前人格参数】tone: ${JSON.stringify(persona.tone ?? {})} / speech_style: ${JSON.stringify(persona.speechStyle ?? {})} / emotional_range: ${JSON.stringify(persona.emotionalRange ?? {})}`,
+      `【任务】以昔涟的视角回顾这一天——我是什么样的？哪些处理方式让我舒服/不舒服？有没有"下次不这样了"的念头？`,
+    ].filter(Boolean).join('\n');
+
+    try {
+      const text = ((await this.opts.generateReflection(ctx)) ?? '').replace(/^```(?:json)?\s*|\s*```$/g, '').trim();
+      if (!text) { logger.warn('[Reflection] empty response, will retry next day'); return; }
+      let parsed: any;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        // 裸文本容错：只有反思，无调整/洞察
+        parsed = { reflection: text };
+      }
+      const result = this.memoryManager.recordReflection?.({
+        reflection: String(parsed.reflection ?? '').trim(),
+        adjustments: Array.isArray(parsed.adjustments) ? parsed.adjustments : [],
+        insight: parsed.insight ? String(parsed.insight).trim() : undefined,
+      });
+      // 成功应用（至少反思/洞察/调整之一落地）→ 置位；LLM 失败保持未置位次日重试
+      if (result && (result.reflectionSaved || result.insightAdded || result.appliedAdjustments > 0)) {
+        this.state.reflectionDate = today;
+        this.saveState();
+      }
+      logger.info(`[Reflection] ${today}: ${String(parsed.reflection ?? '').slice(0, 60)}`);
+    } catch (err: any) {
+      logger.warn(`[Reflection] daily reflection failed: ${err.message}`);
     }
   }
 

@@ -925,6 +925,56 @@ export class MemoryManager {
     return { applied, newValue };
   }
 
+  /** ★ 8-31 每日反思闭环（life-reflection-loop）——L3 自修改执行器：
+   *   LLM 反思（今日事件流+情绪+当前人格）输出 adjustments/insight/reflection，
+   *   回写：adjustments 走 5 道护栏调人格参数（delta 钳制 ±0.05，反思是慢变量）、
+   *   insight 进画像 facts（冲突检测）、reflection 存 ai_life_state（WebUI 可读）。
+   *   @returns 各回写结果统计 */
+  recordReflection(input: { reflection: string; adjustments?: Array<{ param: string; delta: number; reason: string }>; insight?: string }): {
+    appliedAdjustments: number; blockedAdjustments: number; insightAdded: boolean; reflectionSaved: boolean;
+  } {
+    let appliedAdjustments = 0, blockedAdjustments = 0, insightAdded = false, reflectionSaved = false;
+
+    // ① 人格参数调整（护栏内，delta 钳制 ±0.05——反思比实时调整更保守）
+    const adjustments = (input.adjustments ?? []).slice(0, 3);
+    for (const adj of adjustments) {
+      if (!adj?.param || typeof adj.delta !== 'number' || !adj.reason?.trim()) {
+        blockedAdjustments++;
+        continue;
+      }
+      const clamped = Math.max(-0.05, Math.min(0.05, adj.delta));
+      const result = this.adjustPersona(adj.param, clamped, `反思: ${adj.reason.slice(0, 60)}`);
+      if (result.applied) appliedAdjustments++;
+      else blockedAdjustments++;
+    }
+
+    // ② 洞察进画像（inferred 来源，冲突检测由 addFacts 承担——user 声明不可被覆盖）
+    if (input.insight?.trim()) {
+      const now = new Date().toISOString();
+      insightAdded = this.profileStore.addFacts([{
+        fact: input.insight.trim().slice(0, 100),
+        confidence: 0.5,
+        evidence: `每日反思 ${now.slice(0, 10)}`,
+        source_event: `reflection-${now.slice(0, 10)}`,
+        updated_at: now,
+        source: 'inferred',
+        valid_from: now,
+        valid_until: null,
+        status: 'active',
+        category: 'preference',
+      }]).length > 0;
+    }
+
+    // ③ 反思文本存 ai_life_state（覆盖更新——只保留最新反思）
+    if (input.reflection?.trim()) {
+      this.lifeStore.updateState({ reflection: input.reflection.trim().slice(0, 300) });
+      reflectionSaved = true;
+    }
+
+    logger.info(`[Reflection] saved: ${appliedAdjustments} adj applied, ${blockedAdjustments} blocked, insight ${insightAdded ? '+' : '-'}, reflection ${reflectionSaved ? '+' : '-'}`);
+    return { appliedAdjustments, blockedAdjustments, insightAdded, reflectionSaved };
+  }
+
   /** ★ 手动触发画像提取（Web 端"提取画像"按钮）。
    *  对指定会话执行 SessionEnd 处理：对话摘要 + LLM 事实提取 + 合并入画像。
    *  返回本次提取到的 facts 数量。 */
