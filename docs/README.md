@@ -26,7 +26,8 @@
 | [Web-API-Design](Web-API-Design.md) | Web 端接口契约（★ 新增/修改 core 方法必须先对照） |
 | [Docker-Deployment](Docker-Deployment.md) | 服务端版本更新 SOP（部署流程） |
 | [CODE_REVIEW_FIX_PLAN](CODE_REVIEW_FIX_PLAN.md) | 代码自检问题清单与修复记录（2026-07-30） |
-| [CODE_REVIEW_FIX_PLAN-2026-08-29](CODE_REVIEW_FIX_PLAN-2026-08-29.md) | 8-29 全面 CR：P0-P3 共 38 项待修复清单 |
+| [CODE_REVIEW_FIX_PLAN-2026-08-29](CODE_REVIEW_FIX_PLAN-2026-08-29.md) | 8-29 全面 CR：P0-P3 共 38 项待修复清单（P0 三件套已修） |
+| [HANDOFF](HANDOFF.md) | ★ 会话转接文档（当前状态/待观察/环境速查） |
 
 ## 🗂 快速导航
 
