@@ -10,6 +10,7 @@ import { WorldbookStore } from './stores/WorldbookStore.js';
 import { CodeContextStore } from './stores/CodeContextStore.js';
 import { LifeStore } from './stores/LifeStore.js';
 import type { LifeEvent } from './stores/LifeStore.js';
+import { lifeEventImportance } from './importance.js';
 import { WorldbookMatcher } from './engines/WorldbookMatcher.js';
 import { PersonaAdapter } from './engines/PersonaAdapter.js';
 import { ProfileExtractor } from './engines/ProfileExtractor.js';
@@ -55,6 +56,12 @@ interface TokenStats {
 }
 
 const TOKEN_STATS_FILE = './data/token_stats.json';
+
+/** ★ 9-25 optimize-recall-pipeline：跨来源合并时的**路内相对保留比例**。
+ *  某条分数低于「该来源最佳 × 此系数」就丢掉。
+ *  用相对而非绝对，是因为不同来源的文本长度不同、绝对分不可比
+ *  （长文本与短查询的嵌入天然更远）—— 绝对阈值会把长文本来源整路误杀。 */
+const RELATIVE_KEEP = 0.7;
 
 function chunkText(text: string, size = KB_CHUNK_SIZE, overlap = KB_CHUNK_OVERLAP): string[] {
   if (text.length <= size) return [text];
@@ -523,11 +530,20 @@ export class MemoryManager {
     //   对话可召回"bot 自己做过的事"（与主提示词瘦身配对：瘦掉的细节检索兜底）。
     //   embed 失败不阻塞事件记录（沿用 RealtimeProcessor 模式）
     if (this.vectorStore) {
+      // ★ 9-25 wire-importance-signal：按**情绪强度**算重要性写进向量 metadata ——
+      //   `applyKnobsToRetrieved` 的 `importance > 阈值 → +0.15` 分支正是读这里，
+      //   接线前它永远读不到值（该分支从未执行）。
+      //   放 metadata 而非 `ai_life_events` 加列：召回读的就是 metadata，不需要改表。
+      const importance = lifeEventImportance({
+        moodDelta: input.moodDelta,
+        origin: input.origin,
+      });
       this.embedService.embed(input.content)
         .then(vector => this.vectorStore!.insert(id, vector, input.content, {
           source: 'life_event',
           type: input.type,
           created_at: now,
+          importance,
         }))
         .catch((err: any) => logger.warn(`[Life] event embed failed: ${err.message}`));
     }
@@ -759,7 +775,7 @@ export class MemoryManager {
       const retrieved = this.applyKnobsToRetrieved([
         ...this.conversationStore.searchByText(req.query, req.limit),
         ...this.knowledgeStore.searchChunksByText(req.query, Math.min(3, req.limit)),
-      ], knobs).slice(0, req.limit);
+      ], knobs).results.slice(0, req.limit);
 
       return {
         context: '',
@@ -771,6 +787,7 @@ export class MemoryManager {
 
     // Vector search
     let retrieved: SearchResult[] = [];
+    const recallStart = Date.now(); // ★ 9-25 观测：召回耗时（观测日志里报）
     try {
       const vector = await this.embedService.embed(req.query);
       // ★ 8-09 事件向量纳入检索：[相关记忆] 可捞回超 24h 的对话细节（含回写后的 AI 发言）
@@ -781,10 +798,43 @@ export class MemoryManager {
         this.eventStore.searchByVector(vector, Math.min(3, req.limit)),
         this.vectorStore.search(vector, Math.min(2, req.limit), { source: 'life_event' }),
       ]);
-      retrieved = this.applyKnobsToRetrieved(
-        [...convResults, ...knowledgeResults, ...eventResults, ...lifeResults],
+      // ★ 9-25 optimize-recall-pipeline：合并改为「保底配额 + 分数补位」，
+      //   不再 `[...四路] → 全局 sort → slice`。
+      //
+      //   原因：**路内排名可信，跨路比绝对分不可信**。不同来源的文本长度分布不同
+      //   （生活事件是 2-4 句长微叙事、聊天是短问句），长文本跟短查询的嵌入天然更远。
+      //   全局 sort 等于让"文本短的来源"系统性获胜 —— 实测 46 条 life_event
+      //   在 6 个话题里一条都进不了最终 5 条（全被 conversation 挤掉）。
+      //
+      //   现在：每路先保底 top-1（保证"她的生活""过往对话""知识"都有代表），
+      //   剩余名额按分数从所有候选里补。某路无候选则名额让给其他路。
+      const merged = this.mergeWithQuota(
+        [
+          // ★ 顺序有讲究：`type='chat'` 的生活事件在两个来源各存一份（见 mergeWithQuota 的注释）。
+          //   去重时**先到先得**，所以把 life_event 排前面 —— 让语义更具体的标签胜出，
+          //   否则同一段内容会被标成 'chat'，导致 perspective:'self' 视角过滤漏掉它。
+          { source: 'life_event', items: lifeResults },
+          { source: 'chat', items: eventResults },
+          { source: 'conversation', items: convResults },
+          { source: 'knowledge', items: knowledgeResults },
+        ],
         knobs,
-      ).slice(0, req.limit);
+        req.limit,
+      );
+      retrieved = merged.picked;
+
+      // ★ 9-25 tune-recall-with-runtime-data：**召回观测日志**（一召一行，info 级）。
+      //   目的：这些系数全是启发式拍的，要按运行数据调 —— 但调之前得先有数据。
+      //   这一行回答四个问题：各来源候选多少 / 被相对阈值丢了多少 /
+      //   最终选中分布 / 重要度加分触发几次。
+      //   ⚠️ 别改成 debug —— 生产跑 info，改了就等于没记（这正是本次补日志的原因）。
+      logger.info(
+        `[Recall] 候选 ${this.fmtCounts(merged.candidateCounts)}` +
+        ` → 过阈值 ${this.fmtCounts(merged.keptCounts)}` +
+        ` → 选中 ${this.fmtCounts(merged.pickedCounts)}` +
+        ` | 重要度加分×${merged.boosted}` +
+        ` | ${Date.now() - recallStart}ms`,
+      );
     } catch (err: any) {
       // Fallback: SQLite LIKE search when embed API fails
       logger.warn(`[Memory] vector search failed, fallback to text search: ${err.message}`);
@@ -792,7 +842,7 @@ export class MemoryManager {
       retrieved = this.applyKnobsToRetrieved([
         ...this.conversationStore.searchByText(req.query, req.limit),
         ...this.knowledgeStore.searchChunksByText(req.query, Math.min(3, req.limit)),
-      ], knobs).slice(0, req.limit);
+      ], knobs).results.slice(0, req.limit);
     }
 
     // ★ 8-28 视角过滤（memory-character-perspective）：'self'=只留生活事件（昔涟自己的生活）；
@@ -818,11 +868,17 @@ export class MemoryManager {
    *   （ageFactor = 1 − e^(−age/半衰期)，0~1；=0 念旧不罚）
    * - importance_threshold：importance > threshold 的结果加分优先（metadata.importance）
    * 知识库（无时间字段）天然不衰减；metadata 缺时间按最新处理（不罚）。
-   * 限制：服务端 ingest importance 恒 0——importance 加分待 importance 计算接入后自动生效。
+   *
+   * ★ 9-25 wire-importance-signal：importance 加分**已生效**（此前注入端恒 0、分支从未执行）。
+   *   返回 `boosted` 供观测日志统计实际触发率 —— 这是判断"重要性有没有真起作用"的关键指标。
    */
-  private applyKnobsToRetrieved(retrieved: SearchResult[], knobs: MemoryConfig): SearchResult[] {
+  private applyKnobsToRetrieved(
+    retrieved: SearchResult[],
+    knobs: MemoryConfig,
+  ): { results: SearchResult[]; boosted: number } {
     const now = Date.now();
     const halfLifeHours = 24 / Math.max(knobs.decay_rate, 0.05);
+    let boosted = 0;
     const scored = retrieved.map(r => {
       let score = r.score;
       // recency 衰减：metadata.created_at/updated_at（事件/会话向量带；知识无 → 不衰减）
@@ -834,14 +890,130 @@ export class MemoryManager {
           score = score * (1 - knobs.recency_weight * ageFactor * 0.5);
         }
       }
-      // importance 优先：metadata.importance > threshold → 加分（数据到位自动生效）
+      // importance 优先：metadata.importance > threshold → 加分
       const imp = r.metadata?.importance;
       if (typeof imp === 'number' && imp > knobs.importance_threshold) {
         score += 0.15;
+        boosted++;
       }
       return { ...r, score };
     });
-    return scored.sort((a, b) => b.score - a.score);
+    return { results: scored.sort((a, b) => b.score - a.score), boosted };
+  }
+
+  /**
+   * ★ 9-25 optimize-recall-pipeline：多来源合并 —— 保底配额 + 分数补位。
+   *
+   * 为什么不能简单 `[...各路] → sort → slice`：
+   *   **路内排名可信，跨路比绝对分不可信。** 不同来源的文本长度分布不同
+   *   （生活事件是 2-4 句长微叙事、聊天是短问句），长文本与短查询的嵌入天然更远。
+   *   全局 sort 等于让"文本短的来源"系统性获胜。实测：46 条 life_event 在 6 个话题里
+   *   一条都进不了最终 5 条（全被 conversation 挤掉），尽管它们路内排名第一。
+   *
+   * 策略：
+   *   1. 每路内部打分排序 + **相对阈值**（差于该路最佳 {@link RELATIVE_KEEP} 倍以上的丢掉）
+   *      —— 相对而非绝对，才不受"长文本分数天然低"的影响
+   *   2. **每路保底 top-1**（无候选则名额让给其他路）—— 保证"她的生活""过往对话"
+   *      "知识"都有代表
+   *   3. 剩余名额按分数从所有候选补
+   *
+   * 代价与取舍：limit=5 且四路都有候选时，会**固定注入 1 条生活事件**。
+   * 这是有意的 —— "她有自己的生活"是这套系统的核心，她的近况理应常在上下文里。
+   * 需要排除时走 `perspective: 'interaction'`（见 read() 的视角过滤）。
+   */
+  private mergeWithQuota(
+    groups: Array<{ source: string; items: SearchResult[] }>,
+    knobs: MemoryConfig,
+    limit: number,
+  ): {
+    picked: SearchResult[];
+    /** 各来源**原始候选**数（观测用） */
+    candidateCounts: Record<string, number>;
+    /** 各来源**过相对阈值后**保留数（观测用）—— 与候选的差 = 被阈值丢掉多少 */
+    keptCounts: Record<string, number>;
+    /** 各来源**最终选中**数（观测用） */
+    pickedCounts: Record<string, number>;
+    /** `importance > 阈值 → +0.15` 的命中次数（观测用；接线前该值恒为 0） */
+    boosted: number;
+  } {
+    const candidateCounts: Record<string, number> = {};
+    const keptCounts: Record<string, number> = {};
+    const pickedCounts: Record<string, number> = {};
+    let boosted = 0;
+
+    if (limit <= 0) {
+      return { picked: [], candidateCounts, keptCounts, pickedCounts, boosted };
+    }
+
+    const prepared = groups.map(g => {
+      candidateCounts[g.source] = g.items.length;
+      const { results: scored, boosted: b } = this.applyKnobsToRetrieved(g.items, knobs);
+      boosted += b;
+      if (scored.length === 0) {
+        keptCounts[g.source] = 0;
+        return { source: g.source, items: [] as SearchResult[] };
+      }
+      const floor = scored[0].score * RELATIVE_KEEP;
+      const kept = scored.filter(r => r.score >= floor);
+      keptCounts[g.source] = kept.length;
+      return { source: g.source, items: kept };
+    });
+
+    const picked: SearchResult[] = [];
+    const seenId = new Set<string>();
+    // ★ 文本去重：同一段内容会以**两个来源**各存一份 —— `type='chat'` 的生活事件
+    //   既被 recordLifeEvent 嵌成 life_event，又被推送后经 RealtimeProcessor 嵌成 chat。
+    //   实测 47 条 life_event 里 23 条在 chat 里也有一份。
+    //   **不去掉写入端的重复**：那两份语义不同（"她的生活" vs "她对你说的话"），
+    //   perspective 视角过滤（'self' / 'interaction'）正依赖这个区分。
+    //   只在最终选稿阶段按文本去重，避免同一句话占掉两个名额。
+    const seenText = new Set<string>();
+    const normalize = (t: string) => t.replace(/\s+/g, ' ').trim();
+
+    const take = (r: SearchResult | undefined): void => {
+      if (!r || seenId.has(r.id)) return;
+      const key = normalize(r.text);
+      if (key && seenText.has(key)) return;
+      picked.push(r);
+      seenId.add(r.id);
+      if (key) seenText.add(key);
+    };
+
+    // ② 保底 top-1
+    for (const g of prepared) take(g.items[0]);
+
+    // ③ 补位：所有剩余按分数降序
+    if (picked.length < limit) {
+      const rest = prepared
+        .flatMap(g => g.items)
+        .filter(r => !seenId.has(r.id))
+        .sort((a, b) => b.score - a.score);
+      for (const r of rest) {
+        if (picked.length >= limit) break;
+        take(r);
+      }
+    }
+
+    const final = picked.slice(0, limit);
+    for (const r of final) {
+      const src = String(r.metadata?.source ?? 'unknown');
+      pickedCounts[src] = (pickedCounts[src] ?? 0) + 1;
+    }
+    return { picked: final, candidateCounts, keptCounts, pickedCounts, boosted };
+  }
+
+  /** 观测日志用的紧凑计数格式：`conv=2 chat=3 life=1` */
+  private fmtCounts(counts: Record<string, number>): string {
+    const abbrev: Record<string, string> = {
+      conversation: 'conv',
+      knowledge: 'kn',
+      chat: 'chat',
+      life_event: 'life',
+    };
+    const parts = Object.entries(counts)
+      .filter(([, n]) => n > 0)
+      .map(([k, n]) => `${abbrev[k] ?? k}=${n}`);
+    return parts.length ? parts.join(' ') : '—';
   }
 
   /** @deprecated 请使用 assembleWithWorldbook()，它包含了 Worldbook 和 search results 的完整组装 */

@@ -109,7 +109,19 @@ export class LanceDBStore implements IVectorStore {
   async search(vector: number[], topK: number, filter?: Record<string, unknown>): Promise<SearchResult[]> {
     if (!(await this.ensureReady())) return [];
     try {
-      let query = this.table.vectorSearch(vector).limit(topK);
+      // ★ 9-25 optimize-recall-pipeline：显式用**余弦距离**（默认是 L2）。
+      //
+      //   原来用 L2 + `score = 1 - d` 是错的：单位向量下 L2 = √(2−2cos)，
+      //   于是 d=1（cos 仍有 0.5，明显相关）时 score 就被 clamp 成 0 ——
+      //   可用区间被砍掉一半，实测导致"长文本来源"（会话摘要/生活事件）分数全塌成 0、
+      //   全局排序失效、被合并顺序系统性饿死（46 条 life_event 一条都进不了最终 5 条）。
+      //
+      //   换 cosine 后 `1 - _distance` 直接就是余弦相似度，全区间有分辨力（实测
+      //   同一查询：L2 下 d=1.004 → 0.000，cosine 下 → 0.496）。
+      //
+      //   ⚠️ 若将来给本表建向量索引，索引训练用的距离度量必须也是 cosine，
+      //      否则结果无效（LanceDB 明确要求二者一致）。当前表无索引（暴力扫描），可自由选。
+      let query = this.table.vectorSearch(vector).distanceType('cosine').limit(topK);
 
       // Apply optional source filter (e.g. { source: 'knowledge' })
       if (filter?.source && typeof filter.source === 'string') {
@@ -121,7 +133,8 @@ export class LanceDBStore implements IVectorStore {
         .filter(r => r.id !== '__init__')
         .map(r => ({
           id: r.id as string,
-          // _distance: L2 distance (lower = more similar). Map to 0-1 score.
+          // _distance 现在是**余弦距离**（1 − cos，∈[0,2]，越小越相似），
+          // 所以 `1 − d` 即余弦相似度。理论上限 2 会给出负值，clamp 到 0。
           score: r._distance != null ? Math.max(0, 1 - (r._distance as number)) : 0.5,
           text: r.text as string,
           metadata: safeJsonParse(r.metadata_json as string | undefined, {}),

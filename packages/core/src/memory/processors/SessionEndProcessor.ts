@@ -62,6 +62,11 @@ export class SessionEndProcessor {
     // 2. Generate conversation summary via LLM
     const conversationSummary = await this.generateSummary(dialogue, sessionId);
 
+    // 2.5 ★ 9-25 wire-importance-signal：把 LLM 挑出的「重要时刻」回填到具体事件。
+    //     放在这里而不是最后：它只依赖 messageEvents 与 summary，越早回填，
+    //     后续步骤（画像提取）就能用上 importance。
+    await this.applyImportantMoments(conversationSummary.important_moments, messageEvents);
+
     // 3. Insert Conversation + embed vector
     const now = new Date().toISOString();
     const conv: Conversation = {
@@ -119,13 +124,22 @@ export class SessionEndProcessor {
   private async generateSummary(
     dialogue: string[],
     sessionId: string,
-  ): Promise<{ summary: string; participants: string[]; topics: string[]; key_decisions: string[]; character_perspective: string }> {
+  ): Promise<{
+    summary: string;
+    participants: string[];
+    topics: string[];
+    key_decisions: string[];
+    character_perspective: string;
+    /** ★ 9-25 wire-importance-signal：LLM 顺带指出这段对话里最重要的几处 */
+    important_moments: Array<{ quote: string; importance: number }>;
+  }> {
     const defaultSummary = {
       summary: `Session ${sessionId} summary`,
       participants: ['user', 'assistant'],
       topics: [] as string[],
       key_decisions: [] as string[],
       character_perspective: '',
+      important_moments: [] as Array<{ quote: string; importance: number }>,
     };
 
     if (dialogue.length === 0) return defaultSummary;
@@ -133,10 +147,16 @@ export class SessionEndProcessor {
     try {
       const conversationText = dialogue.join('\n');
       // ★ 8-28 角色视角（memory-character-perspective）：摘要同时总结昔涟的感受/变化
+      // ★ 9-25 importance：**复用这一次调用**顺带打分——不额外增加 LLM 成本。
+      //   要求返回原文摘句而不是编号：LLM 拿不到事件 id，只能靠文本匹配回填。
       const response = await this.llmService.complete(
         '你是一个会话总结器。请总结以下对话（[用户]/[昔涟] 标记发言者），提取关键主题和决定。' +
         '同时用一句话总结**昔涟**在这段对话中的感受或变化（角色视角，如"昔涟聊到雨时语气变得柔软"、"昔涟对游戏话题显得兴致勃勃"；没有明显情绪变化就留空字符串）。' +
-        '返回JSON格式: {"summary": "...", "participants": ["user", "assistant"], "topics": [...], "key_decisions": [...], "character_perspective": "..."}',
+        '另外挑出这段对话里**最值得长期记住的 1-3 处**（关系里程碑、承诺、重要偏好、情绪强烈的时刻），' +
+        '每处给一个**原文摘句**（10-40 字的连续原文片段，用于回定位）和 importance（0.7-0.95 的小数，越重要越高）。' +
+        '没有值得记的就返回空数组，不要硬凑。' +
+        '返回JSON格式: {"summary": "...", "participants": ["user", "assistant"], "topics": [...], "key_decisions": [...], "character_perspective": "...", ' +
+        '"important_moments": [{"quote": "原文摘句", "importance": 0.85}]}',
         conversationText,
       );
 
@@ -147,11 +167,84 @@ export class SessionEndProcessor {
         topics: parsed.topics || [],
         key_decisions: parsed.key_decisions || [],
         character_perspective: typeof parsed.character_perspective === 'string' ? parsed.character_perspective.slice(0, 200) : '',
+        important_moments: this.parseImportantMoments(parsed.important_moments),
       };
     } catch (err: any) {
       logger.warn(`[SessionEnd] summary LLM failed, using default: ${err.message}`);
       return defaultSummary;
     }
+  }
+
+  /** 解析并夹取 LLM 返回的 important_moments（形状不可信，逐项校验） */
+  private parseImportantMoments(
+    raw: unknown,
+  ): Array<{ quote: string; importance: number }> {
+    if (!Array.isArray(raw)) return [];
+    const out: Array<{ quote: string; importance: number }> = [];
+    // ★ 先逐项校验、**最后**才截 3 条 —— 若先截再校验，
+    //   LLM 多返回几条非法项时会把后面的合法项误伤掉（单测抓到过）。
+    for (const item of raw) {
+      const quote = typeof (item as any)?.quote === 'string' ? (item as any).quote.trim() : '';
+      const imp = Number((item as any)?.importance);
+      if (!quote || !Number.isFinite(imp)) continue;
+      out.push({ quote, importance: Math.min(1, Math.max(0, imp)) });
+    }
+    return out.slice(0, 3);
+  }
+
+  /**
+   * ★ 9-25 wire-importance-signal：把 LLM 挑出的「重要时刻」回填到具体事件上。
+   *
+   * 匹配方式：**原文摘句的子串包含**（双向：摘句含于消息，或消息含于摘句），
+   * 只在本次摘要覆盖的时间窗内的消息里找。LLM 拿不到事件 id，这是唯一可行路径。
+   *
+   * 匹配不上的**记日志不静默丢** —— LLM 可能改写了标点或加了省略号，
+   * 日志留着才能发现匹配率问题。
+   *
+   * 匹配上之后要**刷新向量 metadata**：召回读的是 `metadata.importance`，
+   * 而事件是实时嵌好的、那时 importance 还是 0。重新嵌入一次（每条一次，通常 1-3 条）。
+   */
+  private async applyImportantMoments(
+    moments: Array<{ quote: string; importance: number }>,
+    candidates: MemoryEvent[],
+  ): Promise<number> {
+    if (moments.length === 0) return 0;
+    let applied = 0;
+    for (const { quote, importance } of moments) {
+      const norm = (s: string) => s.replace(/\s+/g, '');
+      const q = norm(quote);
+      if (!q) continue;
+      const hit = candidates.find(e => {
+        const c = norm(String(e.payload?.content ?? ''));
+        return c && (c.includes(q) || q.includes(c));
+      });
+      if (!hit) {
+        logger.warn(`[SessionEnd] important_moment 未匹配到消息: "${quote.slice(0, 30)}"`);
+        continue;
+      }
+      this.eventStore.updateImportance(hit.id, importance);
+      // 刷新向量 metadata（召回读的是这里）
+      if (this.vectorStore) {
+        try {
+          const text = String(hit.payload?.content ?? '');
+          const vector = await this.embedService.embed(text);
+          await this.vectorStore.insert(hit.id, vector, text, {
+            source: hit.source,
+            type: hit.type,
+            session_id: hit.session_id,
+            created_at: hit.created_at,
+            importance,
+          });
+        } catch (err: any) {
+          logger.warn(`[SessionEnd] importance 回填向量失败 (${hit.id.slice(0, 20)}): ${err.message}`);
+        }
+      }
+      applied++;
+    }
+    if (applied > 0) {
+      logger.info(`[SessionEnd] important_moments 回填 ${applied}/${moments.length} 条`);
+    }
+    return applied;
   }
 
   /** @deprecated 所有事件 type 均为 'message'，不存在 'persona_change' 事件。

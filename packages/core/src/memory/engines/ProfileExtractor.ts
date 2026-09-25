@@ -38,6 +38,11 @@ const CATEGORY_SYNONYMS: Record<string, ProfileFact['category']> = {
   other: 'general',
 };
 
+/** ★ 9-25 wire-importance-signal：画像提取的重要性门槛（与 MemoryConfig.importance_threshold 默认一致） */
+const IMPORTANCE_FLOOR = 0.4;
+/** 过线事件少于此数时回退用全部（防止重要度稀疏饿死画像提取） */
+const MIN_SIGNIFICANT = 3;
+
 export class ProfileExtractor {
   constructor(private llm: ILLMService) {}
 
@@ -45,9 +50,13 @@ export class ProfileExtractor {
 
   /** ★ 8-28 双输出（memory-character-perspective）：用户事实 + 角色事实（昔涟自己的事） */
   async extract(events: MemoryEvent[]): Promise<{ facts: ProfileFact[]; characterFacts: ProfileFact[] }> {
-    // 服务端 ingest 不计算 importance（恒为 0），所以不过滤重要性。
-    // 是否值得提取由 LLM 自行判断（prompt 中已要求"不确定则不提取"）。
-    const significantEvents = events;
+    // ★ 9-25 wire-importance-signal：importance 接线后，启用原注释所写的过滤意图。
+    //   原来是 `const significantEvents = events;` —— 当时 importance 恒 0，过滤等于全杀。
+    //
+    //   安全下限：过滤后剩不足 MIN_SIGNIFICANT 条就**回退用全部**。
+    //   宁可多提一点噪音，也不能因重要度稀疏就让画像停止生长。
+    const byImportance = events.filter(e => (e.importance ?? 0) >= IMPORTANCE_FLOOR);
+    const significantEvents = byImportance.length >= MIN_SIGNIFICANT ? byImportance : events;
     const userMessages = significantEvents
       .filter(e => e.type === 'message')
       // 兼容两种 payload：新消息有 role 字段；旧消息凭 sender_id 判断

@@ -90,6 +90,11 @@ export class RealtimeProcessor {
           type: event.type,
           session_id: event.session_id,
           created_at: event.created_at,
+          // ★ 9-25 wire-importance-signal：之前漏了这个字段 ——
+          //   事件表里就算有 importance 也传不进向量 metadata，
+          //   而 `applyKnobsToRetrieved` 读的正是 `r.metadata.importance`。
+          //   （原先 `events.importance` 恒 0，所以没人发现这条链路是断的。）
+          importance: event.importance ?? 0,
         });
       } catch (err: any) {
         // Embedding failure is non-fatal — continue processing

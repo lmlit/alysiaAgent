@@ -330,36 +330,10 @@ query → Worldbook 先匹配 → query → embed API → 向量
 > 但 `重要性` 当前**没有数据来源**（见⑥），无法完整实现。
 > **待定**：补加权融合 vs 认可现状改 doc。
 
-**⑥ `importance` 已接线（2026-09-25, wire-importance-signal）**
-
-接线前：列存在、`EventStore` 读写它、`+0.15` 分支也在，但**四条写入路径没有一条写有效值**
-（唯一赋值是 `llm-agent.ts` 给她自己回复硬编码 `0.3`，且没进向量 metadata），
-实测分布 `0.3`(481)/`0`(445)，分支从未执行。
-
-**信号来源（用户拍板）**：
-
-| 对象 | 信号 | 算法 |
-|---|---|---|
-| **生活事件** | **情绪强度** | `memory/importance.ts`：基线 0.3 + 情绪加成 0~0.4（`moodDelta` → 强度），`origin='followup'` ×0.8 |
-| **对话消息** | **摘要时 LLM 顺带打分** | `SessionEndProcessor` 的同一次摘要调用多要 `important_moments[{quote, importance}]`，按**原文摘句子串**匹配回事件 |
-
-生活事件的 `moodDelta` **取的是 arousal（唤醒度）而非 valence** ——
-"平静"与"雀跃"的差别是强度；负面情绪（难过/生气）同样值得记住，也给高值。
-
-实测取值：雀跃 0.66 / 平静 0.36 / 无标记 0.30 / 对话余波(+1) 0.56 ——
-相对默认阈值 **0.4** 有区分度（接线前恒 0，全无区分）。
-
-⚠️ 系数是**启发式**，全部提成具名常量（`LIFE_BASE` / `LIFE_EMOTION_MAX` / `FOLLOWUP_FACTOR`）
-便于调参。`mood_delta` 真实数据格式很乱（`+1`/`+0.001`/`平静`/`warm` 混用，数字尺度差三个数量级），
-本实现**不做尺度校准**（无基准可比），靠基线兜底。
-
-**写入侧**：`recordLifeEvent` 写进向量 metadata（`ai_life_events` 无此列，**不改表**）；
-`RealtimeProcessor` 补上了原先漏传的 `event.importance`。
-`SessionEndProcessor` 回填后**重新嵌入刷新向量 metadata**（召回读的是那里）。
-
-**消费侧**：`applyKnobsToRetrieved` 的 `importance > importance_threshold → +0.15`；
-`ProfileExtractor` 启用原 TODO 写明的过滤（带安全下限：过线不足 3 条则回退用全部，
-防止重要度稀疏饿死画像提取）。
+**⑥ `importance` 空转（已知缺陷）**：`+0.15` 分支**从未执行** ——
+四条写入路径（Realtime / SessionEnd / knowledge / recordLifeEvent）**没有一条写
+`metadata.importance`**。所以 `importance_threshold` 旋钮在召回侧等于不存在。
+修它需先定义"什么算重要"（产品语义决策；候选信号：生活事件的 `moodDelta`、消息的 `source`）。
 
 **⑦ `confirmation_bias` / `retention_bias` 未接线**：需要"记忆的情绪极性"与
 "与既有信念的冲突度"，当前数据里都没有。硬接会变成和 `importance` 一样的空转旋钮。

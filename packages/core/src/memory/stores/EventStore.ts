@@ -59,6 +59,13 @@ export class EventStore {
     ).run(flag, id);
   }
 
+  /** ★ 9-25 wire-importance-signal：回填重要性（SessionEnd 的 LLM 顺带打分）。
+   *  与 markProcessed 一样走 UPDATE，不重写整行（避免覆盖其他字段）。 */
+  updateImportance(id: string, importance: number): void {
+    this.db.prepare('UPDATE events SET importance = ? WHERE id = ?')
+      .run(Math.min(1, Math.max(0, importance)), id);
+  }
+
   getBySession(sessionId: string, limit?: number): MemoryEvent[] {
     const query = limit
       ? 'SELECT * FROM events WHERE session_id = ? ORDER BY created_at ASC LIMIT ?'

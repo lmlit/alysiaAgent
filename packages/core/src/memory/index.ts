@@ -1,5 +1,7 @@
 export { MemoryManager } from './MemoryManager.js';
 export type { RolePackage } from './MemoryManager.js';
+// ★ 9-25 wire-importance-signal：供回填脚本 scripts/backfill-life-importance.ts 复用同一套算法
+export { lifeEventImportance, moodDeltaToIntensity } from './importance.js';
 export { EventStore } from './stores/EventStore.js';
 export { ProfileStore } from './stores/ProfileStore.js';
 export { PersonaStore } from './stores/PersonaStore.js';
