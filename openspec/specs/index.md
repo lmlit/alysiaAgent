@@ -6,7 +6,7 @@
 
 | slug | 系统 | 状态 | 来源（旧文档） | 最后变更 |
 |------|------|------|----------------|----------|
-| memory-system | 记忆系统（7 store / 3 engine / 3 processor / 旋钮） | active | docs/superpowers/specs/2026-06-28-memory-system-design.md | 2026-08-29 CR 修复：会话隔离精确匹配/删除清向量/空 catch 补日志 |
+| memory-system | 记忆系统（7 store / 3 engine / 3 processor / 旋钮） | active | docs/superpowers/specs/2026-06-28-memory-system-design.md | 2026-09-25 凭据外置：sync-from-server.sh 移除硬编码服务器密码（公开仓库泄露 28 天后已轮换） |
 | alysia-architecture | 总体架构（monorepo / 双模式） | active | docs/superpowers/specs/2026-07-20-alysia-architecture-design.md | 2026-08-15 WebUI 聊天端点（on_chunk/on_done + prompt/stream/messages/pending）+ LLM 流式契约 |
 | pipeline-contract | Pipeline 契约 + 记忆修复 | frozen | docs/superpowers/specs/2026-07-30-pipeline-contract-and-memory-fix.md | 2026-08-07 迁移 |
 | server-desktop-separation | 服务端/桌面端分离 | frozen | docs/superpowers/specs/2026-07-30-server-desktop-separation.md | 2026-08-07 迁移 |

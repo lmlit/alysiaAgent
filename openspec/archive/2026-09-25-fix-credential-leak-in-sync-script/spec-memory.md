@@ -683,20 +683,20 @@ query → Worldbook 匹配 → embed API → LanceDB 向量检索
 要点：Node 24 运行（better-sqlite3 ABI）；导出脚本需放入容器 `/app/packages/core/`（require 解析）；
 触发方式为手动运行，不做定时。
 
-**★ 9-25 凭据外置（fix-credential-leak-in-sync-script）**：
-- 脚本**不得硬编码任何凭据**。2026-08-28 的提交 `05a2651` 曾把服务器 sudo 密码明文写在
-  脚本第 11 行（`SUDO_PASS="${SUDO_PASS:-<明文>}"`），并随公开仓库暴露 28 天（8-28 ~ 9-25）。
-  经核验该密码**同时是账号登录密码**（非独立 sudo 密码），危害链为
-  「读公开仓库 → SSH 登录 → sudo root → 读 .env 与全库」；9-25 已在服务器侧轮换作废。
-- 凭据来源优先级：环境变量 `SUDO_PASS` > `$HOME/.alysia-deploy-credentials` > 报错退出；
-  `ALYSIA_CRED_FILE` 可改凭据文件路径
-- 凭据文件**刻意放在仓库树之外**——树内文件离 `git add` 只有一步，gitignore 是「约定」不是「保证」
-  （`docs/Docker-Deployment.md` 自身即 gitignored 却仍是树内文件，同理不可放凭据）
-- 两者皆无 → **打印指引并 `exit 1`**，不回落默认值、不静默跳过（项目硬约束「不静默吞错」）
-- 凭据只存于**仓库树外**的本机文件与密码管理器，**永不进仓库**
-- 公开 git 历史**不改写**：密码已轮换 ⇒ 历史中留存的是死密码，改写收益为零而破坏所有既有克隆
-- 本 change 的范围仅「凭据外置」；pre-commit 凭据扫描（治「敏感内容进公开仓库」的习惯问题）
-  另开 change，不混在一起
++ **★ 9-25 凭据外置（fix-credential-leak-in-sync-script）**：
++ - 脚本**不得硬编码任何凭据**。2026-08-28 的提交 `05a2651` 曾把服务器 sudo 密码明文写在
++   脚本第 11 行（`SUDO_PASS="${SUDO_PASS:-<明文>}"`），并随公开仓库暴露 28 天（8-28 ~ 9-25）。
++   经核验该密码**同时是账号登录密码**（非独立 sudo 密码），危害链为
++   「读公开仓库 → SSH 登录 → sudo root → 读 .env 与全库」；9-25 已在服务器侧轮换作废。
++ - 凭据来源优先级：环境变量 `SUDO_PASS` > `$HOME/.alysia-deploy-credentials` > 报错退出；
++   `ALYSIA_CRED_FILE` 可改凭据文件路径
++ - 凭据文件**刻意放在仓库树之外**——树内文件离 `git add` 只有一步，gitignore 是「约定」不是「保证」
++   （`docs/Docker-Deployment.md` 自身即 gitignored 却仍是树内文件，同理不可放凭据）
++ - 两者皆无 → **打印指引并 `exit 1`**，不回落默认值、不静默跳过（项目硬约束「不静默吞错」）
++ - 凭据只存于**仓库树外**的本机文件与密码管理器，**永不进仓库**
++ - 公开 git 历史**不改写**：密码已轮换 ⇒ 历史中留存的是死密码，改写收益为零而破坏所有既有克隆
++ - 本 change 的范围仅「凭据外置」；pre-commit 凭据扫描（治「敏感内容进公开仓库」的习惯问题）
++   另开 change，不混在一起
 
 **★ 8-28 分类容错（profile-extractor-category-fix）**：
 - 根因：LLM 实测输出 location/interest/hobby 等自由词不遵循枚举 → 全回落 general（分类功能形同虚设）

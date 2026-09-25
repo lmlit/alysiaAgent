@@ -8,10 +8,25 @@
 set -euo pipefail
 
 SERVER="hexi@121.41.111.120"
-SUDO_PASS="${SUDO_PASS:-pws7OssEIClgVK1W}"
 CONTAINER="alysia-server"
-LOCAL_DATA_DIR="$(cd "$(dirname "$0")/.." && pwd)/data"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LOCAL_DATA_DIR="$(cd "$SCRIPT_DIR/.." && pwd)/data"
+
+# ★ 9-25 fix-credential-leak-in-sync-script：凭据**绝不硬编码**在仓库里。
+#   背景：提交 05a2651 曾把服务器密码明文写在上一行，随公开仓库暴露 28 天（8-28 ~ 9-25）。
+#   凭据文件刻意放在**仓库树之外**（$HOME）——树内的文件离 `git add` 只有一步，
+#   gitignore 只是「约定」不是「保证」；树外则是物理隔离。
+#   优先级：环境变量 SUDO_PASS > 凭据文件；两者皆无 → 响亮失败（不静默回落）。
+CRED_FILE="${ALYSIA_CRED_FILE:-$HOME/.alysia-deploy-credentials}"
+if [ -z "${SUDO_PASS:-}" ] && [ -f "$CRED_FILE" ]; then
+  SUDO_PASS="$(sed -n 's/^SUDO_PASS=//p' "$CRED_FILE" | head -1 | tr -d '\r')"
+fi
+if [ -z "${SUDO_PASS:-}" ]; then
+  echo "✗ 未提供服务器 sudo 密码（脚本不再有内置默认值）。" >&2
+  echo "  方式一: SUDO_PASS='<密码>' bash scripts/sync-from-server.sh" >&2
+  echo "  方式二: 写入 $CRED_FILE（仓库树之外；格式 SUDO_PASS=<密码>，不加引号）" >&2
+  exit 1
+fi
 
 echo "=== [1/6] 检查本地 6185 服务 ==="
 if netstat -ano 2>/dev/null | grep -q ":6185.*LISTENING"; then
