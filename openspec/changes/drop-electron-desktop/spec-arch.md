@@ -1,0 +1,777 @@
+---
+status: active
+source: docs/superpowers/specs/2026-07-20-alysia-architecture-design.md
+migrated: 2026-08-07
+---
+# Alysia 架构设计文档
+
+> 日期: 2026-07-20
+> 状态: 已确认
+> 项目: alysiaAgent
+> 参考: AstrBot (https://github.com/AstrBotDevs/AstrBot)
+
+---
+
+## 1. 概述
+
+### 1.1 定位
+
+Alysia 从"桌面 AI Agent"重新定位为**有记忆、有人格的 AI 伴侣**。砍掉 Coding/编程模式，聚焦聊天体验。
+
+架构上借鉴 AstrBot 的 Platform 抽象 + Pipeline 洋葱模型 + EventBus，用 TypeScript monorepo 实现一套核心逻辑驱动多个端（服务端 IM 适配器、Web 前端、dsh 插件）。
+（原文为"服务端、桌面端"——★ 9-25 Electron 桌面端已砍，见 `webui-system` §8）
+
+### 1.2 系统边界
+
+| 范围内 | 范围外 |
+|--------|--------|
+| Pipeline 洋葱模型消息处理 | Live2D 渲染（二期） |
+| Platform 抽象 + Telegram Adapter | 代码执行/Shell 沙箱 |
+| EventBus 事件总线 | ~~Electron 桌面壳（二期）~~ ★ 9-25 已砍（drop-electron-desktop） |
+| Agent Runner (tool-loop) | QQ/微信/Discord 平台（二期） |
+| 记忆系统接入 (6 Store) | 代码上下文 (CodeContextStore 已砍) |
+| 人格引擎 + 护栏 | |
+| Token 统计 | |
+| LLM Provider 抽象 | |
+| 知识库 RAG | |
+| 轻量工具 (搜索/提醒) | |
+| 会话管理命令 | |
+| Docker 部署 | |
+| WebUI 管理面板 | |
+
+### 1.3 技术选型
+
+| 组件 | 技术 | 理由 |
+|------|------|------|
+| 语言 | TypeScript (Node.js) | 现有记忆系统语言，Electron 兼容 |
+| 包管理 | pnpm workspace | monorepo 原生支持 |
+| Telegram SDK | telegraf | 最成熟的 Node.js Telegram Bot 框架 |
+| WebUI 后端 | Fastify | 高性能、TypeScript 友好 |
+| WebUI 前端 | Vue.js SPA | 轻量、现有经验 |
+| 定时任务 | node-cron | 轻量，MVP 够用 |
+| 部署 | Docker + compose | 一键部署 |
+| 数据库 | better-sqlite3 + LanceDB | ★ 现有，不改 |
+| LLM Provider | OpenAI 协议兼容 | ★ 现有双 provider 架构，扩展为多 provider |
+
+---
+
+## 2. 工程结构
+
+### 2.1 Monorepo 布局
+
+```
+alysia/
+├── packages/
+│   ├── core/                      # @alysia/core
+│   │   ├── src/
+│   │   │   ├── memory/            # ★ 现有代码，不动
+│   │   │   │   ├── types.ts
+│   │   │   │   ├── database.ts
+│   │   │   │   ├── MemoryManager.ts
+│   │   │   │   ├── PromptAssembler.ts
+│   │   │   │   ├── PIIFilter.ts
+│   │   │   │   ├── TokenBudget.ts
+│   │   │   │   ├── interfaces/
+│   │   │   │   ├── services/
+│   │   │   │   ├── stores/
+│   │   │   │   ├── engines/
+│   │   │   │   └── processors/
+│   │   │   ├── pipeline/          # 新增
+│   │   │   │   ├── types.ts       # Stage 接口 + PipelineContext
+│   │   │   │   ├── scheduler.ts   # PipelineScheduler (洋葱循环)
+│   │   │   │   ├── context.ts     # PipelineContext 实现
+│   │   │   │   └── stages/        # 内置 Stage 实现
+│   │   │   │       ├── pii-filter.ts
+│   │   │   │       ├── memory-ingest.ts
+│   │   │   │       ├── worldbook.ts
+│   │   │   │       ├── memory-retrieval.ts
+│   │   │   │       ├── llm-agent.ts
+│   │   │   │       └── respond.ts
+│   │   │   ├── platform/          # 新增
+│   │   │   │   ├── types.ts       # Platform / PlatformMetadata / MessageSession
+│   │   │   │   ├── event.ts       # MessageEvent 统一消息事件
+│   │   │   │   ├── message.ts     # Message / MessageComponent
+│   │   │   │   └── chain.ts       # MessageChain
+│   │   │   ├── eventbus/          # 新增
+│   │   │   │   └── EventBus.ts    # AsyncQueue + dispatch 循环
+│   │   │   ├── agent/             # 新增
+│   │   │   │   ├── runner.ts      # ToolLoopAgentRunner
+│   │   │   │   ├── context.ts     # 上下文管理 + 压缩
+│   │   │   │   └── hooks.ts       # Agent 生命周期钩子
+│   │   │   ├── provider/          # 新增 (扩展现有 services/)
+│   │   │   │   ├── types.ts       # Provider 抽象接口
+│   │   │   │   ├── openai.ts      # OpenAI 协议兼容 provider
+│   │   │   │   └── fallback.ts    # Provider 降级链
+│   │   │   ├── tools/             # 新增
+│   │   │   │   ├── registry.ts    # 工具注册表
+│   │   │   │   ├── web-search.ts  # 网页搜索
+│   │   │   │   └── reminder.ts    # 定时提醒
+│   │   │   └── index.ts           # AlysiaCore 统一入口
+│   │   └── package.json
+│   │
+│   ├── server/                    # @alysia/server
+│   │   ├── src/
+│   │   │   ├── adapters/
+│   │   │   │   ├── telegram.ts    # TelegramAdapter
+│   │   │   │   └── webchat.ts     # WebChatAdapter (WebUI 内嵌聊天)
+│   │   │   ├── webui/
+│   │   │   │   ├── server.ts      # Fastify 启动
+│   │   │   │   ├── api/           # REST API 路由
+│   │   │   │   └── dist/          # Vue.js SPA 静态文件
+│   │   │   ├── config.ts          # 配置加载
+│   │   │   └── bootstrap.ts       # 启动入口
+│   │   ├── Dockerfile
+│   │   ├── compose.yml
+│   │   └── package.json
+│   │
+│   (desktop/ 已于 2026-09-25 删除 — change: drop-electron-desktop)
+│
+├── pnpm-workspace.yaml
+└── tsconfig.json
+```
+
+### 2.2 策略：方案 A — 包装模式
+
+- **现有记忆系统代码零改动**，MemoryManager 接口保持不变
+- Pipeline Stage 作为薄包装层调用 MemoryManager
+- 130 个现有测试全部保留，新增 Pipeline/Agent 测试
+- Stage 接口设计时预留细粒度拆分扩展点
+
+---
+
+## 3. Core 四大接口
+
+### 3.1 Platform — 平台适配器
+
+```typescript
+interface Platform {
+  meta: PlatformMetadata;
+  run(): Promise<void>;
+  send(session: MessageSession, chain: MessageChain): Promise<void>;
+  terminate?(): Promise<void>;
+}
+
+interface PlatformMetadata {
+  name: string;           // 'telegram' | 'webchat' | 'electron-ipc'
+  description: string;
+  id: string;             // 唯一实例 ID (同类型可能多实例)
+}
+```
+
+每个 Platform 负责：
+- **收**：平台消息 → MessageEvent → `eventQueue.put(event)`
+- **发**：`send(session, chain)` → 平台 API 调用
+
+### 3.2 Stage — Pipeline 阶段（洋葱模型）
+
+```typescript
+interface Stage {
+  initialize(ctx: PipelineContext): Promise<void>;
+  process(event: MessageEvent): Promise<void> | AsyncGenerator<void, void, void>;
+  // 返回 Promise → 顺序执行
+  // 返回 AsyncGenerator → 洋葱嵌套 (yield = 内层执行完毕)
+}
+```
+
+`PipelineContext` 注入全局依赖：
+```typescript
+interface PipelineContext {
+  memoryManager: MemoryManager;
+  providerManager: ProviderManager;
+  toolRegistry: ToolRegistry;
+  config: AlysiaConfig;
+  sampling?: SamplingConfig;   // ★ 8-10：采样参数统一配置（DEFAULT + config.yml 深合并）
+}
+```
+
+### 3.2.1 采样参数统一配置（sampling-config-unify, 8-10）
+
+> 变更日志：2026-08-10 新增（change: sampling-config-unify，已归档）。
+
+temperature / top_p / presence_penalty / frequency_penalty / max_tokens **一处入口、按场景分槽**，
+禁止散落硬编码。
+
+**配置结构**（`config.yml` 的 `sampling:` 节，`packages/core/src/provider/sampling.ts` 定义类型与默认 floor）：
+
+```yaml
+sampling:
+  chat:        { temperature, top_p, presence_penalty, frequency_penalty, max_tokens }  # 主对话 ReAct（她的"嗓子"，与 persona/memory_config 语义聚团）
+  vision:      { describe }   # 图→描述，DEFAULT 0.1 / 200（低温/准）
+  life:        { generateEvent, generateSummary }   # DEFAULT 0.9 / 0.3（活 / 忠）
+  proactive:   { personalize } # DEFAULT 0.7 / 256
+  profile:     { extract }     # 事实提取，DEFAULT 0.1 / 1024（低温）
+  session:     { summary }     # 会话摘要，DEFAULT 0.3 / 512（低温）
+```
+
+**接缝约束（MUST）**：
+- 硬编码默认作 floor：`DEFAULT_SAMPLING` + `mergeSampling()` 深合并，config 缺省不报错、无 config 也能起
+- `chat` 槽默认空对象 = 不传参数（保持"走服务端默认"历史行为）；其他槽默认值见上
+- 所有采样参数必须经 `ProviderRequest.sampling` / `slotToBody()` 注入请求 body，
+  不得在 openai.ts / bridge.ts / life.ts / proactive.ts / engines 内硬编码
+- 记忆系统按场景绑定槽位：ProfileExtractor/PersonaAdapter/CronProcessor → `profile.extract`，
+  SessionEndProcessor → `session.summary`（MemoryManager 内 slotify 包装）
+- `ProviderRequest.sampling` 字段为 undefined 时 body 不带任何采样参数
+
+### 3.3 MessageEvent — 统一消息事件
+
+```typescript
+class MessageEvent {
+  messageStr: string;
+  messageObj: Message;
+  session: MessageSession;         // "telegram:group:chat-123"
+  platformMeta: PlatformMetadata;
+
+  // 统一查询 API
+  getSenderId(): string;
+  getSenderName(): string;
+  getMessageType(): MessageType;   // PRIVATE | GROUP
+  getGroupId(): string;
+  isStopped(): boolean;
+  stopEvent(): void;
+
+  // 数据携带
+  setExtra(key: string, value: unknown): void;
+  getExtra(key: string): unknown;
+
+  // 发送 + LLM 请求 (由 Platform 代理实现)
+  send(chain: MessageChain): Promise<void>;
+  requestLLM(prompt: string, opts?: LLMOptions): ProviderRequest;
+}
+```
+
+### 3.4 EventBus — 事件总线
+
+```typescript
+class EventBus {
+  private queue: AsyncQueue<MessageEvent>;
+  private schedulerMapping: Map<string, PipelineScheduler>;  // confId → scheduler
+
+  async dispatch(): Promise<void>;  // 无限循环取事件 → 路由 Pipeline
+}
+```
+
+核心逻辑：`dispatch()` 从 AsyncQueue 阻塞取事件，根据 `event.session` 路由到对应的 `PipelineScheduler`。单进程内用内存队列，未来可替换为 Redis Streams 支持多进程。
+
+### 3.5 输入合并 + 打断（input-coalescing-and-abort, 8-10）
+
+> 变更日志：2026-08-10 新增（change: input-coalescing-and-abort，已归档）；
+> 2026-08-10 修订（change: coalescer-immediate-flush，已归档）——窗口行为改为
+> "即时生成 + 打断累计"，取消固定 debounce 延迟；
+> 2026-08-10 修复（change: coalescer-abort-race-fix，已归档）——打断竞态：
+> fetch 已 resolve 但返回前被打断 → 结果必须丢弃（防双重回复）；
+> 2026-08-10 修复（change: eventbus-concurrent-private-dispatch，已归档）——
+> 根因修复：EventBus 串行调度导致打断合并永不触发 → 私聊并发 + 群聊串行；
+> 2026-08-10 修复（change: coalescer-merged-send-fix，已归档）——合并事件
+> 缺 send 回调 → 合并回复静默丢失（send 失败留痕 + abort 不误报 fallback）；
+> 2026-08-10 修复（change: coalescer-cancel-thinking，已归档）——合并时
+> 取消被合并消息的"思考中"timer（经 cancel_thinking extra 回调）；
+> 2026-08-12 修复（change: thinking-pool-first-person，已归档）——"思考中"
+> 文案池自称统一第一人称"人家"（禁止"昔涟"第三人称自称）。
+
+**背景**：每条入站消息触发一次 LLM 请求，用户连续分条发会并行触发多条回复，体验混乱。
+
+**实现**：Pipeline 内 `CoalescerStage`（memory-ingest 之后、worldbook 之前）——
+单点实现，全部适配器自动覆盖；依赖 scheduler 对 async generator "不 yield 直接 return
+则后续 stage 不执行" 的既有语义。
+
+```typescript
+class CoalescerStage {
+  // 桶: Map<sessionId, { events, capTimer }>  （按 session 分桶，禁止全局合并）
+  // 私聊: 首条消息【立即放行】触发生成（无窗口延迟，不等任何时间）
+  //       新消息到达时若在飞生成（回复未出）→ abort 打断 + 消息入桶累计
+  //       被打断生成结束（onGenerationAborted 回调）→ 立即 flush 合并事件重发
+  //       回复已出（无在飞）→ 新消息即独立首条，立即放行
+  // 兜底: capTimer 10s——仅防 onGenerationAborted 回调丢失时桶悬挂（正常路径不等待）
+  // 群聊: 不合并不打断（保持现状逐条回复）
+}
+```
+
+**核心时序**：消息1 立即生成 → 消息2 到达（回复未出）→ 打断 + 累计 → 消息1 生成
+被 abort 结束 → 即时 flush 合并事件 [消息1+消息2] 重发 → 消息3 到达（合并生成中）
+→ 再打断 → 合并事件 [消息1+消息2+消息3]……"没有回复就能累计"，直到回复真正出来。
+
+**EventBus 调度契约（MUST，eventbus-concurrent-private-dispatch）**：打断合并的
+前提是"消息 B 到达时 A 仍在生成"——EventBus 对**私聊事件必须并发 dispatch**
+（`scheduler.execute` 不 await，fire-and-forget）；**群聊事件保持串行**
+（await，逐条回复）。串行调度下 B 排队等 A 完成、isInFlight 恒 false → 合并
+空转（线上实测踩坑）。合并事件 flush 时 `put(event, {priority})` **插队到队首**
+（优先于排队中的其他消息，不乱序）。并发安全：各 stage 均无共享可变状态或
+better-sqlite3 同步写（WAL），无需锁。
+
+**接缝约束（MUST）**：
+- **按 session 分桶**：`Map<sessionId, {events}>`，key = sessionId，禁止全局合并
+- **首条立即放行**：无固定窗口延迟——窗口时长 = 大模型回复时间（回复出了新消息即独立请求；
+  回复没出就打断累计），10s 上限仅兜底
+- **EventLog 忠实**：每条原始消息照常走 pii-filter → memory-ingest（独立 ingest）；
+  合并事件带 `coalesced` 标记，pii-filter/memory-ingest 跳过（不双计合并文本）
+- **打断必须传到 fetch**：`AbortRegistry`（Map<sessionId, AbortController> +
+  `isInFlight`）——任何新消息到达即 `abort()` 旧 controller；llm-agent 取当前 signal →
+  runner 每步检查 → `ProviderRequest.signal` → openai.ts 组合进 fetch
+  （addEventListener + 60s timeout）。只调 `.abort()` 而 signal 没到 fetch = 假打断
+  （后端继续烧 token），禁止
+- **即时 flush 触发**：llm-agent 被打断分支必须回调 `onGenerationAborted(sessionId,
+  abortedEvent)`（携带被打断事件文本作合并基底），Coalescer 立即 flush 累计消息
+- **fallback 保护**：signal 已 abort 时 ProviderManager 不再切换 fallback provider
+- **非流式打断干净**：生成完成才发送；打断发生在 gen 阶段 = 未发任何内容，丢弃即可
+  （runner 返回 `aborted` 标记，llm-agent 不设 response_chain、不回写 EventLog）
+- **被打断就丢弃（MUST，coalescer-abort-race-fix）**：合并只合并输入请求，不合并
+  返回结果——被 abort 的生成结果【永不发送】。竞态兜底：fetch 已 resolve（响应完整
+  返回）但返回前才 abort 的场景，runner 组装 chain 前终检 `signal.aborted` → 同样
+  返回 aborted 丢弃文本；llm-agent 正常完成路径设 `response_chain` 前复查
+  controller.signal（双保险），命中则丢弃 + 触发合并。不变量：同一输入序列至多
+  产生一条回复（首条回复先发出则新消息独立放行；未发出则丢弃合并重发），
+  杜绝"回复 + 合并回复"双重发送
+- **图片预热**：适配器图片描述 fire-and-forget 挂 `pending_image_descs` extra；
+  flush 时 await 全部再拼 `[图片内容: <描述>]` 前置文本；合并事件不带图片组件
+  （DeepSeek 只看文字 + 描述，图文不阻塞）
+- **合并事件必须继承 send（MUST，coalescer-merged-send-fix）**：
+  `mergedEvent.send = base.send`（adapter 挂的实例字段闭包，捕获原消息 msg_id，
+  不依赖 this）——缺省时 RespondStage 调默认 send 抛
+  `'send() must be overridden by Platform adapter'` → 回复静默丢失（线上踩坑）。
+  原消息 msg_id 被动回复 5 分钟内有效，合并生成通常几秒到几十秒
+- **发送失败必须留痕**：RespondStage send 失败打 logger.error（禁止静默吞错）
+- **abort 不误报 fallback**：ProviderManager 在 provider err 响应后、打 fallback
+  WARN 前检查 `req.signal?.aborted` → 直接返回（abort 导致的 err 不算 provider 失败）
+- **合并取消冗余"思考中"（coalescer-cancel-thinking）**：adapter 在事件挂
+  `cancel_thinking` extra（clearTimeout thinkingTimer）；Coalescer 打断入桶时
+  调用——被合并的消息不再单独发"思考中"提示；**在途基底（合并事件源）的
+  timer 保留**（合并回复确实在途，提示语义正确）；flush 兜底路径统一取消
+
+---
+
+## 4. Pipeline 设计
+
+### 4.1 PipelineScheduler（约 60 行）
+
+```typescript
+class PipelineScheduler {
+  private stages: Stage[];
+
+  async execute(event: MessageEvent): Promise<void> {
+    await this.processStages(event, 0);
+  }
+
+  private async processStages(event: MessageEvent, from: number): Promise<void> {
+    for (let i = from; i < this.stages.length; i++) {
+      const result = this.stages[i].process(event);
+
+      if (isAsyncGenerator(result)) {
+        for await (const _ of result) {
+          if (event.isStopped()) break;
+          await this.processStages(event, i + 1);  // 递归 → 内层
+          if (event.isStopped()) break;
+        }
+      } else {
+        await result;
+        if (event.isStopped()) break;
+      }
+    }
+  }
+}
+```
+
+`isAsyncGenerator()` 判断：检查 `result[Symbol.asyncIterator]` 是否存在。
+
+### 4.2 MVP Pipeline 编排
+
+```
+Stage                 模式      职责
+──────────────────────────────────────────────────
+PIIFilterStage        async     脱敏手机号/身份证 → event.messageStr
+MemoryIngestStage     async     MemoryManager.ingest(event)
+                                → RealtimeProcessor (Worldbook + embed)
+                                → 群聊: NPC 跳过画像提取
+WorldbookStage        async     关键词匹配 → 注入世界书条目
+MemoryRetrievalStage  async     MemoryManager.assemble(session)
+                                → System Prompt (人格+画像+摘要+Worldbook)
+LLMAgentStage        *洋葱*     前置: ProviderRequest → Agent Runner tool-loop
+                                yield ────────────→ RespondStage
+                                后置: Token 统计 + 会话长度检查 + 人格扫描
+RespondStage          async     发送消息到平台
+```
+
+### 4.3 群聊 NPC 模式
+
+```typescript
+// MemoryIngestStage 内部
+async process(event: MessageEvent): Promise<void> {
+  await this.memory.ingest(event);  // 所有人写入 EventLog
+
+  const isGroup = event.getMessageType() === MessageType.GROUP;
+  const ownerId = this.config.ownerId;
+
+  if (!isGroup || event.getSenderId() === ownerId) {
+    await this.memory.processProfile(event);  // 仅 owner 建画像
+  }
+  // NPC 的消息保留为流水账，不提取 Profile
+}
+```
+
+### 4.4 Token 统计（LLMAgent 洋葱后置）
+
+```typescript
+class LLMAgentStage implements Stage {
+  async *process(event: MessageEvent): AsyncGenerator<void> {
+    const startTime = Date.now();
+    let tokenUsage: TokenUsage = { input: 0, output: 0 };
+
+    // === 前置: LLM 调用 ===
+    const response = await this.runner.run(event, {
+      onUsage: (usage) => { tokenUsage = usage; },
+    });
+
+    event.setExtra('llm_response', response);
+    yield;  // ─────→ RespondStage 发消息 ─────→
+
+    // === 后置: Token 统计 ===
+    await this.db.recordTokenUsage({
+      sessionId: event.session.toString(),
+      conversationId: event.getExtra('conversationId'),
+      ...tokenUsage,
+      duration: Date.now() - startTime,
+    });
+
+    // 会话长度检查 → 触发摘要
+    if (this.runner.contextLength > this.config.maxContextTokens * 0.8) {
+      await this.memory.onSessionEnd(event.session.toString());
+    }
+
+    // 人格信号扫描
+    await this.memory.scanPersonaSignals(event);
+  }
+}
+```
+
+---
+
+## 5. Telegram Adapter 设计
+
+### 5.1 消息转换
+
+```typescript
+class TelegramAdapter implements Platform {
+  private bot: Telegraf;
+
+  // Telegram 消息 → MessageEvent
+  private toMessageEvent(ctx: Context): MessageEvent {
+    const msg = ctx.message!;
+    const chatType = msg.chat.type === 'private'
+      ? MessageType.PRIVATE
+      : MessageType.GROUP;
+
+    const message: Message = {
+      sessionId: String(msg.chat.id),
+      groupId: chatType === MessageType.GROUP ? String(msg.chat.id) : '',
+      sender: {
+        userId: String(msg.from!.id),
+        nickname: msg.from!.first_name || 'Unknown',
+      },
+      messageId: String(msg.message_id),
+      type: chatType,
+      raw: ctx,
+      content: this.parseContent(msg),
+    };
+
+    return new MessageEvent({
+      messageStr: 'text' in msg ? (msg.text || '') : '',
+      messageObj: message,
+      platformMeta: this.meta(),
+      sessionId: message.sessionId,
+    });
+  }
+
+  // 发送: MessageChain → Telegram API
+  async send(session: MessageSession, chain: MessageChain): Promise<void> {
+    const chatId = session.sessionId;
+    for (const comp of chain) {
+      switch (comp.type) {
+        case 'plain':
+          await this.bot.telegram.sendMessage(chatId, comp.text);
+          break;
+        case 'image':
+          await this.bot.telegram.sendPhoto(chatId, comp.url);
+          break;
+        // ...
+      }
+    }
+  }
+}
+```
+
+### 5.2 支持的消息类型
+
+| Telegram 类型 | MessageComponent | 方向 |
+|--------------|-----------------|------|
+| text | Plain | 收/发 |
+| photo | Image | 收/发 |
+| voice | Voice | 收 |
+| sticker | Sticker → Plain("[Sticker: xxx]") | 收 |
+| document | File | 收 |
+| video | Video | 收 |
+| reply | Reply | 收 |
+| mention (@) | At | 收 |
+| keyboard | QuickReply (按钮) | 发 |
+
+---
+
+## 6. Agent Runner 设计
+
+### 6.1 Tool-Loop 流程
+
+```
+用户消息
+  → assemble System Prompt (记忆系统)
+  → 发送到 LLM
+  → LLM 返回:
+      ├── 文本回复 → 完成，发给用户
+      └── 工具调用 → 执行工具 → 结果注入上下文 → 回到 "发送到 LLM"
+                      ↑                               │
+                      └──── 循环 (max N 次) ──────────┘
+```
+
+### 6.1.1 打断（abort）契约（8-10）
+
+`AgentRunner.run(..., signal?)`：每步 ReAct 循环开头检查 `signal.aborted` → 立即中止；
+`signal` 经 `ProviderRequest.signal` 透传到 openai.ts 的 fetch（外部 abort 与 60s timeout
+组合进同一 AbortController）。被打断时返回 `aborted: true` 标记，不产回复
+（调用方丢弃，不回写记忆）。验证锚点：被打断请求日志 `aborted by signal` 且 token usage ≈ 0
+（usage 高 = signal 没到 fetch = 假打断）。
+
+**返回前终检（coalescer-abort-race-fix）**：循环开头/err 分支的检查点在 fetch 之前，
+捕获不到"fetch 已 resolve（回复已产出）后才 abort"的竞态——runner 在组装 chain
+返回前加终检 `signal.aborted`，命中则丢弃已产出文本、返回 aborted。所有返回路径
+（开头 / err 分支 / 终检）统一 aborted 语义：**被打断的生成结果永不发送**。
+
+**60s 超时语义（llm-request-timeout-race）**：AbortController 无法中断 undici
+fetch 的 DNS/连接建立阶段（libuv getaddrinfo 不可取消）——网络故障时 abort 传
+不到底层，请求会挂到 DNS 系统超时（线上实测 566s）。60s 超时用
+`Promise.race([fetch, timeoutPromise])` 保证准时返回（不依赖 signal 传播）；
+挂起 fetch 的最终 rejection 用 `.catch(() => {})` 吞掉防 unhandledRejection；
+外部打断仍走 AbortController（请求已发出后 abort 有效）。
+
+### 6.1.2 流式输出契约（2026-08-15，change: llm-streaming-pipeline）
+
+**能力分层**：OpenAIProvider.textChatStream 与 textChat 对等（此前已实现 SSE 解析 +
+chunk yield + tool_calls 累积，但零调用者）：
+
+- sampling 槽位注入（同 textChat：undefined 字段不传）
+- 60s 超时 race（Promise.race，fetch 阶段 + 流读取阶段共用 deadline；超时 → err
+  chunk + 终止；挂起 fetch 的 rejection 用 .catch(() => {}) 吞掉）
+- 外部 signal → AbortController 透传（abort 后流停止，日志锚点 `aborted by signal`）
+- `reasoning_content` 透传（DeepSeek 思考过程独立字段，调用方决定展示）
+- usage 透传（流式末块带 usage，chunk 块顺序在文本之后，runner 累积）
+- 不与 response_format=json 组合（json_object 仅非流式结构化输出用）
+- 文本块 yield：`{ role:'assistant', completionText, isChunk:true }`
+- 工具调用在流式响应里照旧累积后一次性 yield（非 chunk，流式不改变工具循环语义）
+
+**ProviderManager.streamWithFallback(req, fallbackIds?)**：流式 fallback 路由——
+
+- "首 chunk 偷看"模式：首个 chunk 为 err（fetch/headers 阶段失败）才切换 fallback
+  provider；已开始出 chunk 后失败 → 不切换（重试会丢前半回复 = 体验断裂），
+  err chunk 透出后终止
+- signal.aborted 时不切 fallback（与 textChatWithFallback 同检查点）
+
+**AgentRunner.runStream(prompt, systemPrompt, imageUrls, sessionId, sampling, signal, onChunk)**：
+流式出口——
+
+- 与 run() 同构（截断/工具循环/打断契约/终检全部对齐），仅文本生成阶段走
+  streamWithFallback
+- 文本 chunk 回调 `onChunk({kind:'text', text})`；reasoning 回调 `onChunk({kind:'reasoning', text})`
+- 工具调用阶段无文本流（工具循环保持完整执行，与 §6.1 Tool-Loop 相同）
+- 打断语义与 §6.1.1 一致：流循环内 signal 检查（立即停止回调）+ err 分支 + 终检；
+  aborted 结果永不发送
+- 中途失败（已流部分文本后 err）：已流文本保留为最终回复（体验连续性），
+  首 chunk 前失败：err 文本作为最终回复
+- **主路径不变**：QQ 通道继续 run() + textChatWithFallback 非流式，行为零影响
+
+### 6.1.3 WebUI 聊天端点（2026-08-15，change: webui-chat-endpoints）
+
+**PipelineExtras 扩展**:
+- `on_chunk?: (chunk: { kind: 'text' | 'reasoning'; text: string }) => void` —— 流式块回调
+  （SSE 注入；LLMAgentStage 检测到即走 runStream 分支）
+- `on_done?: (chain: MessageChain | null) => void` —— 结束通知：正常 = RespondStage 的
+  send 回调内触发（LLMAgentStage 包装 event.send 后调用）；打断（aborted 分支不经过
+  RespondStage）= LLMAgentStage 直接触发 null——SSE 端点据此关闭，防挂起
+
+**LLMAgentStage 流式分支**:检测 `on_chunk` → `runner.runStream(..., onChunk)`；文本/
+reasoning 块逐块回调；回复链/usage 记录/回写记忆/日志与非流式一致；3 处 aborted 分支
+调 `on_done(null)` 后 return。非流式路径不变（QQ/Telegram/OneBot 继续 runner.run()）。
+
+**WebUI 会话**:`webui:private:<id>`（裸 ID 传 MessageEvent，unifiedMsgOrigin 由
+MessageSession.toString 拼接，与 QQ adapter 同模式；与 QQ 通道完全隔离）。
+
+**端点**:
+- `POST /api/chat/prompt`：MessageEvent → eventBus.put（走完整 pipeline），send 回调收集
+  完整回复，90s 超时；空回复（被打断）→ ok:false
+- `POST /api/chat/stream`：SSE —— connected / chunk{kind,text} / done{reply} /
+  aborted（on_done(null)）/ error（超时）
+- `GET /api/sessions/:id/messages?limit=&before=`：events 表 created_at 游标分页
+  （时间倒序，最新在前；hasMore = 满页）
+- `GET /api/chat/pending?sessionId=`：Coalescer AbortRegistry.isInFlight——
+  页面刷新恢复"回复中"状态
+- `MemoryManager.getSessionMessages(sessionId, limit, before?)` / `AlysiaCore.isGenerating`
+
+### 6.2 内置工具
+
+| 工具 | 描述 | 实现 |
+|------|------|------|
+| web_search | 搜索网页并返回摘要 | SerpAPI / Bing API |
+| set_reminder | 设置定时提醒 | node-cron + 到时 @用户 |
+| list_reminders | 列出当前提醒 | 查询 cron 任务表 |
+| cancel_reminder | 取消提醒 | 删除 cron 任务 |
+
+### 6.3 会话管理命令
+
+| 命令 | 功能 |
+|------|------|
+| `/new` | 新建对话，清空上下文 |
+| `/reset` | 重置当前对话，保留人格设置 |
+| `/stop` | 停止正在运行的 Agent (中断生成) |
+| `/stats` | 查看当前会话 Token 用量 |
+
+---
+
+## 7. 部署
+
+### 7.1 Dockerfile
+
+```dockerfile
+FROM node:22-alpine
+WORKDIR /app
+COPY packages/core/dist ./packages/core/dist
+COPY packages/server/dist ./packages/server/dist
+COPY node_modules ./node_modules
+EXPOSE 6185
+CMD ["node", "packages/server/dist/bootstrap.js"]
+```
+
+### 7.2 compose.yml
+
+```yaml
+services:
+  alysia:
+    build: .
+    container_name: alysia-server
+    restart: always
+    ports:
+      - "6185:6185"
+    environment:
+      - TZ=Asia/Shanghai
+    volumes:
+      - ./data:/app/data
+      - ./config.yml:/app/config.yml
+```
+
+### 7.3 配置示例 (config.yml)
+
+```yaml
+bot:
+  name: "昔涟"
+  ownerId: "123456789"  # Telegram user ID
+
+llm:
+  primary:
+    baseUrl: "https://api.deepseek.com/v1"
+    apiKey: "${DEEPSEEK_API_KEY}"
+    model: "deepseek-v4-flash"
+  embedding:
+    baseUrl: "https://open.bigmodel.cn/api/paas/v4"
+    apiKey: "${ZHIPU_API_KEY}"
+    model: "embedding-2"
+
+platforms:
+  telegram:
+    token: "${TELEGRAM_BOT_TOKEN}"
+
+server:
+  port: 6185
+  webui: true
+```
+
+---
+
+## 8. 数据流全景
+
+```
+Telegram API ──→ TelegramAdapter.onMessage()
+                      │
+                      ▼ convert_message()
+              ┌──────────────────┐
+              │   MessageEvent   │
+              └──────┬───────────┘
+                     │ eventQueue.put()
+                     ▼
+              ┌──────────────┐
+              │   EventBus   │
+              │  dispatch()  │
+              └──────┬───────┘
+                     ▼
+         PipelineScheduler.execute(event)
+                     │
+      ┌──────────────┼──────────────┐
+      ▼              ▼              ▼
+  PIIFilter    MemoryIngest    Worldbook
+      │              │              │
+      └──────────────┼──────────────┘
+                     ▼
+              MemoryRetrieval ──→ System Prompt
+                     │
+                     ▼
+              LLMAgent (洋葱)
+              前置: LLM + Tools
+              yield ────→ Respond ────→ Telegram API 📤
+              后置: Token + 摘要 + 人格
+```
+
+---
+
+## 9. MVP 功能清单（定版）
+
+### P0 — 必须做
+
+| 模块 | 功能 |
+|------|------|
+| Telegram Bot | Platform Adapter，收发消息 |
+| 多轮对话 | LLM Provider + Agent Runner，流式输出 |
+| 记忆系统 | 6 Store 全量 (EventLog, Profile, Persona, Conversation, Knowledge, Worldbook) |
+| 人格 | 昔涟人设 + PersonaAdapter 5 道护栏 |
+| 群聊 NPC | Owner 建画像，NPC 仅流水账 |
+| Token 统计 | `/stats` + LLMAgent 后置自动记录 |
+| 会话管理 | `/new` `/reset` `/stop` |
+| Pipeline | 6 Stage 洋葱编排 |
+| EventBus | AsyncQueue 事件分发 |
+| Docker | compose.yml 一键部署 |
+
+### P1 — 让 bot 更完整
+
+| 模块 | 功能 |
+|------|------|
+| 空 @ 处理 | @bot 没说话 → bot 询问 |
+| 群聊上下文 | 发言间隙消息注入 system_reminder |
+| 知识库 RAG | PDF/URL → 向量检索 |
+| 网页搜索 | Agent 工具 |
+| 定时提醒 | `/remind 30min 内容` |
+| Web 前端 | Fastify 同源托管 · console（Next.js，现行）/ webui（Vue，待废） |
+
+### P2 — 二期
+
+| 模块 | 功能 |
+|------|------|
+| 主动回复 | 概率掷骰子接话 |
+| 更多平台 | QQ / Discord / 微信 |
+| ~~Desktop~~ | ~~Electron + Live2D~~ ★ 9-25 Electron 砍掉（drop-electron-desktop）；Live2D 迁往 console |
+
+---
+
+## 10. 与 AstrBot 的借鉴对照
+
+| 借鉴点 | AstrBot | Alysia |
+|--------|---------|--------|
+| Platform 抽象 | `Platform` 基类 + 装饰器注册 | TypeScript `interface Platform` + 手动注册 |
+| Pipeline 洋葱 | `process()` 返回 `None \| AsyncGenerator` | 同款，`Symbol.asyncIterator` 判断 |
+| EventBus | `asyncio.Queue` 单进程循环 | Node.js `AsyncQueue` |
+| Agent Runner | `ToolLoopAgentRunner` (~1500行) | TypeScript 简化版 |
+| Provider 抽象 | 20+ provider 统一接口 | OpenAI 协议兼容 + fallback 链 |
+| Stage 注册 | `register_stage` 装饰器 | 数组 push 手动注册 |
+| 插件系统 | Star 架构 | 不借鉴 (MVP 不需要) |
+| 代码沙箱 | Shipyard Docker-in-Docker | 不需要 (砍掉了) |
