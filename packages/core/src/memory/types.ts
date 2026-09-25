@@ -85,6 +85,15 @@ export interface Conversation {
   embedding_id: string | null;
   /** ★ 8-28 角色视角（memory-character-perspective）：昔涟在这段对话中的感受/变化 */
   character_perspective?: string;
+  /** ★ 9-25 fix-session-summary-silent-failure：摘要生成状态。
+   *  - `'ok'`：摘要正常生成
+   *  - `'failed'`：LLM 输出无法解析 → `summary` 为**空字符串**（绝不写占位符），
+   *    且**不生成 embedding**（垃圾向量会被召回出来当真内容）。
+   *    失败行可被 `getFailed()` 捞出，由 cron 补处理。
+   *
+   *  为什么要有这个字段：2026-09-04 ~ 09-25 摘要 100% 失败，
+   *  但失败被"存一个占位符字符串"伪装成了成功，22 天无人发现。 */
+  summary_status?: 'ok' | 'failed';
 }
 
 export interface KnowledgeDoc {

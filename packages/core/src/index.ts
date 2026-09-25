@@ -1,4 +1,8 @@
 export { logger, startDailyLogCleanup } from './utils/logger.js';
+// ★ 9-25 fix-session-summary-silent-failure：LLM 结构化输出的共用解析入口
+//   （life.ts 与 SessionEndProcessor 共用，详见 utils/llm-json.ts 头部说明）
+export { parseLLMJson, stripMarkdownFence, looksTruncated } from './utils/llm-json.js';
+export type { LLMJsonResult } from './utils/llm-json.js';
 // ★ 8-10 采样参数统一配置（sampling-config-unify）：类型 + 默认 floor 导出，
 //   server 侧 config.yml 覆盖时从主入口导入
 export { DEFAULT_SAMPLING, mergeSampling, slotToBody } from './provider/sampling.js';

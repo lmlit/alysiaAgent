@@ -7,7 +7,7 @@
  */
 import { readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { dirname } from 'path';
-import { logger } from '@alysia/core';
+import { logger, parseLLMJson } from '@alysia/core';
 import { formatLocalTime, localDateKey, localDateKeyFromISO } from '@alysia/core/memory';
 
 export interface LifeOpts {
@@ -575,19 +575,18 @@ export class LifeService {
     ].filter(Boolean).join('\n');
 
     try {
-      const text = ((await this.opts.generateEvent?.(context)) ?? '')
-        .replace(/^```(?:json)?\s*|\s*```$/g, '').trim(); // 剥离 markdown fence（LLM 常包 ```json）
-      if (!text) throw new Error('empty response');
-      let parsed: any;
-      try {
-        parsed = JSON.parse(text);
-      } catch {
+      // ★ 9-25 fix-session-summary-silent-failure：改用共用解析器
+      //   （行为不变；额外多认一种输入——围栏前后带空白的响应）
+      const r = parseLLMJson(await this.opts.generateEvent?.(context));
+      if (r.kind === 'empty') throw new Error('empty response');
+      if (r.kind === 'bare') {
         // ★ 8-09 裸文本容错：LLM 偶发输出无 JSON 外壳的自然语言（7-16 实测高质量剧情
         //   文本被 JSON.parse 丢弃 → fallback 模板推送 → 剧情链断裂）。
         //   裸文本直接作为事件内容；type 默认 chat（★ 8-28 深夜不再强制 internal）
-        logger.info(`[Life] bare-text event from LLM (no JSON shell): ${text.slice(0, 100)}`);
-        return { content: text, type: 'chat' };
+        logger.info(`[Life] bare-text event from LLM (no JSON shell): ${r.text.slice(0, 100)}`);
+        return { content: r.text, type: 'chat' };
       }
+      const parsed: any = r.value;
       if (parsed.content) {
         // ★ 防幻觉（终审修复）：reference_event_id 必须命中今天事件 ID 集合，wb_entry_id 必须命中采样世界书 ID
         const refId = parsed.reference_event_id ? String(parsed.reference_event_id) : undefined;
@@ -959,15 +958,11 @@ export class LifeService {
     ].filter(Boolean).join('\n');
 
     try {
-      const text = ((await this.opts.generateReflection(ctx)) ?? '').replace(/^```(?:json)?\s*|\s*```$/g, '').trim();
-      if (!text) { logger.warn('[Reflection] empty response, will retry next day'); return; }
-      let parsed: any;
-      try {
-        parsed = JSON.parse(text);
-      } catch {
-        // 裸文本容错：只有反思，无调整/洞察
-        parsed = { reflection: text };
-      }
+      // ★ 9-25 fix-session-summary-silent-failure：共用解析器（行为不变）
+      const r = parseLLMJson(await this.opts.generateReflection(ctx));
+      if (r.kind === 'empty') { logger.warn('[Reflection] empty response, will retry next day'); return; }
+      // 裸文本容错：只有反思，无调整/洞察
+      const parsed: any = r.kind === 'json' ? r.value : { reflection: r.text };
       const result = this.memoryManager.recordReflection?.({
         reflection: String(parsed.reflection ?? '').trim(),
         adjustments: Array.isArray(parsed.adjustments) ? parsed.adjustments : [],

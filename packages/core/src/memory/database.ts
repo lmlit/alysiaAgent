@@ -246,6 +246,13 @@ export function initializeDatabase(db: Database.Database): void {
     db.exec(`ALTER TABLE conversations ADD COLUMN character_perspective TEXT DEFAULT ''`);
   } catch { /* column already exists */ }
 
+  // ★ 9-25 fix-session-summary-silent-failure：conversations.summary_status
+  //   摘要生成状态（'ok' | 'failed'）。失败行 summary 为空且无向量，可被捞出补处理。
+  //   迁移遵循项目规范：ALTER TABLE + try-catch，**不 DROP**（存量行由 DEFAULT 填 'ok'）。
+  try {
+    db.exec(`ALTER TABLE conversations ADD COLUMN summary_status TEXT DEFAULT 'ok'`);
+  } catch { /* column already exists */ }
+
   // ★ 8-27 叙事化重构（life-system-narrative-refactor）迁移——全部 ALTER + try-catch，不 DROP
   // 1) ai_life_state.mood_value：情绪累积值 -100..100（同向加成/反向衰减/8h 回归 0）
   try {

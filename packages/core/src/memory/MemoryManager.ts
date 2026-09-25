@@ -1055,6 +1055,12 @@ export class MemoryManager {
   async archiveStaleSessions(): Promise<number> {
     let archived = 0;
     try {
+      // ★ 9-25 fix-session-summary-silent-failure：**先补处理历史失败行**。
+      //   失败行也带 ended_at，会推进 anchor —— 常规循环因此不会再覆盖那个窗口，
+      //   必须显式还原窗口起点重跑，否则失败窗口的消息永久丢失摘要。
+      const retried = await this.retryFailedSummaries();
+      if (retried > 0) logger.info(`[Memory] 补处理成功 ${retried} 条失败摘要`);
+
       const since = new Date(Date.now() - 24 * 3600 * 1000);
       const active = this.eventStore.getActiveSessions(since);
       for (const sid of active) {
@@ -1072,6 +1078,38 @@ export class MemoryManager {
       logger.error(`[Memory] archiveStaleSessions failed: ${err.message}`);
     }
     return archived;
+  }
+
+  /**
+   * ★ 9-25 fix-session-summary-silent-failure：补处理 `summary_status='failed'` 的摘要。
+   *
+   * 窗口起点怎么来：失败行本身只有 `ended_at`（`started_at` 是**整个会话**的首个事件时间，
+   * 不是本窗口起点）。所以取该会话中更早的最近一条摘要的 `ended_at` 作为起点；
+   * 没有更早的（本会话第一条就失败了）则回退到 ended_at 前 24h。
+   *
+   * 成功后就地更新原行（`updateSummaryResult`），不会为同一窗口再插一条。
+   *
+   * @returns 补成功的条数（供调用方判断是否值得记日志）
+   */
+  async retryFailedSummaries(limit = 10): Promise<number> {
+    const failed = this.conversationStore.getFailed(limit);
+    if (failed.length === 0) return 0;
+
+    let ok = 0;
+    for (const f of failed) {
+      try {
+        const prevEnd = f.ended_at
+          ? this.conversationStore.getPreviousEndedAt(f.session_id, f.ended_at)
+          : null;
+        const since = prevEnd
+          ? new Date(prevEnd)
+          : new Date((f.ended_at ? new Date(f.ended_at).getTime() : Date.now()) - 24 * 3600 * 1000);
+        if (await this.sessionEndProcessor.retryFailedSummary(f, since)) ok++;
+      } catch (err: any) {
+        logger.warn(`[Memory] 补处理异常 ${f.id.slice(0, 30)}: ${err?.message ?? err}`);
+      }
+    }
+    return ok;
   }
 
   /** ★ 8-28 情绪惯性漂移（memory-character-perspective）：生活事件累积 mood_value 驱动
@@ -1156,10 +1194,15 @@ export class MemoryManager {
     await this.sessionEndProcessor.process(sessionId);
     const after = JSON.parse(this.profileStore.get().facts).length;
     const factsExtracted = Math.max(0, after - before);
-    logger.info(`[Memory] extractProfile: ${factsExtracted} new facts (${Date.now() - start}ms)`);
+    // ★ 9-25 fix-session-summary-silent-failure：**不再恒返回 true**——
+    //   摘要失败时该字段一直是 true，Web 端"提取画像"按钮无论成败都报成功。
+    //   现在读回刚落库的那条，如实反映。
+    const latest = this.conversationStore.getLatestBySession(sessionId);
+    const summaryGenerated = !!latest && latest.summary_status !== 'failed' && latest.summary.length > 0;
+    logger.info(`[Memory] extractProfile: ${factsExtracted} new facts, summary ${summaryGenerated ? 'ok' : 'FAILED'} (${Date.now() - start}ms)`);
     return {
       factsExtracted,
-      summaryGenerated: true,
+      summaryGenerated,
     };
   }
 

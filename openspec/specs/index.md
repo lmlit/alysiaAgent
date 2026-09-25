@@ -6,7 +6,7 @@
 
 | slug | 系统 | 状态 | 来源（旧文档） | 最后变更 |
 |------|------|------|----------------|----------|
-| memory-system | 记忆系统（7 store / 3 engine / 3 processor / 旋钮） | active | docs/superpowers/specs/2026-06-28-memory-system-design.md | 2026-09-25 凭据外置：sync-from-server.sh 移除硬编码服务器密码（公开仓库泄露 28 天后已轮换） |
+| memory-system | 记忆系统（7 store / 3 engine / 3 processor / 旋钮） | active | docs/superpowers/specs/2026-06-28-memory-system-design.md | 2026-09-25 摘要静默失败修复（失败不写占位符 / `summary_status` / 推理模型 max_tokens 预算）；同日凭据外置 |
 | alysia-architecture | 总体架构（monorepo / 双模式） | active | docs/superpowers/specs/2026-07-20-alysia-architecture-design.md | 2026-08-15 WebUI 聊天端点（on_chunk/on_done + prompt/stream/messages/pending）+ LLM 流式契约 |
 | pipeline-contract | Pipeline 契约 + 记忆修复 | frozen | docs/superpowers/specs/2026-07-30-pipeline-contract-and-memory-fix.md | 2026-08-07 迁移 |
 | server-desktop-separation | 服务端/桌面端分离 | frozen | docs/superpowers/specs/2026-07-30-server-desktop-separation.md | 2026-08-07 迁移 |
@@ -37,6 +37,9 @@
 | [add-platforms-endpoint](../changes/add-platforms-endpoint/proposal.md) | Web-API §3.4 `GET /api/platforms` 全仓库无实现——唯一文档了但完全没建的接口 | docs → impl（补实现，契约不改） |
 | [console-a11y-motion](../changes/console-a11y-motion/proposal.md) | console 17 处持续动画无 `prefers-reduced-motion` 守卫；hero 渐变标题在 `forced-colors` 下可能不可见 | 新增（非 doc/impl gap，9-24 核查发现）；用户指示「先记下来」暂不实现 |
 | [tune-recall-with-runtime-data](../changes/tune-recall-with-runtime-data/proposal.md) | 召回管道的系数（`LIFE_BASE`/`RELATIVE_KEEP`/情绪词表…）全是启发式拍的，该由运行数据定；**且部分指标现在无日志，要先补观测** | 新增；用户 9-25「运行一段时间上服务器捞数据看看」 |
+| [backfill-failed-session-summaries](../changes/backfill-failed-session-summaries/proposal.md) | 线上 **52 条会话摘要是占位符** + 52 条近乎相同的垃圾向量污染 LanceDB（可能被召回）。**依赖 `fix-session-summary-silent-failure` 先落地** | 存量数据修复；先确认 events 可回填性 + 生产库写入授权 |
+| [add-ops-health-report](../changes/add-ops-health-report/proposal.md) | 会话摘要 **22 天 100% 失败**期间，容器 healthcheck 与 `/api/health` **全程为绿**——缺的是正确性指标（摘要成功率/各模块 WARN 计数），不是存活指标 | 新增（可观测性）；**用户 9-25 决定先记档后做**；前置：日志系统先整理（96.6% 是 QQ 噪声） |
+| [clean-spec-diff-residue](../changes/clean-spec-diff-residue/proposal.md) | `openspec/specs/memory-system/spec.md` **残留 5 行未清理的 `+ ` diff 标记**（`persona-overlay-perspective` 的 apply 未去标记）——今天已两次导致校验工具给出错误结论 | 文档卫生；apply 流程产物未清 |
 
 ## 相关活文档（非 spec，但同为 source of truth）
 

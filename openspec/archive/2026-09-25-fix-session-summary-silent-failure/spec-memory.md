@@ -174,7 +174,7 @@ CREATE TABLE conversations (
     message_count   INTEGER DEFAULT 0,
     started_at      TEXT NOT NULL,
     ended_at        TEXT,
-    summary_status  TEXT DEFAULT 'ok',   -- ★ 9-25 'ok' | 'failed'：失败时不写占位符（见 §7）
++     summary_status  TEXT DEFAULT 'ok',   -- ★ 9-25 'ok' | 'failed'：失败时不写占位符（见 §7）
     embedding_id    TEXT
 );
 ```
@@ -637,9 +637,9 @@ query → Worldbook 匹配 → embed API → LanceDB 向量检索
 |---|---|
 | Embed API 挂了 | 向量检索降级为 SQLite LIKE，写入进重试队列，指数退避 |
 | LLM 提取失败 | 非实时，失败跳过，下次 cron 补处理 |
-| **推理模型的 max_tokens 预算**（★ 2026-09-25 实测） | `CHAT_MODEL` 是**推理模型**：**reasoning 与可见内容共用同一个 `max_tokens`**，每次调用先花 ~250 tokens 在 reasoning 上。512 的预算下对话稍长即"预算耗尽、content 为空"（HTTP 200、0 字）。**要求结构化输出的槽位（`session.summary` / `life.generateSummary`）max_tokens 必须 ≥1024**。这同一个 512 曾同时造成「会话摘要 22 天 100% 失败」与「每日反思 11 次 empty response」 |
-| LLM 返回非法 JSON（markdown 围栏 / 截断 / 空白） | 解析前**剥围栏**（共用工具 `utils/llm-json.ts`）+ 截断检测；失败重试 1 次（实测模型偶发空响应，重试可救回）；仍失败则**不存占位符**——`summary=''` + `summary_status='failed'` + **不生成 embedding**，等 cron 补处理 |
-| **存活 ≠ 正确**（2026-09-25 教训） | 会话摘要在线上 **22 天 100% 失败**期间，容器 healthcheck 为 `healthy`、`/api/health` 全程 `{"status":"ok"}`。**存活指标（进程/端口/容器）不能替代正确性指标（摘要成功率/各模块 WARN 计数）**；判定"系统正常"必须引用后者 |
++ | **推理模型的 max_tokens 预算**（★ 2026-09-25 实测） | `CHAT_MODEL` 是**推理模型**：**reasoning 与可见内容共用同一个 `max_tokens`**，每次调用先花 ~250 tokens 在 reasoning 上。512 的预算下对话稍长即"预算耗尽、content 为空"（HTTP 200、0 字）。**要求结构化输出的槽位（`session.summary` / `life.generateSummary`）max_tokens 必须 ≥1024**。这同一个 512 曾同时造成「会话摘要 22 天 100% 失败」与「每日反思 11 次 empty response」 |
++ | LLM 返回非法 JSON（markdown 围栏 / 截断 / 空白） | 解析前**剥围栏**（共用工具 `utils/llm-json.ts`）+ 截断检测；失败重试 1 次（实测模型偶发空响应，重试可救回）；仍失败则**不存占位符**——`summary=''` + `summary_status='failed'` + **不生成 embedding**，等 cron 补处理 |
++ | **存活 ≠ 正确**（2026-09-25 教训） | 会话摘要在线上 **22 天 100% 失败**期间，容器 healthcheck 为 `healthy`、`/api/health` 全程 `{"status":"ok"}`。**存活指标（进程/端口/容器）不能替代正确性指标（摘要成功率/各模块 WARN 计数）**；判定"系统正常"必须引用后者 |
 | LanceDB 损坏 | 启动 checksum 校验，异常则提示从 events 重建 |
 | 磁盘空间不足 | events > 500MB 自动压缩，chunk > 10000 告警 + LRU |
 | 并发写入 | SQLite WAL 模式，单写串行，读并发无锁 |

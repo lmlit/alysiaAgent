@@ -2,6 +2,7 @@
 import type { MemoryEvent, Conversation } from '../types.js';
 import { PROCESSED_SUMMARY } from '../types.js';
 import { logger } from '../../utils/logger.js';
+import { parseLLMJson } from '../../utils/llm-json.js';
 import type { EventStore } from '../stores/EventStore.js';
 import type { ConversationStore } from '../stores/ConversationStore.js';
 import type { ProfileStore } from '../stores/ProfileStore.js';
@@ -13,6 +14,28 @@ import type { ILLMService } from '../interfaces/ILLMService.js';
 import type { IEmbedService } from '../interfaces/IEmbedService.js';
 import type { IVectorStore } from '../interfaces/IVectorStore.js';
 
+/** LLM 摘要的结构化输出（成功路径） */
+interface SummaryData {
+  summary: string;
+  participants: string[];
+  topics: string[];
+  key_decisions: string[];
+  character_perspective: string;
+  important_moments: Array<{ quote: string; importance: number }>;
+}
+
+/** ★ 8-28 角色视角（memory-character-perspective）：摘要同时总结昔涟的感受/变化
+ *  ★ 9-25 importance：**复用这一次调用**顺带打分——不额外增加 LLM 成本。
+ *    要求返回原文摘句而不是编号：LLM 拿不到事件 id，只能靠文本匹配回填。 */
+const SUMMARY_SYSTEM_PROMPT =
+  '你是一个会话总结器。请总结以下对话（[用户]/[昔涟] 标记发言者），提取关键主题和决定。' +
+  '同时用一句话总结**昔涟**在这段对话中的感受或变化（角色视角，如"昔涟聊到雨时语气变得柔软"、"昔涟对游戏话题显得兴致勃勃"；没有明显情绪变化就留空字符串）。' +
+  '另外挑出这段对话里**最值得长期记住的 1-3 处**（关系里程碑、承诺、重要偏好、情绪强烈的时刻），' +
+  '每处给一个**原文摘句**（10-40 字的连续原文片段，用于回定位）和 importance（0.7-0.95 的小数，越重要越高）。' +
+  '没有值得记的就返回空数组，不要硬凑。' +
+  '返回JSON格式: {"summary": "...", "participants": ["user", "assistant"], "topics": [...], "key_decisions": [...], "character_perspective": "...", ' +
+  '"important_moments": [{"quote": "原文摘句", "importance": 0.85}]}';
+
 /**
  * SessionEndProcessor handles end-of-session aggregation:
  *   1. Fetch all unprocessed events for the session
@@ -21,6 +44,9 @@ import type { IVectorStore } from '../interfaces/IVectorStore.js';
  *   4. Extract profile facts from session events and merge into ProfileStore
  *   5. Confirm persona adjustments (apply any pending hints)
  *   6. Mark all session events as PROCESSED_SUMMARY
+ *
+ * ★ 9-25 fix-session-summary-silent-failure：第 2 步失败时**不再写占位符**——
+ *   改为落一条 `summary_status='failed'` 的行（summary 空、无向量），失败因此**可见且可补**。
  */
 export class SessionEndProcessor {
   constructor(
@@ -59,35 +85,61 @@ export class SessionEndProcessor {
       })
       .filter(Boolean) as string[];
 
+    // 没有任何可摘要的文本（消息无 content）→ 跳过。这**不是**失败，
+    // 不该落一条 failed 行（否则会制造噪声，掩盖真正的失败）。
+    if (dialogue.length === 0) {
+      logger.info(`[SessionEnd] 无可用对话文本，跳过: ${sessionId.slice(-24)}`);
+      return;
+    }
+
     // 2. Generate conversation summary via LLM
-    const conversationSummary = await this.generateSummary(dialogue, sessionId);
+    //    ★ 9-25 fix-session-summary-silent-failure：**失败不再伪装成成功**。
+    //      原实现 catch 后 `return defaultSummary`（`"Session <id> summary"`）——
+    //      失败被存成一个看起来像内容的字符串，线上因此 22 天无人发现。
+    //      现在失败会留下可见的 `summary_status='failed'`。
+    let summaryData: SummaryData | null = null;
+    try {
+      summaryData = await this.generateSummary(dialogue);
+    } catch (err: any) {
+      logger.warn(`[SessionEnd] 摘要生成失败，记为 failed（不写占位符）: ${err?.message ?? err}`);
+    }
+    const ok = summaryData !== null;
 
     // 2.5 ★ 9-25 wire-importance-signal：把 LLM 挑出的「重要时刻」回填到具体事件。
     //     放在这里而不是最后：它只依赖 messageEvents 与 summary，越早回填，
     //     后续步骤（画像提取）就能用上 importance。
-    await this.applyImportantMoments(conversationSummary.important_moments, messageEvents);
+    //     摘要失败 → 没有 moments 可回填，跳过。
+    if (summaryData) {
+      await this.applyImportantMoments(summaryData.important_moments, messageEvents);
+    }
 
     // 3. Insert Conversation + embed vector
+    //    摘要失败时**仍然插行**：保留 message_count / 时间 / 事件关联，
+    //    这样失败窗口不会随 PROCESSED_SUMMARY 标记一起消失，后续可回填。
     const now = new Date().toISOString();
     const conv: Conversation = {
       id: `conv-${sessionId}-${Date.now()}`,
       session_id: sessionId,
-      summary: conversationSummary.summary,
-      participants: JSON.stringify(conversationSummary.participants),
-      topics: JSON.stringify(conversationSummary.topics),
-      key_decisions: JSON.stringify(conversationSummary.key_decisions),
+      summary: ok ? summaryData!.summary : '',
+      participants: JSON.stringify(ok ? summaryData!.participants : []),
+      topics: JSON.stringify(ok ? summaryData!.topics : []),
+      key_decisions: JSON.stringify(ok ? summaryData!.key_decisions : []),
       message_count: messageEvents.length,
       started_at: events[0]?.created_at || now,
       ended_at: now,
       embedding_id: null,
       // ★ 8-28 角色视角（memory-character-perspective）
-      character_perspective: conversationSummary.character_perspective,
+      character_perspective: ok ? summaryData!.character_perspective : '',
+      summary_status: ok ? 'ok' : 'failed',
     };
 
     let embedVector: number[] | undefined;
-    if (this.vectorStore) {
+    // ★ 只在成功时 embed。失败时 summary 为空，嵌入它等于往 LanceDB 里塞垃圾向量——
+    //   而垃圾向量**会被召回出来当真内容用**，比"缺一条向量"危险得多
+    //   （还会污染相似度分布，干扰召回系数调参）。
+    if (ok && this.vectorStore) {
       try {
-        embedVector = await this.embedService.embed(conversationSummary.summary);
+        embedVector = await this.embedService.embed(conv.summary);
       } catch {
         // Embedding failure is non-fatal
       }
@@ -121,58 +173,119 @@ export class SessionEndProcessor {
     return this.eventStore.getBySession(sessionId);
   }
 
-  private async generateSummary(
-    dialogue: string[],
-    sessionId: string,
-  ): Promise<{
-    summary: string;
-    participants: string[];
-    topics: string[];
-    key_decisions: string[];
-    character_perspective: string;
-    /** ★ 9-25 wire-importance-signal：LLM 顺带指出这段对话里最重要的几处 */
-    important_moments: Array<{ quote: string; importance: number }>;
-  }> {
-    const defaultSummary = {
-      summary: `Session ${sessionId} summary`,
-      participants: ['user', 'assistant'],
-      topics: [] as string[],
-      key_decisions: [] as string[],
-      character_perspective: '',
-      important_moments: [] as Array<{ quote: string; importance: number }>,
-    };
+  /**
+   * 生成会话摘要。
+   *
+   * ★ 9-25 fix-session-summary-silent-failure：
+   *   - 改用**共用解析器** `parseLLMJson`（剥围栏 + 空判 + 裸文本分类）——
+   *     原实现是裸 `JSON.parse(response)`，模型包一层 ```json 就炸（线上真实报错）。
+   *   - 失败时**抛异常**而不是返回占位符。调用方据此落 `summary_status='failed'`。
+   *     绝不再返回 `"Session <id> summary"` 这种"看起来像内容"的字符串。
+   */
+  private async generateSummary(dialogue: string[]): Promise<SummaryData> {
+    if (dialogue.length === 0) throw new Error('无对话内容可摘要');
 
-    if (dialogue.length === 0) return defaultSummary;
-
-    try {
-      const conversationText = dialogue.join('\n');
-      // ★ 8-28 角色视角（memory-character-perspective）：摘要同时总结昔涟的感受/变化
-      // ★ 9-25 importance：**复用这一次调用**顺带打分——不额外增加 LLM 成本。
-      //   要求返回原文摘句而不是编号：LLM 拿不到事件 id，只能靠文本匹配回填。
-      const response = await this.llmService.complete(
-        '你是一个会话总结器。请总结以下对话（[用户]/[昔涟] 标记发言者），提取关键主题和决定。' +
-        '同时用一句话总结**昔涟**在这段对话中的感受或变化（角色视角，如"昔涟聊到雨时语气变得柔软"、"昔涟对游戏话题显得兴致勃勃"；没有明显情绪变化就留空字符串）。' +
-        '另外挑出这段对话里**最值得长期记住的 1-3 处**（关系里程碑、承诺、重要偏好、情绪强烈的时刻），' +
-        '每处给一个**原文摘句**（10-40 字的连续原文片段，用于回定位）和 importance（0.7-0.95 的小数，越重要越高）。' +
-        '没有值得记的就返回空数组，不要硬凑。' +
-        '返回JSON格式: {"summary": "...", "participants": ["user", "assistant"], "topics": [...], "key_decisions": [...], "character_perspective": "...", ' +
-        '"important_moments": [{"quote": "原文摘句", "importance": 0.85}]}',
-        conversationText,
-      );
-
-      const parsed = JSON.parse(response);
-      return {
-        summary: parsed.summary || defaultSummary.summary,
-        participants: parsed.participants || defaultSummary.participants,
-        topics: parsed.topics || [],
-        key_decisions: parsed.key_decisions || [],
-        character_perspective: typeof parsed.character_perspective === 'string' ? parsed.character_perspective.slice(0, 200) : '',
-        important_moments: this.parseImportantMoments(parsed.important_moments),
-      };
-    } catch (err: any) {
-      logger.warn(`[SessionEnd] summary LLM failed, using default: ${err.message}`);
-      return defaultSummary;
+    // ★ 9-25 真实 API 实测：即使开了 json_object，模型仍**偶发返回空响应**
+    //   （0 字、HTTP 200；脚本 scripts/verify-session-summary-fix.ts 里 3 次出现 1 次）。
+    //   空响应是瞬时的、与内容无关 —— 线上每日反思那 11 次 "empty response" 大概率同源。
+    //   重试一次就能过，代价远低于"整段会话记忆丢失"。
+    const MAX_ATTEMPTS = 2;
+    let lastErr: unknown = new Error('未尝试');
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        return await this.generateSummaryOnce(dialogue);
+      } catch (err: any) {
+        lastErr = err;
+        if (attempt < MAX_ATTEMPTS) {
+          logger.warn(`[SessionEnd] 摘要第 ${attempt} 次失败，重试: ${err?.message ?? err}`);
+        }
+      }
     }
+    throw lastErr;
+  }
+
+  /** 单次摘要调用（重试逻辑在 generateSummary 里） */
+  private async generateSummaryOnce(dialogue: string[]): Promise<SummaryData> {
+    const response = await this.llmService.complete(SUMMARY_SYSTEM_PROMPT, dialogue.join('\n'));
+    const r = parseLLMJson(response);
+
+    if (r.kind === 'empty') {
+      throw new Error('LLM 返回空响应');
+    }
+    if (r.kind === 'bare') {
+      // 裸文本对摘要**没有用**——拿不到 topics/key_decisions 等结构化字段。
+      // （对比：生活事件可以把裸文本直接当正文，摘要不行。）
+      throw new Error(`LLM 未返回合法 JSON（truncated=${r.truncated}）: ${r.text.slice(0, 80)}`);
+    }
+
+    const parsed = r.value;
+    const summary = typeof parsed?.summary === 'string' ? parsed.summary.trim() : '';
+    if (!summary) throw new Error('LLM 返回的 JSON 缺少 summary 字段');
+
+    return {
+      summary,
+      participants: Array.isArray(parsed.participants) ? parsed.participants : [],
+      topics: Array.isArray(parsed.topics) ? parsed.topics : [],
+      key_decisions: Array.isArray(parsed.key_decisions) ? parsed.key_decisions : [],
+      character_perspective: typeof parsed.character_perspective === 'string' ? parsed.character_perspective.slice(0, 200) : '',
+      important_moments: this.parseImportantMoments(parsed.important_moments),
+    };
+  }
+
+  /**
+   * ★ 9-25 fix-session-summary-silent-failure：补处理一条失败的摘要。
+   *
+   * 只重跑摘要本身（**不重跑画像提取**——那会在同一批消息上重复提取）。
+   * 成功后**就地更新**失败行并补上向量。
+   *
+   * @param since 该失败窗口的起点（= 该会话中更早一条摘要的 ended_at）
+   * @returns 是否补成功
+   */
+  async retryFailedSummary(conv: Conversation, since: Date): Promise<boolean> {
+    const events = this.getSessionEvents(conv.session_id);
+    const messageEvents = events.filter(
+      e => e.type === 'message' && new Date(e.created_at) >= since,
+    );
+    const dialogue = messageEvents
+      .map(e => {
+        const p = e.payload;
+        if (!p?.content) return '';
+        const isUser = p.role === 'user' || !!p.sender_id;
+        return `[${isUser ? '用户' : '昔涟'}] ${p.content}`;
+      })
+      .filter(Boolean) as string[];
+    if (dialogue.length === 0) return false;
+
+    let data: SummaryData;
+    try {
+      data = await this.generateSummary(dialogue);
+    } catch (err: any) {
+      logger.warn(`[SessionEnd] 补处理仍失败 (${conv.id.slice(0, 30)}): ${err?.message ?? err}`);
+      return false;
+    }
+
+    let vector: number[] | undefined;
+    if (this.vectorStore) {
+      try {
+        vector = await this.embedService.embed(data.summary);
+      } catch {
+        // 向量失败不阻塞行更新（与成功路径一致的降级）
+      }
+    }
+
+    await this.conversationStore.updateSummaryResult(
+      conv.id,
+      {
+        summary: data.summary,
+        participants: JSON.stringify(data.participants),
+        topics: JSON.stringify(data.topics),
+        key_decisions: JSON.stringify(data.key_decisions),
+        character_perspective: data.character_perspective,
+      },
+      vector,
+    );
+    logger.info(`[SessionEnd] 补处理成功: ${conv.id.slice(0, 30)}`);
+    return true;
   }
 
   /** 解析并夹取 LLM 返回的 important_moments（形状不可信，逐项校验） */
