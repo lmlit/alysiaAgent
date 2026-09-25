@@ -97,13 +97,35 @@ migrated: 2026-08-07
 WebUI 管理面板零鉴权绑 0.0.0.0 是 P0 隐私风险（公网部署下任意设备可读画像/会话、
 删数据、经 /api/chat/stream 烧 LLM 额度）：
 
-- **服务模式强制鉴权**：所有 `/api/*` 校验 `Authorization: Bearer <token>`，
-  缺失/错误 → 401。chat 路由（registerChatRoutes）同受全局钩子保护
+- **鉴权触发条件（★ 9-25 server-bind-host 修订）**：**由绑定地址决定**，不再由模式决定——
+  绑定**回环** ⇒ 仅本机可达 ⇒ 免鉴权；绑定对外地址 ⇒ 所有 `/api/*` 校验
+  `Authorization: Bearer <token>`，缺失/错误 → 401。chat 路由（registerChatRoutes）同受钩子保护。
+  *修订理由*：原「服务模式强制鉴权」使本地用户被迫把服务暴露到局域网才用得上 WebUI。
+  改成跟随绑定地址后，「对外可达 ⇒ 必须鉴权」成为不可绕过的推论（不提供独立 requireAuth
+  开关——两个开关能配出 `0.0.0.0` + 免鉴权 = 局域网裸奔）。绑定地址见
+  `server.host`（缺省：桌面 127.0.0.1 / 服务 0.0.0.0，与修订前一致）
 - **token 来源**：config.yml `server.webuiToken: "${ALYSIA_WEBUI_TOKEN}"`
   （env 注入，与 ownerId 同机制）；compose environment 必须透传 ALYSIA_WEBUI_TOKEN
-- **fail closed**：服务模式未配置 token → 全部拒绝（401）+ 启动 logger.warn 提示配置
+- **fail closed**：**需鉴权时**未配置 token → 全部拒绝（401）+ 启动 logger.warn 提示配置
   ——杜绝零鉴权裸奔
-- **桌面模式**（ALYSIA_DESKTOP=1）：绑 127.0.0.1 + 免鉴权（本地工具体验不变）
+- **桌面模式**（ALYSIA_DESKTOP=1）：绑 127.0.0.1 + 免鉴权。
+  ★ 9-25 后这只是回环规则的一个实例（桌面模式的默认绑定地址是回环）；
+  想要"本地 + 免鉴权"**不必**开桌面模式（那会连带关掉 IM 适配器/主动推送/切换前端），
+  在 config.yml 写 `server.host: "127.0.0.1"` 即可
 - **/api/health 豁免**：容器 healthcheck 无 token 可配（compose healthcheck 不受影响）
 - **前端**：localStorage `webui_token` 附加 Authorization 头；401 → 登录遮罩
   （输入 token 后重载）；静态资源不鉴权（SPA 壳可加载，数据保护点在 API）
+
+### 6.1 修复：钩子范围（2026-09-24，change: console-local-serve）
+
+★ **原实现违反了本节第 6 条**：`onRequest` 钩子拦下**所有**请求，不只是 `/api/*`。
+后果：浏览器导航到 `/` 无法携带 `Authorization` 头 → 401 → **前端页面根本加载不出来**。
+
+未暴露的原因：静态文件从不由 Fastify 出（本地走 vite dev；Docker 镜像未打包 dist），
+且已有测试只覆盖 `/api/*` 路径。
+
+修复要点：
+- 钩子只守 `/api/*`（`path.startsWith('/api/')`），其余直接放行
+- 路径判断**先剥 query**——原实现 `req.url === '/api/health'` 精确匹配，
+  带 query 的 `/api/health?probe=1` 会被误拦（healthcheck 变体会踩到）
+- 回归测试见 `packages/server/tests/webui-auth.test.ts`（补非 API 路径用例）

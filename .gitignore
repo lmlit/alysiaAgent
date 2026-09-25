@@ -15,3 +15,7 @@ tmp-trigger-profile.ts
 *.tsbuildinfo
 docs/Docker-Deployment.md
 packages/server/server.log
+
+# ★ 设计 hook（impeccable）的工具状态：config 是本机忽略规则，cache 还含绝对 Windows 路径
+#   两者都不该进仓库（2026-09-25）
+.impeccable/

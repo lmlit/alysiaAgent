@@ -9,6 +9,14 @@
 >   `Authorization: Bearer <server.webuiToken>`（`/api/health` 豁免，桌面模式免鉴权）。
 >   前端: `setWebuiToken(token)` 存 localStorage 后自动附加；401 → 登录遮罩。
 >   契约见 `openspec/specs/server-hardening/spec.md` §6。
+>
+> ★ 消费方（2026-09-24, adopt-nextjs-console）: 除 `packages/webui`（Vue，待废弃）外，
+>   新增 `packages/console`（Next.js，spec `alysia-console`）消费同一批端点。
+>   token 键名 `webui_token` 两个前端共用。**新增/修改端点必须同时考虑两个消费方**，
+>   直到 webui 废弃 change 落地。
+>
+> ✅ 原缺口已补（2026-09-25, add-life-readonly-endpoints）:
+>   `GET /api/life/summaries`（每日摘要）、`GET /api/life/companions`（配角在场）已上线路由。
 
 ## 0. 服务端开发约束（必读）
 
@@ -62,6 +70,9 @@
 | 素材 | `GET /api/stickers` | 表情包列表（findSticker） | 🟢 core 已封装 |
 | 隐私 | `POST /api/privacy` | 隐私模式切换 | 🟢 core 已封装 |
 | 生活 | `GET /api/life` | AI 生活状态快照 + 事件流 | 🟢 core 已封装 |
+| 生活 | `GET /api/life/summaries` | 近 7 天每日生活摘要 | 🟢 2026-09-25 上线路由 |
+| 生活 | `GET /api/life/companions` | 配角在场状态（含离场） | 🟢 2026-09-25 上线路由 |
+| 生活 | `GET /api/life/templates` | 生活素材库（种子 + 自创） | 🟢 core 已封装 |
 
 > 🟢 = core 方法已就绪，只需 Web 路由层包装
 > ⚠️ = 部分就绪，需补充
@@ -181,7 +192,13 @@ getPersonaSnapshot(): {
 
 ## 2.6 生活系统（AI 主动生活，2026-08-06 已封装；8-27 叙事化重构增量）
 
-**Web 路由**: `GET /api/life` → `{ snapshot, events }`（快照 + 近 7 天事件流）
+**Web 路由**:
+- `GET /api/life` → `{ snapshot, events }`（快照 + 近 7 天事件流）
+- `GET /api/life/summaries` → `{ summaries: [{date, summary}] }`（旧 → 新，窗口固定 7 天）
+  —— ★ 2026-09-25 `add-life-readonly-endpoints` 补口
+- `GET /api/life/companions` → `{ companions: [{name, status, basis?, updatedAt}] }`
+  （`status`: `present` 在场 / `expected` 期待中 / `off-scene` 离场；只读，
+  由 LifeService 巡检与事件生成维护，24h 无提及自动降级）—— ★ 同上补口
 
 | Core 方法 | 用途 |
 |-----------|------|

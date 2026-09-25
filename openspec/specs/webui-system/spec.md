@@ -35,20 +35,33 @@ Vue 3 + Vite + Pinia + vue-router(hash)SPA,`packages/webui/`;
 ## 6. 服务端集成
 
 - 静态托管:dist/index.html(hash 路由);产物缺失静默跳过
+- ★ 2026-09-24(console-local-serve):托管**可切换**——服务模式优先 `packages/console/out`,
+  桌面模式(`ALYSIA_DESKTOP=1`)仍托管本包 dist。契约见 `alysia-console` §7;
+  鉴权边界修复见 §7.1(钩子只守 `/api/*`,静态资源公开)
 - `GET /api/stickers/file/:name`:findSticker → 读文件返回(带 Content-Type/Cache-Control)
 
-## 7. Live2D(2026-08-15,change: webui-desktop-shell)
+## 7. ~~Live2D~~（2026-08-15 建，**2026-09-25 已迁出**到 console，change: migrate-live2d-to-console）
 
-- 模型:public/models/cyrene/(Cubism4,9.1MB;许可:是依七哒授权署名,不可商用)
-- 渲染层 src/live2d/:manager/mouth-sync/speaking-motion/interaction/expression-reset/focus/actions(照抄 Cyrene)
-- `Live2DCanvas.vue`:Vue 封装,暴露 window.live2d{playAction,startMouth,stopMouth,dispose};聊天视图右下角可折叠
-- `pet.html` + `pet.ts`:桌宠页(vite 多页入口),透明窗口加载
-- 依赖:pixi.js 7.3 + pixi-live2d-display 0.5.0-beta + live2dcubismcore.min.js(public/)
+- 模型 `public/models/cyrene/`（Cubism4，9.1MB；许可:是依七哒授权署名，不可商用）
+  → 已拷至 `packages/console/public/models/cyrene/`
+- 渲染层 `src/live2d/`（manager/mouth-sync/interaction/expression-reset/actions）
+  → 已迁至 `packages/console/lib/live2d/`；**`speaking-motion.ts` / `focus.ts` 是死代码，未搬**
+- `Live2DCanvas.vue` → 改写为 `console/components/live2d/live2d-canvas.tsx`（React）
+- `pet.html` + `pet.ts` 桌宠页 → **随 Electron 一起失去宿主**，不再需要
+- 依赖 pixi.js 7.3 + pixi-live2d-display + live2dcubismcore.min.js → 已在 console 侧声明
 
-## 8. Electron 壳(packages/desktop,2026-08-15)
+**迁移中发现的 7 个问题见 `alysia-console` §7.2**（GBK 编码文件、死的 Pixi 配置项、
+Cubism 时序、StrictMode 复用 canvas 丢 context、`window` 尺寸假设…）。
+本包现已无 Live2D 使用者，**待整体删除**。
 
-- 主进程 = 本地完整实例:AlysiaCore(本地 userData db,codeMode=true)+ createWebuiApp(127.0.0.1 随机端口)
-- 主窗口:1280×860 加载 SPA(hash 路由)
-- 桌宠窗口:400×500 transparent/frame:false/skipTaskbar/hasShadow:false + alwaysOnTop(screen-saver)
-  + setIgnoreMouseEvents(true,{forward:true})(照抄 Cyrene)
-- 一期不做动作工具(交互点击 9 命中区已可玩;play_live2d_action 留待 TTS 接线)
+## 8. ~~Electron 壳~~（2026-08-15 建，**2026-09-25 已删除**，change: drop-electron-desktop）
+
+- ~~主进程 = 本地完整实例:AlysiaCore(本地 userData db,codeMode=true)+ createWebuiApp(127.0.0.1 随机端口)~~
+  ★ 该描述**在删除前就已与实现不符**：实际是 fork `packages/server/dist/bootstrap.js`
+  （`cwd` = server 目录），**固定端口 6185**、**共用 `packages/server/data`**，非独立 userData db。
+- 删除理由：用户决定砍掉桌面端；它 load 的 `/#/chat`（hash 路由）与 `/pet.html` 都是本包独有，
+  与 `packages/console` 不兼容；且与本地 server 同端口同库（同开时子进程绑不上端口，静默失败）。
+- 连带删除：`packages/desktop/`（4 文件）、桌宠页 `pet.html` 的宿主。
+- **保留**：`ALYSIA_DESKTOP` / `IS_DESKTOP` 开关本身（见 `alysia-console` §7），
+  语义降级为"跳过 IM 适配器与主动推送的 UI-only 本地模式"，不再有 Electron 壳去设置它。
+- `play_live2d_action` 待办**未消失**，随 Live2D 迁移一并处理（见 `alysia-console`）。

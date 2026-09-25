@@ -18,7 +18,8 @@ migrated: 2026-08-07
 
 Alysia 从"桌面 AI Agent"重新定位为**有记忆、有人格的 AI 伴侣**。砍掉 Coding/编程模式，聚焦聊天体验。
 
-架构上借鉴 AstrBot 的 Platform 抽象 + Pipeline 洋葱模型 + EventBus，用 TypeScript monorepo 实现一套核心逻辑驱动多个端（服务端、桌面端）。
+架构上借鉴 AstrBot 的 Platform 抽象 + Pipeline 洋葱模型 + EventBus，用 TypeScript monorepo 实现一套核心逻辑驱动多个端（服务端 IM 适配器、Web 前端、dsh 插件）。
+（原文为"服务端、桌面端"——★ 9-25 Electron 桌面端已砍，见 `webui-system` §8）
 
 ### 1.2 系统边界
 
@@ -26,7 +27,7 @@ Alysia 从"桌面 AI Agent"重新定位为**有记忆、有人格的 AI 伴侣**
 |--------|--------|
 | Pipeline 洋葱模型消息处理 | Live2D 渲染（二期） |
 | Platform 抽象 + Telegram Adapter | 代码执行/Shell 沙箱 |
-| EventBus 事件总线 | Electron 桌面壳（二期） |
+| EventBus 事件总线 | ~~Electron 桌面壳（二期）~~ ★ 9-25 已砍（drop-electron-desktop） |
 | Agent Runner (tool-loop) | QQ/微信/Discord 平台（二期） |
 | 记忆系统接入 (6 Store) | 代码上下文 (CodeContextStore 已砍) |
 | 人格引擎 + 护栏 | |
@@ -123,8 +124,7 @@ alysia/
 │   │   ├── compose.yml
 │   │   └── package.json
 │   │
-│   └── desktop/                   # @alysia/desktop (二期)
-│       └── ...
+│   (desktop/ 已于 2026-09-25 删除 — change: drop-electron-desktop)
 │
 ├── pnpm-workspace.yaml
 └── tsconfig.json
@@ -751,7 +751,7 @@ Telegram API ──→ TelegramAdapter.onMessage()
 | 知识库 RAG | PDF/URL → 向量检索 |
 | 网页搜索 | Agent 工具 |
 | 定时提醒 | `/remind 30min 内容` |
-| WebUI | Fastify + Vue SPA 管理面板 |
+| Web 前端 | Fastify 同源托管 · console（Next.js，现行）/ webui（Vue，待废） |
 
 ### P2 — 二期
 
@@ -759,7 +759,7 @@ Telegram API ──→ TelegramAdapter.onMessage()
 |------|------|
 | 主动回复 | 概率掷骰子接话 |
 | 更多平台 | QQ / Discord / 微信 |
-| Desktop | Electron + Live2D |
+| ~~Desktop~~ | ~~Electron + Live2D~~ ★ 9-25 Electron 砍掉（drop-electron-desktop）；Live2D 迁往 console |
 
 ---
 
