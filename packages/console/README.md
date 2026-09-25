@@ -1,33 +1,33 @@
-# a-gen-t-view
+# @alysia/console — 昔涟控制台
 
-This is a [Next.js](https://nextjs.org) project bootstrapped with [v0](https://v0.app).
+「昔涟」的前端（Next.js 16 + React 19 + Tailwind 4），取代 `packages/webui`（Vue，待废）。
 
-## Built with v0
+契约见 `openspec/specs/alysia-console/spec.md`。
 
-This repository is linked to a [v0](https://v0.app) project. You can continue developing by visiting the link below -- start new chats to make changes, and v0 will push commits directly to this repo. Every merge to `main` will automatically deploy.
+## 形态
 
-[Continue working on v0 →](https://v0.app/chat/projects/prj_vxvIdEt6jZIicjB9zviU2HY4oKrs)
+| | 命令 | 说明 |
+|---|---|---|
+| 开发 | `pnpm dev:console`（根目录） | `next dev` on :3000，rewrites 代理 `/api` → 127.0.0.1:6185 |
+| 生产 | `pnpm build:console` 后起 server | 静态导出到 `out/`，由 Fastify 同源托管（无代理、无 CORS） |
 
-## Getting Started
+**构建依赖网络**：`next/font/google` 会下载字体并自托管为 woff2，离线构建会失败。
 
-First, run the development server:
+## 路由
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-```
+`/`（landing）、`/dashboard`、`/chat`、`/life`、`/personality`
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## 第三方资产
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Live2D 模型 — Cyrene
 
-## Learn More
+`public/models/cyrene/`（Cubism 4，21 文件）
 
-To learn more, take a look at the following resources:
+> **模型来自 Cyrene-Agent，作者「是依七哒」。
+> 授权个人使用 / 修改 / 再分发，要求署名，<ins>不可商用</ins>。**
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-- [v0 Documentation](https://v0.app/docs) - learn about v0 and how to use it.
+运行依赖 `public/live2dcubismcore.min.js`（Live2D 官方 Cubism Core 运行时）。
+
+### 其他
+
+字体由 `next/font` 从 Google Fonts 拉取自托管；图标来自 `lucide-react`。

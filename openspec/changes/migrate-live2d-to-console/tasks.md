@@ -54,6 +54,23 @@
 - [ ] 更新 `docs/HANDOFF.md`
 - [ ] `alysia-todo-live2d-states` 的待办转到 console 语境
 
+## ★ 补：署名（授权要求的，此前没做）
+
+授权原文（`docs/dsh-migration-guide.md` §4.3 第 20 条）：
+
+> 模型来自 Cyrene-Agent(作者「是依七哒」)，授权个人使用/修改/再分发，**署名、不可商用**；
+> **README/页面需标注**。
+
+**该要求在迁移前就未满足**（全仓库没有 LICENSE/NOTICE，模型目录无说明）。
+本 change 迁移时一并补上：
+
+- [x] `packages/console/README.md` —— 原本是 **v0 的模板残留**（标题 `a-gen-t-view`、
+      指向一个无关的 v0 项目链接）。改写为本项目实际说明 + 模型授权段
+- [x] `public/models/cyrene/NOTICE.md` —— 放在资产旁，翻到目录就能看到
+- [ ] `packages/webui/` 那份仍在（待废），删除时一并处理
+
+**不可商用是硬约束** —— 将来若要对外分发/商业化，需先换模型或另行取得授权。
+
 ## 遗留 / 后续
 
 - **`soul.md` 的「Live2D 桌面空间」** —— 用户决定另开 change 改（她的自我认知里还有 Electron
