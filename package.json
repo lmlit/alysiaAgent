@@ -7,7 +7,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "build": "pnpm -r build",
-    "dev:server": "pnpm --filter @alysia/server dev"
+    "dev:server": "pnpm --filter @alysia/server dev",
+    "dev:console": "pnpm --filter @alysia/console dev",
+    "build:console": "pnpm --filter @alysia/console build"
   },
   "devDependencies": {
     "@rolldown/binding-win32-x64-msvc": "^1.1.3",

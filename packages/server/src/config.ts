@@ -22,7 +22,16 @@ export interface ServerConfig {
   telegram: { token: string };
   qq?: QQConfig;
   qq_official?: QQOfficialConfig;
-  server: { port: number; dataDir: string; workspaceDir: string; webuiToken?: string };
+  server: {
+    port: number;
+    dataDir: string;
+    workspaceDir: string;
+    webuiToken?: string;
+    /** ★ 9-25 server-bind-host：监听地址。缺省由 bootstrap 决定
+     *  （桌面模式 127.0.0.1 / 服务模式 0.0.0.0，与改动前一致）。
+     *  绑定回环时自动免鉴权——见 bootstrap 的 isLoopbackHost。 */
+    host?: string;
+  };
   features?: { codeMode?: boolean; shell?: boolean; filesystem?: boolean; streaming?: boolean };
   /** ★ 8-10 采样参数统一配置（7 槽位，缺省走 core DEFAULT_SAMPLING floor） */
   sampling?: DeepPartial<SamplingConfig>;
@@ -78,6 +87,8 @@ export function loadConfig(path: string): ServerConfig {
       workspaceDir: data.server?.workspaceDir ?? './data/workspace',
       // ★ 8-29 cr-p0-webui-auth：WebUI Bearer token（${ALYSIA_WEBUI_TOKEN} env 注入）
       webuiToken: data.server?.webuiToken ?? '',
+      // ★ 9-25 server-bind-host：留 undefined 时由 bootstrap 按模式取默认，保持线上行为不变
+      host: data.server?.host,
     },
     features: data.features ?? { codeMode: false },
     sampling: data.sampling ?? undefined,

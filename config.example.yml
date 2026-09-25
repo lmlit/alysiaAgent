@@ -28,6 +28,14 @@ platforms:
 
 server:
   port: 6185
+  # 监听地址（★ 9-25 server-bind-host）。缺省 0.0.0.0（对外，线上容器需要）。
+  # 绑定回环（127.0.0.1 / localhost / ::1）→ 只有本机可达 → /api/* 自动免鉴权。
+  # 改回对外地址会自动恢复鉴权——鉴权跟随绑定地址，没有独立开关。
+  #
+  # ⚠️ 本机使用**不要**在这里写 host —— 本文件会被部署 SOP 打包传到服务器
+  #   （tar czf alysia-deploy.tar.gz compose.yml config.yml），
+  #   写 "127.0.0.1" 会让容器绑回环、6186:6185 端口映射失效、服务器失联。
+  #   请在 .env 里写 ALYSIA_HOST=127.0.0.1（.env 不进部署包）。
   dataDir: "./data"
   workspaceDir: "./data/workspace"
 

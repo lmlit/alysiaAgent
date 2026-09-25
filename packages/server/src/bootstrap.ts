@@ -1,7 +1,9 @@
 // ★ 8-08 优化：dotenv 替换手写解析（支持引号/转义；默认不覆盖已存在变量——
 //   容器里 compose environment 优先，与旧 `if (!process.env[key])` 语义一致）
 import dotenv from 'dotenv';
-import { resolve } from 'path';
+import { dirname, join, resolve } from 'path';
+import { fileURLToPath } from 'url';
+import { existsSync } from 'fs';
 const envPath = resolve(process.cwd(), '..', '..', '.env');
 const envResult = dotenv.config({ path: envPath, quiet: true });
 if (envResult.error) {
@@ -17,8 +19,10 @@ import { TelegramAdapter } from './adapters/telegram.js';
 import { QQOneBotAdapter } from './adapters/qq-onebot.js';
 import { QQOfficialAgentAdapter } from './adapters/qq-official.js';
 import { loadConfig } from './config.js';
+import { needsAuth, resolveBindHost } from './net.js';
 
-// ★ 8-15 桌面端模式（webui-desktop-shell）：跳过 IM 适配器与主动推送，只起 core + webui
+// ★ 8-15 UI-only 模式（原为 webui-desktop-shell）：跳过 IM 适配器与主动推送，只起 core + webui
+//   ★ 9-25 drop-electron-desktop：Electron 壳已砍，此开关保留作纯 UI 本地调试用
 const IS_DESKTOP = process.env.ALYSIA_DESKTOP === '1';
 
 async function main() {
@@ -272,14 +276,43 @@ async function main() {
 
   // ★ WebUI 管理面板（Fastify 路由层，每条路由 = core 方法的真实调用方）
   // ★ 8-29 cr-p0-webui-auth：服务模式强制鉴权（桌面模式绑 127.0.0.1 免鉴权）
+  // ★ 9-24 console-local-serve：服务模式优先托管新前端 packages/console（Next.js 静态导出）；
+  //   ★ 9-25 drop-electron-desktop：Electron 壳已砍（它 load 的 /#/chat 与 /pet.html 都是 webui 独有）。
+  //   webui 现只在 UI-only 模式下兜底，本体待 Live2D 迁往 console 后删除。
   try {
     const { createWebuiApp } = await import('./webui/server.js');
+    // ★ 9-25 server-bind-host：绑定地址与鉴权范围解耦于 IS_DESKTOP。
+    //   默认值不变（桌面 127.0.0.1 / 服务 0.0.0.0）——线上容器靠 0.0.0.0 做端口映射。
+    //   本地想只绑回环：config.yml 里写 server.host: "127.0.0.1"。
+    //   本地只绑回环：.env 里写 ALYSIA_HOST=127.0.0.1（不要写进 config.yml——那个文件会被部署到服务器）
+    const bindHost = resolveBindHost(config.server.host, process.env.ALYSIA_HOST, IS_DESKTOP);
+    const requireAuth = needsAuth(bindHost);
+    // ★ 容器内绑回环 = 端口映射必然失效（外部永远连不上）。这是把本机配置误带进部署包的典型症状，
+    //   必须响亮地喊出来，别让它变成一个"服务在跑但访问不了"的哑谜
+    if (!requireAuth && existsSync('/.dockerenv')) {
+      logger.error(
+        `[WebUI] ⚠️⚠️ 容器内绑定回环地址（${bindHost}）—— docker 端口映射会失效，外部访问不了！` +
+        '请移除 config.yml 的 server.host，或把 ALYSIA_HOST 从容器环境里去掉',
+      );
+    }
     const webuiToken = config.server.webuiToken ?? '';
-    const webui = createWebuiApp(core, { webuiToken, requireAuth: !IS_DESKTOP });
-    await webui.listen({ port: config.server.port, host: IS_DESKTOP ? '127.0.0.1' : '0.0.0.0' });
-    logger.info(`WebUI on http://localhost:${config.server.port} (routes exercise all core methods)`);
-    if (!IS_DESKTOP && !webuiToken) {
+    // ESM 无 __dirname（module: ESNext）→ 与 webui/server.ts 同款定位法
+    const serverDir = dirname(fileURLToPath(import.meta.url));
+    const consoleDist = resolve(serverDir, '../../console/out');
+    const staticDist = !IS_DESKTOP && existsSync(join(consoleDist, 'index.html')) ? consoleDist : undefined;
+    const webui = createWebuiApp(core, { webuiToken, requireAuth, staticDist });
+    await webui.listen({ port: config.server.port, host: bindHost });
+    const frontend = staticDist ? 'console (Next.js)' : 'webui (Vue)';
+    const authNote = requireAuth ? '鉴权: 开' : '鉴权: 关（回环地址，仅本机可达）';
+    logger.info(`WebUI on http://${bindHost === '0.0.0.0' ? 'localhost' : bindHost}:${config.server.port} — 前端: ${frontend} · 监听 ${bindHost} · ${authNote}`);
+    if (!IS_DESKTOP && !staticDist) {
+      logger.info('[WebUI] packages/console/out 不存在 —— 回退 webui。构建新前端：pnpm --filter @alysia/console build');
+    }
+    if (requireAuth && !webuiToken) {
       logger.warn('[WebUI] ⚠️ 未配置 server.webuiToken（config.yml 或 ALYSIA_WEBUI_TOKEN 环境变量）——/api/* 已全部拒绝(401)。配置后重启生效');
+    }
+    if (!requireAuth) {
+      logger.info('[WebUI] 绑的是回环地址，/api/* 免鉴权。要对外提供服务请改 server.host（改后自动恢复鉴权）');
     }
   } catch (err: any) {
     logger.error('WebUI init failed:', err.message);

@@ -30,5 +30,13 @@ COPY --from=builder /app/pnpm-workspace.yaml ./
 RUN mkdir -p /app/node_modules/@alysia && \
     ln -sf ../../packages/core /app/node_modules/@alysia/core && \
     ln -sf ../../packages/server /app/node_modules/@alysia/server
+
+# ★ 9-25 新前端（console）：静态导出产物直接 COPY 进镜像，不在 Docker 里构建 ——
+#   next build 要联网下 Google Fonts（next/font 自托管 woff2），alpine 里构建既慢又脆。
+#   本地先跑 `pnpm build:console` 产出 packages/console/out。
+#   bootstrap 按 resolve(dist/bootstrap.js, '../../console/out') 定位 → /app/packages/console/out。
+#   产物不存在时 COPY 直接报错（响亮失败，好过静默部署一个没有前端的镜像）。
+COPY packages/console/out ./packages/console/out
+
 EXPOSE 6185
 CMD ["node", "packages/server/dist/bootstrap.js"]

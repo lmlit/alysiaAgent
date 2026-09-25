@@ -33,7 +33,7 @@ import type { AlysiaCore } from '@alysia/core';
 import { logger } from '@alysia/core';
 import { registerChatRoutes } from './chat.js';
 import { existsSync, readFileSync, statSync, writeFileSync, unlinkSync } from 'fs';
-import { basename, dirname, join, resolve } from 'path';
+import { basename, dirname, join, resolve, sep } from 'path';
 import { fileURLToPath } from 'url';
 
 /** ★ 8-29 cr-p0-webui-auth：WebUI 管理面板鉴权选项
@@ -44,16 +44,28 @@ import { fileURLToPath } from 'url';
 export interface WebuiAuthOptions {
   webuiToken?: string;
   requireAuth?: boolean;
+  /** ★ 9-24 console-local-serve：前端静态产物根目录（绝对路径）。
+   *  不传 = 默认 packages/webui/dist（Vue 旧前端）。
+   *  传 packages/console/out = 托管 Next.js 新前端（多页导出，路径映射不同）。
+   *  目录不存在时静默回退默认值，保证"没构建也能用"。 */
+  staticDist?: string;
 }
 
 export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
-  const { webuiToken = '', requireAuth = false } = opts;
+  const { webuiToken = '', requireAuth = false, staticDist } = opts;
   const app = Fastify({ logger: false });
 
-  // ★ 8-29 cr-p0-webui-auth：全局 auth 钩子（chat 路由 registerChatRoutes 同受保护）
+  // ★ 8-29 cr-p0-webui-auth：auth 钩子（chat 路由 registerChatRoutes 同受保护）
+  // ★ 9-24 console-local-serve 修复：原实现拦下**所有**请求，与上方声明的意图
+  //   （"所有 /api/* 校验"）不符 —— 后果是浏览器导航到 `/` 拿 401，前端页面根本加载不出来
+  //   （浏览器导航带不上 Authorization 头）。旧前端没暴露此问题是因为静态文件从不由 Fastify 出：
+  //   本地走 vite dev，Docker 镜像里没打包 dist。
+  //   现改为只守 /api/*：静态资源公开、数据仍在鉴权后 —— 标准 SPA + API 鉴权模型。
   if (requireAuth) {
     app.addHook('onRequest', async (req: any, reply: any) => {
-      if (req.url === '/api/health') return; // 容器 healthcheck 豁免
+      const path = String(req.url ?? '').split('?')[0];
+      if (!path.startsWith('/api/')) return; // 静态资源/页面不鉴权
+      if (path === '/api/health') return;    // 容器 healthcheck 豁免
       const auth = String(req.headers.authorization ?? '');
       if (!webuiToken || auth !== `Bearer ${webuiToken}`) {
         return reply.code(401).send({ error: 'unauthorized' });
@@ -104,29 +116,74 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
 
   // ★ 8-15 WebUI 静态托管(生产形态:同源 serve 整个 dist——assets/模型/pet.html 全量;
   //   未知路径回退 index.html(hash 路由);dev 用 vite dev server 5173 代理 /api)
-  const webuiDist = resolve(dirname(fileURLToPath(import.meta.url)), '../../../webui/dist');
+  // ★ 9-24 console-local-serve：支持托管 Next.js 新前端（多页静态导出）。
+  //   两者路径映射不同，用「候选链」统一处理：
+  //     webui(Vue hash SPA)：/anything → index.html
+  //     console(Next export)：/life → life.html；未命中 → 404.html
+  const defaultDist = resolve(dirname(fileURLToPath(import.meta.url)), '../../../webui/dist');
+  // 显式传入但产物不存在时回退默认值（"没构建也能用"，不 500）
+  const dist = staticDist && existsSync(join(staticDist, 'index.html')) ? staticDist : defaultDist;
+  if (staticDist && dist !== staticDist) {
+    logger.warn(`[WebUI] staticDist 不存在或缺少 index.html，回退默认前端：${defaultDist}`);
+  }
+
   const MIME: Record<string, string> = {
     html: 'text/html; charset=utf-8', js: 'text/javascript', css: 'text/css',
     json: 'application/json', png: 'image/png', jpg: 'image/jpeg', gif: 'image/gif',
     webp: 'image/webp', svg: 'image/svg+xml', ico: 'image/x-icon', wasm: 'application/wasm',
     'model3.json': 'application/json', moc3: 'application/octet-stream', exp3: 'application/json',
     physics3: 'application/json', mp3: 'audio/mpeg', wav: 'audio/wav', zst: 'application/octet-stream',
+    // Next.js 静态导出产物：woff2 = next/font 自托管字体；txt = RSC payload
+    woff2: 'font/woff2', txt: 'text/plain; charset=utf-8', map: 'application/json',
   };
+
+  /** 依次尝试：原路径（文件）→ path.html → path/index.html；都不中返回 null */
+  function resolveStatic(pathname: string): string | null {
+    // 两端斜杠都要剥：Next 导出的是 `life.html`，用户手打 `/life/` 不该 404
+    const clean = pathname.replace(/^\/+/, '').replace(/\/+$/, '');
+    const candidates = clean
+      ? [clean, `${clean}.html`, join(clean, 'index.html')]
+      : ['index.html'];
+    for (const rel of candidates) {
+      const abs = resolve(dist, rel);
+      // 防目录穿越（用 sep 收口，避免 /dist-evil 命中 /dist）
+      if (abs !== dist && !abs.startsWith(dist + sep)) continue;
+      if (existsSync(abs) && !statSync(abs).isDirectory()) return abs;
+    }
+    return null;
+  }
+
   // Fastify v5 无 '/*' 通配路由 → 用 setNotFoundHandler 兜底静态文件(排除 /api)
-  if (existsSync(join(webuiDist, 'index.html'))) {
+  if (existsSync(join(dist, 'index.html'))) {
     app.setNotFoundHandler(async (req: any, reply: any) => {
       const url = String(req?.url ?? '/').split('?')[0];
       if (url.startsWith('/api/')) {
         return reply.code(404).send({ ok: false, error: 'not found' });
       }
-      const pathname = decodeURIComponent(url.replace(/^\//, ''));
-      let filePath = resolve(webuiDist, pathname || 'index.html');
-      // 防目录穿越
-      if (!filePath.startsWith(webuiDist)) return reply.code(403).send({ ok: false });
-      if (!existsSync(filePath) || statSync(filePath).isDirectory()) {
-        filePath = join(webuiDist, 'index.html');
+
+      let pathname: string;
+      try {
+        pathname = decodeURIComponent(url);
+      } catch {
+        // 畸形百分号编码：不当静态路径处理
+        return reply.code(400).send({ ok: false, error: 'bad path' });
       }
+
+      let status = 200;
+      let filePath = resolveStatic(pathname);
+      if (!filePath) {
+        // 未命中：Next 有 404.html 就用它（真 404 语义）；webui 回退 index.html（hash 路由）
+        const fourOhFour = join(dist, '404.html');
+        if (existsSync(fourOhFour)) {
+          filePath = fourOhFour;
+          status = 404;
+        } else {
+          filePath = join(dist, 'index.html');
+        }
+      }
+
       const ext = filePath.split('.').pop()?.toLowerCase() ?? '';
+      reply.code(status);
       reply.type(MIME[ext] ?? 'application/octet-stream');
       reply.header('Cache-Control', ext === 'html' ? 'no-cache' : 'public, max-age=86400');
       return reply.send(readFileSync(filePath));
@@ -293,6 +350,18 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
     const events = core.memoryManager.listLifeEvents(7);
     return { snapshot, events };
   });
+
+  // ★ 9-25 add-life-readonly-endpoints：两个「core 有方法、无出口」的只读补口
+  //   窗口与 /api/life 一致（7 天），避免"摘要 30 天 / 事件 7 天"的错位
+  /** 近 7 天每日生活摘要（旧 → 新） */
+  app.get('/api/life/summaries', async () => ({
+    summaries: core.memoryManager.listLifeSummaries(7),
+  }));
+
+  /** 配角在场状态（含 off-scene；由 LifeService 巡检维护，只读） */
+  app.get('/api/life/companions', async () => ({
+    companions: core.memoryManager.listScenePresence(),
+  }));
 
   // ── ★ 8-14 内容自进化（content-self-evolution）：硬审计面 + 用户事后删除兜底 ──
   app.get('/api/worldbook', async () => ({ entries: core.memoryManager.listWorldbookEntries() }));
