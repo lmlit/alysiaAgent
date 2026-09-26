@@ -10,28 +10,43 @@
 
 ## 一句话状态（2026-09-26）
 
-**线上已部署**（镜像 `server-alysia:latest` @ 2026-09-26 00:45）。本次上线的核心是一个
-**修了 22 天的静默故障**：会话摘要 100% 失败、存的全是占位符，而所有存活检查全程为绿。
+**线上已部署两次**（`00:45` 摘要修复 → `19:09` 窗口截断修复）。会话摘要管道此前**一直是死的**，
+前后查出**两个独立缺陷**：先是解析/预算（已修），部署后验证又发现事件窗口取错端（已修）。
+详见下方「两起事故」。
 
 **同时处理了一次凭据泄露**：服务器密码明文在公开仓库里躺了 28 天，已轮换作废。
 
-**新前端 `packages/console` 随本次部署上线**（真数据 / 聊天流式 / Live2D / 同源托管）。
+**新前端 `packages/console` 已上线**（真数据 / 聊天流式 / Live2D / 同源托管）。
 
-工作区干净，`master` @ `2ddab3d`。**718 测试全过**（core 506 + server 192）。
+工作区干净，`master` @ `42b3551`。**711 测试全过**（core 519 + server 192）。
 
 ---
 
 ## ⚡ 下一步（按优先级）
 
-### 1. 验证摘要修复（**~06:48 之后**）
+### 1. 验证摘要管道真的活了（**~9-27 01:09 之后**）
 
-cron 是 `setInterval(6h)` 且**启动时不立即跑** → 首次归档约在 9-26 06:48。
+容器 9-26 19:09 重启，cron 是 `setInterval(6h)` 且**启动时不立即跑** → 首次归档约在
+**9-27 01:09**。⚠️ 别再用旧的 06:48 那个时间点（那是上一次部署的）。
 
 ```bash
-ssh hexi@121.41.111.120 "sudo docker logs alysia-server --since 2h | grep -E 'SessionEnd|补处理|archived'"
-# 期望：摘要正常生成；若失败会明确打 failed（不再静默）
-# 兜底：查库  SELECT COUNT(*) FROM conversations WHERE summary_status='failed'
+ssh hexi@121.41.111.120 "sudo docker logs alysia-server --since 3h | grep -E 'SessionEnd|archived|补处理'"
+# 期望：archived 1/1 且**库里真的多出 conversation 行**；失败会明确打 failed（不再静默）
 ```
+
+**判定标准不是日志，是数据库**（这次就是被日志 `archived 1/1` 骗了 18 小时）：
+
+```sql
+SELECT COUNT(*) FROM conversations WHERE ended_at > '2026-09-26T11:00:00Z';
+-- 期望 ≥ 1，且 summary_status='ok'、summary 不是 'Session %summary'
+```
+
+**已完成的验证**（部署后立刻做的，只读）：
+- 本地端到端（`scripts/verify-window-fix.ts` + 生产库副本 + 真实 API）：134 → 135 条，
+  窗口内 20 条被摘要，内容是真实生成的 ✅
+- 部署后的容器代码在生产数据上：`getBySession(since=anchor)` 返回 20 条 = 窗口应有条数 ✅
+
+所以剩下要确认的只是「容器自己的 cron 跑得通」——同一段代码，置信度高。
 
 ### 2. `backfill-failed-session-summaries`（存量 52 条占位符）
 
@@ -75,6 +90,7 @@ ssh hexi@121.41.111.120 "sudo docker logs alysia-server --since 2h | grep -E 'Se
 |---|---|
 | `fix-credential-leak-in-sync-script` | 服务器密码硬编码在公开仓库 28 天 → 已轮换 + 凭据外置到**仓库树外** |
 | `fix-session-summary-silent-failure` | 会话摘要 22 天 100% 失败 → 失败不再伪装成成功 + 推理模型预算 |
+| `fix-session-event-window-truncation` | 部署后验证发现：`getBySession` 取最旧 1000 条 → 归档空转 → 改取最近 N 条 + 空转可区分 |
 
 **外加三个 backlog 立项**：`backfill-failed-session-summaries` / `add-ops-health-report` /
 `clean-spec-diff-residue`。
@@ -109,6 +125,27 @@ pre-commit 凭据扫描另立项。
 **修复**：抽共用 `utils/llm-json.ts`；两个槽位 512 → 2048 + `response_format`；失败重试 1 次；
 **失败不写占位符**（`summary=''` + `summary_status='failed'` + **不 embed**）；cron 自动补处理。
 
+### 🔴 事故三：事件窗口取错端（**部署后才暴露**）
+
+上一轮修完**部署上线**，容器跑 18 小时、cron 三次，**库里 0 条新摘要**，而日志一路报
+`archived 1/1`（看着完全正常）。
+
+**根因**：`EventStore.getBySession` 是 `ORDER BY created_at ASC LIMIT 1000` —— 取**最旧**的
+1000 条，而调用方要的是"最近的会话内容"。主会话积累到 1436 条事件后，anchor 之后的事件
+**一条都取不到** → `process()` 早退 → 空转。
+
+**★ 这条推翻了事故二的归因**：此前把"最后真摘要是 9-03"归因于 8-28 的字段改动 + 9-01 部署；
+实际该会话第 1000 条事件正是 **2026-09-03T01:26**，最后一条真摘要是 03:45。
+**9-03 是"撞上 1000 上限"的日子。**
+
+**修复**：`getBySession(sessionId, {limit?, since?})` 改为「最近的 N 条、可 `since` 过滤、
+升序返回」，窗口过滤**下推到 SQL**；`process()` 返回 `SessionEndResult{summarized, reason}`，
+`archiveStaleSessions` 按真实结果计数并区分「跳过/失败」。
+
+**教训（最重要的那条）**：`archived++` 无条件自增，让"什么都没做"和"归档成功"在日志里
+长得一模一样。**降级/空转必须可区分**——这是本项目第三次栽在同一类问题上
+（占位符伪装成摘要、存活检查伪装成健康、空转伪装成归档）。
+
 ---
 
 ## ⚠️ 关键约定（勿踩）
@@ -127,6 +164,12 @@ pre-commit 凭据扫描另立项。
    结构化输出槽位必须 ≥1024，否则会得到 HTTP 200 + 空内容。
    **单测抓不到**（LLM 是 mock 的）→ 改 prompt / 换模型 / 调采样后**跑
    `packages/server/scripts/verify-session-summary-fix.ts`**（真实 API 探针）。
+7. **★ 计数类日志必须反映真实结果**：`archived++` / `summaryGenerated: true` /
+   `{"status":"ok"}` 这类**无条件成功值**是"静默故障"的温床。本项目已栽三次：
+   占位符伪装成摘要、存活检查伪装成健康、**空转伪装成归档**。
+   凡是"成功/完成"的日志，都要问一句：**失败路径会不会走到这里？**
+8. **★ 部署后的验证必须查数据，不能只看日志**：事故三就是被 `archived 1/1` 骗了 18 小时。
+   判定标准写进「下一步」了。
 7. **★ spec 里有残留的 `+ ` diff 标记**（`memory-system` 末尾 5 行）。任何基于
    `grep '^+ '` 的合并/校验都会被它带偏——**合并后用"删掉插入段应逐字节还原"来验证**，
    别只数行数。
@@ -148,8 +191,9 @@ pre-commit 凭据扫描另立项。
 | 前端分流 | 服务模式 → console；`ALYSIA_DESKTOP=1` → webui（UI-only，已无 Electron 壳） |
 | 服务器 | `hexi@121.41.111.120`（阿里云）。宿主机端口 **6186** → 容器 6185 |
 | 服务器凭据 | `$HOME/.alysia-deploy-credentials`（仓库树外）。轮换密码后**同步更新它** |
-| 服务器库备份 | `alysia.db.bak-*`，本次部署前备份在 `~/alysia/data/` |
-| 回滚 | `sudo docker tag server-alysia:rollback-20260901 server-alysia:latest && sudo docker compose -f ~/alysia/compose.yml up -d` |
+| 服务器库备份 | `~/alysia/data/alysia.db.bak-*`（保留了两份：`before-summaryfix` / `before-windowfix`） |
+| 回滚（两个锚点） | `sudo docker tag server-alysia:<tag> server-alysia:latest && sudo docker compose -f ~/alysia/compose.yml up -d`<br>`rollback-20260901` = 9-01 老版；`rollback-20260926a` = 只含摘要解析修复、无窗口修复 |
+| **部署后必须查数据** | 别只看 `archived N/N` 或容器 healthy（见约定 7/8） |
 | 数据 | 服务器 `~/alysia/data` 卷挂载；迁移一律 **ALTER TABLE + try-catch 不 DROP** |
 
 ### ★ Docker 代理坑（2026-09-26 踩到并修复）
