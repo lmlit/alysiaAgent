@@ -20,6 +20,22 @@
    52 条**近乎相同**的垃圾向量在 LanceDB 里，可能被召回出来当真内容用，
    还会干扰正在调参的召回相似度分布（`tune-recall-with-runtime-data` 的基线会被带偏）
 
+## ⚠️ 找法（2026-09-26 部署后补记，容易搞错）
+
+这 52 条老行的 `summary_status` 是 **`'ok'` 而不是 `'failed'`**。
+
+原因：`fix-session-summary-silent-failure` 只对**从新代码上线后**产生的失败打 `'failed'`
+标记；存量行的 `summary` 是非空的垃圾字符串（`"Session <id> summary"`），
+状态列没法把它和真摘要区分开。
+
+⇒ **必须按内容模式匹配来找**：
+
+```sql
+SELECT COUNT(*) FROM conversations WHERE summary LIKE 'Session %summary';
+```
+
+**不要**用 `WHERE summary_status='failed'` 查存量——那会是 0，看起来像"没有要回填的"。
+
 ## 需求
 
 - [ ] **先确认可回填性**（决定性的第一问）：这批会话的原始 events 是否还在 `events` 表里？
