@@ -66,12 +66,30 @@ export class EventStore {
       .run(Math.min(1, Math.max(0, importance)), id);
   }
 
-  getBySession(sessionId: string, limit?: number): MemoryEvent[] {
-    const query = limit
-      ? 'SELECT * FROM events WHERE session_id = ? ORDER BY created_at ASC LIMIT ?'
-      : 'SELECT * FROM events WHERE session_id = ? ORDER BY created_at ASC LIMIT 1000';
-    const params: unknown[] = limit ? [sessionId, limit] : [sessionId];
-    const rows = this.db.prepare(query).all(...params) as Record<string, unknown>[];
+  /**
+   * 取该会话的事件：**最近的** N 条（可按时间窗过滤），按时间**升序**返回。
+   *
+   * ★ 9-26 fix-session-event-window-truncation：原实现是
+   *   `ORDER BY created_at ASC LIMIT 1000` —— **取的是最旧的 1000 条**，
+   *   而调用方要的是"最近的会话内容"。后果：主会话积累到 1436 条事件后，
+   *   `since`（上条摘要时间）之后的事件**一条都取不到** → 归档管道空转 18 小时、
+   *   0 条新摘要，而日志还报 `archived 1/1`（看起来正常）。
+   *
+   *   窗口过滤**下推到 SQL**：原实现是"取 1000 条再在内存里 filter"，
+   *   于是能不能取到窗口内的数据**取决于窗口外有多老**——这正是故障成因。
+   *
+   *   先 DESC 取最近 N 条、再在外层 ASC 排回来，保证对话拼接顺序正确。
+   */
+  getBySession(sessionId: string, opts?: { limit?: number; since?: Date }): MemoryEvent[] {
+    const limit = opts?.limit ?? 1000;
+    const since = opts?.since;
+    const inner = since
+      ? 'SELECT * FROM events WHERE session_id = ? AND created_at >= ? ORDER BY created_at DESC LIMIT ?'
+      : 'SELECT * FROM events WHERE session_id = ? ORDER BY created_at DESC LIMIT ?';
+    const params: unknown[] = since ? [sessionId, since.toISOString(), limit] : [sessionId, limit];
+    const rows = this.db
+      .prepare(`SELECT * FROM (${inner}) ORDER BY created_at ASC`)
+      .all(...params) as Record<string, unknown>[];
     return rows.map(r => this.rowToEvent(r));
   }
 

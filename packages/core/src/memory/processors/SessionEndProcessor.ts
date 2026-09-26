@@ -14,6 +14,20 @@ import type { ILLMService } from '../interfaces/ILLMService.js';
 import type { IEmbedService } from '../interfaces/IEmbedService.js';
 import type { IVectorStore } from '../interfaces/IVectorStore.js';
 
+/**
+ * ★ 9-26 fix-session-event-window-truncation：`process()` 的处理结果。
+ *
+ * 存在的意义是**让空转可区分**：此前 `process()` 返回 void，调用方无条件计数，
+ * 于是"提前 return、什么都没做"和"归档成功"在日志里长得一样
+ * （线上表现为 `archived 1/1` 而库里 0 条新摘要，持续 18 小时无人发现）。
+ */
+export interface SessionEndResult {
+  /** 是否产生了可用的摘要（写入了 status='ok' 的行） */
+  summarized: boolean;
+  /** 未产生摘要的原因 */
+  reason?: 'no-events' | 'no-messages' | 'no-dialogue' | 'summary-failed';
+}
+
 /** LLM 摘要的结构化输出（成功路径） */
 interface SummaryData {
   summary: string;
@@ -62,17 +76,23 @@ export class SessionEndProcessor {
     private vectorStore: IVectorStore | null,
   ) {}
 
-  /** ★ 8-09：since 可选——定时归档只摘要 since 之后的消息（防对同一批消息重复摘要） */
-  async process(sessionId: string, since?: Date): Promise<void> {
-    // 1. Get all events for session
-    // We use countBySession logic: we need all events, so we fetch from the DB.
-    // Since EventStore doesn't have getBySession, we'll retrieve a large batch
-    // of unprocessed events and filter. For simplicity, we iterate.
-    const events = this.getSessionEvents(sessionId);
-    if (events.length === 0) return;
+  /**
+   * ★ 8-09：since 可选——定时归档只摘要 since 之后的消息（防对同一批消息重复摘要）
+   *
+   * ★ 9-26 fix-session-event-window-truncation：
+   *   1. `since` **下推到 SQL**（原实现是"取 1000 条再内存 filter"，窗口外有多老
+   *      会决定窗口内取不取得到——主会话超 1000 条后管道就空转了）。
+   *   2. **返回处理结果**而不是 `void`——空转绝不能伪装成成功：
+   *      调用方（archiveStaleSessions）原先无条件 `archived++`，
+   *      于是"什么都没做"在日志里长得和"归档成功"一模一样。
+   */
+  async process(sessionId: string, since?: Date): Promise<SessionEndResult> {
+    // 1. 取该会话的（窗口内）最近事件
+    const events = this.getSessionEvents(sessionId, since);
+    if (events.length === 0) return { summarized: false, reason: 'no-events' };
 
-    const messageEvents = events.filter(e => e.type === 'message' && (!since || new Date(e.created_at) >= since));
-    if (messageEvents.length === 0) return;
+    const messageEvents = events.filter(e => e.type === 'message');
+    if (messageEvents.length === 0) return { summarized: false, reason: 'no-messages' };
 
     // ★ 8-09 摘要含 assistant：带角色标记的完整对话（回写后 AI 发言也进摘要）
     const dialogue = messageEvents
@@ -89,7 +109,7 @@ export class SessionEndProcessor {
     // 不该落一条 failed 行（否则会制造噪声，掩盖真正的失败）。
     if (dialogue.length === 0) {
       logger.info(`[SessionEnd] 无可用对话文本，跳过: ${sessionId.slice(-24)}`);
-      return;
+      return { summarized: false, reason: 'no-dialogue' };
     }
 
     // 2. Generate conversation summary via LLM
@@ -167,10 +187,13 @@ export class SessionEndProcessor {
     for (const event of events) {
       this.eventStore.markProcessed(event.id, PROCESSED_SUMMARY);
     }
+
+    return ok ? { summarized: true } : { summarized: false, reason: 'summary-failed' };
   }
 
-  private getSessionEvents(sessionId: string): MemoryEvent[] {
-    return this.eventStore.getBySession(sessionId);
+  /** ★ 9-26：`since` 透传到 SQL（窗口过滤下推，不受"最旧 1000 条"截断影响） */
+  private getSessionEvents(sessionId: string, since?: Date): MemoryEvent[] {
+    return this.eventStore.getBySession(sessionId, { since });
   }
 
   /**
@@ -242,10 +265,9 @@ export class SessionEndProcessor {
    * @returns 是否补成功
    */
   async retryFailedSummary(conv: Conversation, since: Date): Promise<boolean> {
-    const events = this.getSessionEvents(conv.session_id);
-    const messageEvents = events.filter(
-      e => e.type === 'message' && new Date(e.created_at) >= since,
-    );
+    // ★ 9-26：同样把窗口下推到 SQL（否则长会话同样取不到该窗口）
+    const events = this.getSessionEvents(conv.session_id, since);
+    const messageEvents = events.filter(e => e.type === 'message');
     const dialogue = messageEvents
       .map(e => {
         const p = e.payload;

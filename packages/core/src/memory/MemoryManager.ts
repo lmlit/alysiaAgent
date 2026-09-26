@@ -1063,17 +1063,33 @@ export class MemoryManager {
 
       const since = new Date(Date.now() - 24 * 3600 * 1000);
       const active = this.eventStore.getActiveSessions(since);
+      // ★ 9-26 fix-session-event-window-truncation：按 process() 的**真实结果**计数。
+      //   原实现无条件 `archived++`，于是"空转什么都没做"在日志里和"归档成功"一模一样
+      //   （线上表现为 `archived 1/1` 而库里 0 条新摘要，持续 18 小时无人发现）。
+      let skipped = 0;
+      let failed = 0;
       for (const sid of active) {
         try {
           const last = this.conversationStore.getLatestBySession(sid);
           const anchor = last?.ended_at ? new Date(last.ended_at) : since;
-          await this.sessionEndProcessor.process(sid, anchor);
-          archived++;
+          const r = await this.sessionEndProcessor.process(sid, anchor);
+          if (r.summarized) archived++;
+          else if (r.reason === 'summary-failed') failed++;
+          else {
+            skipped++;
+            logger.info(`[Memory] 跳过 ${sid.slice(-24)}（${r.reason}，无新内容可摘要）`);
+          }
         } catch (err: any) {
           logger.error(`[Memory] archive failed for ${sid.slice(-24)}: ${err.message}`);
         }
       }
-      if (archived > 0) logger.info(`[Memory] archived ${archived}/${active.length} sessions`);
+      if (archived > 0 || skipped > 0 || failed > 0) {
+        logger.info(
+          `[Memory] archived ${archived}/${active.length} sessions` +
+          (skipped > 0 ? `（跳过 ${skipped}：无新内容）` : '') +
+          (failed > 0 ? `（失败 ${failed}）` : ''),
+        );
+      }
     } catch (err: any) {
       logger.error(`[Memory] archiveStaleSessions failed: ${err.message}`);
     }

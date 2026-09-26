@@ -101,7 +101,11 @@ describe('失败路径 — 绝不写占位符', () => {
 
   it('LLM 抛异常（如 API 报错）→ 同样记 failed，不炸掉整个会话归档', async () => {
     const h = makeHarness({ throws: new Error('LLM API error 429: rate limit') });
-    await expect(h.p.process('s1')).resolves.toBeUndefined();
+    // ★ 9-26：不再返回 void —— 失败要能被调用方识别（reason 与"无内容"区分开）
+    await expect(h.p.process('s1')).resolves.toEqual({
+      summarized: false,
+      reason: 'summary-failed',
+    });
     expect(h.inserted).toHaveLength(1);
     expect(h.inserted[0].conv.summary_status).toBe('failed');
   });

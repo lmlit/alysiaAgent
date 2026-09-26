@@ -296,8 +296,12 @@ describe('SessionEndProcessor', () => {
   it('should handle empty session gracefully', async () => {
     const sessionId = 'sess-empty';
     // No events inserted
-
-    await expect(processor.process(sessionId)).resolves.toBeUndefined();
+    // ★ 9-26：process() 现在返回结果而不是 void —— 空转必须可区分（见 change
+    //   fix-session-event-window-truncation）。无事件 → 明确报 no-events。
+    await expect(processor.process(sessionId)).resolves.toEqual({
+      summarized: false,
+      reason: 'no-events',
+    });
   });
 
   it('should handle events with no extractable facts', async () => {
@@ -332,7 +336,8 @@ describe('SessionEndProcessor', () => {
     const evt = makeEvent({ id: 'e-nf', session_id: sessionId, payload: { role: 'user', content: '你好' } });
     eventStore.insert(evt);
 
-    await expect(p.process(sessionId)).resolves.toBeUndefined();
+    // ★ 9-26：返回结果而非 void。提取不到 facts 不影响摘要本身成功。
+    await expect(p.process(sessionId)).resolves.toEqual({ summarized: true });
 
     // Still should mark as summary-processed
     const processed = eventStore.getById('e-nf');
