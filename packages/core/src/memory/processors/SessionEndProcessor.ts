@@ -291,8 +291,11 @@ export class SessionEndProcessor {
     if (this.vectorStore) {
       try {
         vector = await this.embedService.embed(data.summary);
-      } catch {
-        // 向量失败不阻塞行更新（与成功路径一致的降级）
+      } catch (err: any) {
+        // 向量失败不阻塞行更新（与成功路径一致的降级）—— 但**必须留下痕迹**。
+        // ⚠️ 这里原本是空 catch：结果"补摘要成功但向量没重建"完全无声，
+        //   2026-09-27 回填时就踩了（40 条垃圾向量一条没换，日志却全绿）。
+        logger.warn(`[SessionEnd] 补处理：摘要已更新但向量重建失败 (${conv.id.slice(0, 30)}): ${err?.message ?? err}`);
       }
     }
 

@@ -118,10 +118,14 @@ async function embed(text) {
   const { LanceDBStore } = await import('/app/packages/core/dist/memory/stores/LanceDBStore.js');
   const { parseLLMJson } = await import('/app/packages/core/dist/utils/llm-json.js');
 
-  const store = new ConversationStore(db, null);
   const eventStore = new EventStore(db, null);
   const lanceStore = new LanceDBStore(LANCE_PATH);
   await lanceStore.initialize();
+  // ⚠️ 必须把 lanceStore 传进来：`updateSummaryResult` 内部是
+  //   `if (vector && this.vectorStore)` —— 传 null 的话「摘要更新了但向量不重建」，
+  //   而且完全无声。2026-09-27 首次回填就踩了这个：52 条摘要全部更新成功，
+  //   但 40 条垃圾向量一条没换（日志全绿）。
+  const store = new ConversationStore(db, lanceStore);
 
   const llmService = {
     complete: async (sys, usr, sampling) => {
@@ -170,6 +174,37 @@ async function embed(text) {
     }
   }
   console.log(`\n  补向量完成: 成功 ${okVec}，失败 ${failVec}`);
+
+  // ── ③ 同步 conversation 向量 ──────────────────────────
+  // 摘要已修好、但向量还停在旧文本上的那些（典型场景：上一次回填
+  // ConversationStore 传了 null vectorStore，导致摘要更新了向量没重建）。
+  // 判据：按 conv.id 找到向量，其 text 与当前 summary 不一致（或压根没有）→ 重建。
+  // 重新取一次（不能用脚本开头那份快照：①② 可能已改动向量表）
+  const freshVec = await tbl.query().limit(50000).toArray();
+  const vecById = new Map(freshVec.map(r => [r.id, r]));
+  const convRows = db.prepare('SELECT id, session_id, ended_at, summary, topics FROM conversations').all();
+  const stale = convRows.filter(c => {
+    const v = vecById.get(c.id);
+    return !v || String(v.text || '') !== String(c.summary || '');
+  });
+  console.log(`\n══ ③ 向量需同步的 conversation：${stale.length} 条 ══`);
+  let okSync = 0, failSync = 0;
+  for (const c of stale) {
+    if (!c.summary) continue;
+    try {
+      const vec = await embed(c.summary);
+      await lanceStore.insert(c.id, vec, c.summary, {
+        source: 'conversation', topics: c.topics, session_id: c.session_id, updated_at: c.ended_at,
+      });
+      okSync++;
+      process.stdout.write('.');
+    } catch (e) {
+      failSync++;
+      process.stdout.write('x');
+      console.log(`\n    ✗ ${c.id.slice(0, 40)}: ${e.message}`);
+    }
+  }
+  console.log(`\n  向量同步完成: 成功 ${okSync}，失败 ${failSync}`);
 
   db.close();
 })().catch(e => { console.error('脚本异常:', e); process.exitCode = 1; });
