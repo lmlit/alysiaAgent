@@ -80,15 +80,24 @@ export class EventStore {
    *
    *   先 DESC 取最近 N 条、再在外层 ASC 排回来，保证对话拼接顺序正确。
    */
-  getBySession(sessionId: string, opts?: { limit?: number; since?: Date }): MemoryEvent[] {
+  getBySession(
+    sessionId: string,
+    opts?: { limit?: number; since?: Date; until?: Date },
+  ): MemoryEvent[] {
     const limit = opts?.limit ?? 1000;
-    const since = opts?.since;
-    const inner = since
-      ? 'SELECT * FROM events WHERE session_id = ? AND created_at >= ? ORDER BY created_at DESC LIMIT ?'
-      : 'SELECT * FROM events WHERE session_id = ? ORDER BY created_at DESC LIMIT ?';
-    const params: unknown[] = since ? [sessionId, since.toISOString(), limit] : [sessionId, limit];
+    // ★ 9-26：`until` 用于**历史回填**——窗口是 [since, until]。
+    //   两端都必须下推到 SQL：若只约束 since，长会话里 `until` 之后的近期事件会占满
+    //   LIMIT，把老窗口挤出去（与 fix-session-event-window-truncation 同源的坑）。
+    const conds = ['session_id = ?'];
+    const params: unknown[] = [sessionId];
+    if (opts?.since) { conds.push('created_at >= ?'); params.push(opts.since.toISOString()); }
+    if (opts?.until) { conds.push('created_at <= ?'); params.push(opts.until.toISOString()); }
+    params.push(limit);
     const rows = this.db
-      .prepare(`SELECT * FROM (${inner}) ORDER BY created_at ASC`)
+      .prepare(
+        `SELECT * FROM (SELECT * FROM events WHERE ${conds.join(' AND ')} ORDER BY created_at DESC LIMIT ?)
+         ORDER BY created_at ASC`,
+      )
       .all(...params) as Record<string, unknown>[];
     return rows.map(r => this.rowToEvent(r));
   }

@@ -191,9 +191,9 @@ export class SessionEndProcessor {
     return ok ? { summarized: true } : { summarized: false, reason: 'summary-failed' };
   }
 
-  /** ★ 9-26：`since` 透传到 SQL（窗口过滤下推，不受"最旧 1000 条"截断影响） */
-  private getSessionEvents(sessionId: string, since?: Date): MemoryEvent[] {
-    return this.eventStore.getBySession(sessionId, { since });
+  /** ★ 9-26：`since`/`until` 透传到 SQL（窗口过滤下推，不受"最旧 1000 条"截断影响） */
+  private getSessionEvents(sessionId: string, since?: Date, until?: Date): MemoryEvent[] {
+    return this.eventStore.getBySession(sessionId, { since, until });
   }
 
   /**
@@ -264,9 +264,10 @@ export class SessionEndProcessor {
    * @param since 该失败窗口的起点（= 该会话中更早一条摘要的 ended_at）
    * @returns 是否补成功
    */
-  async retryFailedSummary(conv: Conversation, since: Date): Promise<boolean> {
+  async retryFailedSummary(conv: Conversation, since: Date, until?: Date): Promise<boolean> {
     // ★ 9-26：同样把窗口下推到 SQL（否则长会话同样取不到该窗口）
-    const events = this.getSessionEvents(conv.session_id, since);
+    // `until` 用于**历史回填**：窗口是 [since, until]（cron 补处理传 undefined = 到现在）
+    const events = this.getSessionEvents(conv.session_id, since, until);
     const messageEvents = events.filter(e => e.type === 'message');
     const dialogue = messageEvents
       .map(e => {

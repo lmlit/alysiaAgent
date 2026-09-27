@@ -112,3 +112,66 @@ describe('EventStore.getBySession — 时间窗语义', () => {
     expect(store.getBySession('nope')).toEqual([]);
   });
 });
+
+// ★ 9-26 backfill-failed-session-summaries：历史回填需要**双边界**窗口
+describe('EventStore.getBySession — until（历史窗口上界）', () => {
+  let db: Database.Database;
+  let store: EventStore;
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    initializeDatabase(db);
+    store = new EventStore(db);
+  });
+  afterEach(() => db.close());
+
+  function seed(n: number): Date[] {
+    const times: Date[] = [];
+    for (let i = 0; i < n; i++) {
+      const t = new Date(Date.UTC(2026, 0, 1, 0, i));
+      times.push(t);
+      store.insert({
+        id: `e-${i}`, session_id: SID, source: 'chat', type: 'message',
+        payload: { role: 'user', content: `消息 ${i}` }, importance: 0,
+        created_at: t.toISOString(), processed: 0,
+      } as MemoryEvent);
+    }
+    return times;
+  }
+
+  it('★ 长会话里取【老窗口】：只给 since 会被近期事件挤出去，加上 until 才取得到', () => {
+    const times = seed(1436);
+    // 老窗口：第 100~110 条（早就被后面 1300+ 条淹没）
+    const since = times[100];
+    const until = times[110];
+
+    const noUntil = store.getBySession(SID, { since });          // 最近 1000 条 ≥ since
+    const withUntil = store.getBySession(SID, { since, until }); // 真正的窗口
+
+    expect(withUntil).toHaveLength(11);              // 100..110（含两端）
+    expect(withUntil[0].id).toBe('e-100');
+    expect(withUntil[10].id).toBe('e-110');
+    // 不给 until 时窗口内的事件一条都取不到 —— 这就是必须加 until 的原因
+    expect(noUntil.some(e => e.id === 'e-105')).toBe(false);
+  });
+
+  it('until 晚于所有事件 → 等价于只给 since', () => {
+    const times = seed(30);
+    const a = store.getBySession(SID, { since: times[10] });
+    const b = store.getBySession(SID, { since: times[10], until: new Date(times[29].getTime() + 86400_000) });
+    expect(b.map(e => e.id)).toEqual(a.map(e => e.id));
+  });
+
+  it('until 早于 since → 空数组', () => {
+    const times = seed(30);
+    expect(store.getBySession(SID, { since: times[20], until: times[10] })).toEqual([]);
+  });
+
+  it('只给 until → 取 until 之前的最近 N 条，升序', () => {
+    const times = seed(50);
+    const got = store.getBySession(SID, { until: times[19] });
+    expect(got).toHaveLength(20);                    // 0..19
+    expect(got[0].id).toBe('e-0');
+    expect(got[19].id).toBe('e-19');
+  });
+});
