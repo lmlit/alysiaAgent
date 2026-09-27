@@ -1,4 +1,4 @@
-# 会话转接文档（2026-09-26 更新）
+# 会话转接文档（2026-09-27 更新）
 
 > 给下一个会话：**先读本文件**恢复上下文，再读 `openspec/specs/index.md` 看 spec 全貌。
 > 治理流程见 `openspec/project.md`；部署凭据见 `docs/Docker-Deployment.md`（永不提交）。
@@ -8,19 +8,22 @@
 
 ---
 
-## 一句话状态（2026-09-26）
+## 一句话状态（2026-09-27）
 
-**摘要管道已确认恢复**（2026-09-27 01:10 验证：22 天来第一条真实摘要落库）。
-线上部署两次（`00:45` 摘要解析修复 → `19:09` 窗口截断修复），前后查出**两个独立缺陷**，
-详见下方「三起事故」。
+**存量已回填干净**（2026-09-27）：52 条占位符摘要全部重生成、40 条垃圾向量替换、
+77 条缺失向量补齐。向量库 **2010 条**（chat 1470 / conversation 138 / life_event 402），
+`summary LIKE 'Session %summary'` = **0**。
 
-**`tune-recall-with-runtime-data` 的阻塞已解除**：管道活着，现在攒的基线是干净的。
+摘要管道已验证恢复（9-27 01:10：22 天来第一条真实摘要落库）。线上部署三次
+（`00:45` 摘要解析 → `19:09` 窗口截断 → `23:11` 回填支持）。
+
+**`tune-recall-with-runtime-data` 的阻塞已完全解除**：管道活着、数据干净，可以攒基线了。
 
 **同时处理了一次凭据泄露**：服务器密码明文在公开仓库里躺了 28 天，已轮换作废。
 
 **新前端 `packages/console` 已上线**（真数据 / 聊天流式 / Live2D / 同源托管）。
 
-工作区干净，`master` @ `42b3551`。**711 测试全过**（core 519 + server 192）。
+工作区干净，`master` @ `9af6de3`。**715 测试全过**（core 523 + server 192）。
 
 ---
 
@@ -43,14 +46,14 @@
 ⚠️ **别只看日志判定**——这次是运气好（日志和数据一致）。上次 `archived 1/1` 骗了 18 小时。
 **判定一律查库**。
 
-### 2. `backfill-failed-session-summaries`（存量 52 条占位符）
+### 2. ✅ 存量回填已完成（2026-09-27）
 
-⚠️ **这些老行的 `summary_status` 是 `'ok'` 不是 `'failed'`**——新代码只标记"以后新产生的"
-失败，存量行的 `summary` 是非空垃圾字符串，状态判断区分不了。**必须按
-`summary LIKE 'Session %summary'` 模式匹配来找它们**，别用 status 查。
+52 条占位符摘要重生成 + 40 条垃圾向量替换 + 77 条缺失向量补齐，全部经生产库验证。
+细节见 `openspec/archive/2026-09-27-backfill-failed-session-summaries/`。
 
-第一问仍是**可回填性**：那批会话的原始 events 还在吗？（部署时库里 1448 events / 134 conversations，
-大概率还在，但要按 session 核对窗口）。还有 52 条垃圾向量躺在 LanceDB 里要清。
+⚠️ 过程中踩了一个**同类型**的坑：回填脚本给 `ConversationStore` 传了 `null` vectorStore，
+于是「52 条摘要全更新成功、40 条垃圾向量一条没换」，而日志全绿。**第四次**
+「成功日志掩盖了没做的事」（前三次：占位符伪装摘要、存活伪装健康、空转伪装归档）。
 
 ### 3. `tune-recall-with-runtime-data` —— **阻塞已解除，可以开始攒数据了**
 
@@ -165,7 +168,7 @@ pre-commit 凭据扫描另立项。
    凡是"成功/完成"的日志，都要问一句：**失败路径会不会走到这里？**
 8. **★ 部署后的验证必须查数据，不能只看日志**：事故三就是被 `archived 1/1` 骗了 18 小时。
    判定标准写进「下一步」了。
-7. **★ spec 里有残留的 `+ ` diff 标记**（`memory-system` 末尾 5 行）。任何基于
+9. **★ spec 里有残留的 `+ ` diff 标记**（`memory-system` 末尾 5 行）。任何基于
    `grep '^+ '` 的合并/校验都会被它带偏——**合并后用"删掉插入段应逐字节还原"来验证**，
    别只数行数。
 
@@ -186,8 +189,8 @@ pre-commit 凭据扫描另立项。
 | 前端分流 | 服务模式 → console；`ALYSIA_DESKTOP=1` → webui（UI-only，已无 Electron 壳） |
 | 服务器 | `hexi@121.41.111.120`（阿里云）。宿主机端口 **6186** → 容器 6185 |
 | 服务器凭据 | `$HOME/.alysia-deploy-credentials`（仓库树外）。轮换密码后**同步更新它** |
-| 服务器库备份 | `~/alysia/data/alysia.db.bak-*`（保留了两份：`before-summaryfix` / `before-windowfix`） |
-| 回滚（两个锚点） | `sudo docker tag server-alysia:<tag> server-alysia:latest && sudo docker compose -f ~/alysia/compose.yml up -d`<br>`rollback-20260901` = 9-01 老版；`rollback-20260926a` = 只含摘要解析修复、无窗口修复 |
+| 服务器库备份 | `~/alysia/data/alysia.db.bak-*`（`before-summaryfix` / `before-windowfix` / `before-backfill`） |
+| 回滚（两个锚点） | `sudo docker tag server-alysia:<tag> server-alysia:latest && sudo docker compose -f ~/alysia/compose.yml up -d`<br>`rollback-20260901` = 9-01 老版；`rollback-20260926a` = 只有摘要解析修复；`rollback-20260927` = 无 until/回填 |
 | **部署后必须查数据** | 别只看 `archived N/N` 或容器 healthy（见约定 7/8） |
 | 数据 | 服务器 `~/alysia/data` 卷挂载；迁移一律 **ALTER TABLE + try-catch 不 DROP** |
 

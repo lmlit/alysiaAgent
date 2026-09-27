@@ -76,15 +76,16 @@ CREATE INDEX idx_events_created ON events(created_at);
 CREATE INDEX idx_events_unprocessed ON events(processed, created_at);
 ```
 
-**查询语义（★ 9-26 窗口修复 / 回填）**：`EventStore.getBySession(sessionId, { limit?, since?, until? })`
++ **查询语义（★ 9-26 窗口修复 / 回填）**：`EventStore.getBySession(sessionId, { limit?, since?, until? })`
+- **查询语义（★ 9-26 fix-session-event-window-truncation）**：`EventStore.getBySession(sessionId, { limit?, since? })`
 返回该会话**最近的** N 条事件（默认 1000），可按 `since` 过滤，**按时间升序**返回。
 - `since` 过滤**下推到 SQL**。原实现是「`ORDER BY created_at ASC LIMIT 1000` 取最旧 1000 条、
   再在内存里 filter」——于是窗口内取不取得到取决于**窗口外有多老**：主会话事件数超 1000 后，
   `since` 之后的事件一条都取不到，归档管道静默空转，日志却报 `archived 1/1`。
 - 语义是「最近 N 条」不是「最旧 N 条」；会话是"永不结束"的，取错一端等于长期摘要永久失效。
-- `until`（★ 9-26 回填新增）：**时间窗上界**，供历史回填用。窗口是 `[since, until]`，
-  **两端都必须下推 SQL** —— 只约束下界的话，长会话里 `until` 之后的近期事件会占满
-  DESC LIMIT，把要回填的老窗口整个挤出去（与上面同源的坑）。
++ - `until`（★ 9-26 回填新增）：**时间窗上界**，供历史回填用。窗口是 `[since, until]`，
++   **两端都必须下推 SQL** —— 只约束下界的话，长会话里 `until` 之后的近期事件会占满
++   DESC LIMIT，把要回填的老窗口整个挤出去（与上面同源的坑）。
 
 ### 2.2 Profile Store（用户画像）— SQLite
 

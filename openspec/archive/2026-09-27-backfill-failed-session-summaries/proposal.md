@@ -4,7 +4,7 @@
 
 - **日期**: 2026-09-25
 - **类型**: NEW（存量数据修复）
-- **状态**: pending（**依赖 `fix-session-summary-silent-failure` 先落地**）
+- **状态**: archived（2026-09-27 执行完成，生产库已验证）
 - **影响 spec**: `memory-system`（§2.4 Conversation Store 的存量数据，不改结构）
 
 ## 动机
