@@ -11,6 +11,7 @@
     "./pipeline": "./dist/pipeline/index.js",
     "./platform": "./dist/platform/index.js",
     "./eventbus": "./dist/eventbus/index.js",
+    "./kernel": "./dist/kernel/index.js",
     "./agent": "./dist/agent/index.js",
     "./provider": "./dist/provider/index.js",
     "./tools": "./dist/tools/index.js",
