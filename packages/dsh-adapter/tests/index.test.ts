@@ -374,6 +374,88 @@ describe('记忆回传 / ★ alysia 不可达时 dsh 不受影响', () => {
 });
 
 // ─────────────────────────────────────────────────────────────
+// ★ 子 agent 会话过滤（change: exclude-subagent-sessions-from-bridge）
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * 子 agent 会话的假 session —— **按 dsh 源码的真实形状**：
+ * 子会话有自己的 `header.id`（裸 randomUUID），且 `header.origin === 'subagent'`
+ * （dsh `packages/core/session/src/types.ts:85`，持久化字段，resume 后也在）。
+ */
+const SUBAGENT_ID = '3f2a1b4c-9d0e-4f11-8a22-bb33cc44dd55'
+const SUBAGENT_SESSION = {
+  id: SUBAGENT_ID,
+  header: { id: SUBAGENT_ID, origin: 'subagent' },
+}
+
+/** 子会话的事件形状与主会话相同，只是 session 不同 */
+const subMsg = (seq: number, type: string, text: string) => [
+  SUBAGENT_SESSION,
+  { seq, type, time: 1767225600000, data: { turn: 1, step: 1, message: { role: 'user', content: [{ type: 'text', text }] } } },
+] as const
+
+describe('★ 子 agent 会话过滤（2026-10-02）', () => {
+  it('子会话的消息不入队、不回传（user/assistant/turn-end 全跳过）', async () => {
+    // 为什么：preset standing mount 被父子 agent 共享，scoped 监听**会**收到子会话事件。
+    // 子会话内容是执行过程（任务书/工具输出/审计报告），回传会污染人格与画像。
+    const { ctx, emit } = makeMockCtx();
+    const f = stubFetch();
+    try {
+      apply(ctx, { alysiaBaseUrl: 'http://127.0.0.1:1' });
+      emit('session/event', ...subMsg(1, 'user/message', '子 agent 的任务书'));
+      emit('session/event', ...subMsg(2, 'assistant/message', '子 agent 的过程输出'));
+      emit('session/event', ...subMsg(3, 'turn/end', ''));
+      await new Promise(r => setTimeout(r, 20));
+      expect(f.ingestCalls).toHaveLength(0);
+    } finally { f.restore(); }
+  });
+
+  it('★ 子会话 disposed → 既不回传也不结算（不生成摘要/画像/人格提取）', async () => {
+    const { ctx, emit } = makeMockCtx();
+    const f = stubFetch();
+    try {
+      apply(ctx, { alysiaBaseUrl: 'http://127.0.0.1:1' });
+      emit('session/event', ...subMsg(1, 'user/message', 'x'));
+      emit('session/disposed', SUBAGENT_SESSION);
+      await new Promise(r => setTimeout(r, 30));
+      expect(f.ingestCalls).toHaveLength(0);
+      expect(f.calls.some(c => c.url.includes('/extract')), '子会话不该触发结算').toBe(false);
+    } finally { f.restore(); }
+  });
+
+  it('★ 跳过可观测：子会话首次出现打一行 info，同一会话只提示一次', () => {
+    // 静默丢弃会让「子 agent 没进来」和「回传坏了」在日志里长得一样。
+    const { ctx, emit, logger } = makeMockCtx();
+    const f = stubFetch();
+    try {
+      apply(ctx, { alysiaBaseUrl: 'http://127.0.0.1:1' });
+      emit('session/event', ...subMsg(1, 'user/message', 'a'));
+      emit('session/event', ...subMsg(2, 'user/message', 'b'));
+      emit('session/disposed', SUBAGENT_SESSION);
+      const hits = logger.info.mock.calls.filter((c: unknown[]) => String(c[0]).includes('跳过子 agent 会话'));
+      expect(hits, '每个子会话应恰好提示一次').toHaveLength(1);
+      expect(String(hits[0][0])).toContain('origin=subagent');
+    } finally { f.restore(); }
+  });
+
+  it('★ 子会话不影响同实例的主会话：主会话照常回传', async () => {
+    // 一个插件实例可能同时服务主/子会话（standing mount 共享）——过滤必须逐会话生效。
+    const { ctx, emit } = makeMockCtx();
+    const f = stubFetch({ ok: true, accepted: 1, rejected: [] });
+    try {
+      apply(ctx, { alysiaBaseUrl: 'http://127.0.0.1:1' });
+      emit('session/event', ...subMsg(1, 'user/message', '子 agent 的'));
+      emit('session/event', ...msg(1, 'user/message', '主会话的'));
+      emit('session/event', ...msg(2, 'turn/end', ''));
+      await new Promise(r => setTimeout(r, 20));
+      expect(f.ingestCalls).toHaveLength(1);
+      expect(f.ingestCalls[0].body.events.map((e: { payload: { content: string } }) => e.payload.content))
+        .toEqual(['主会话的']);
+    } finally { f.restore(); }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
 // 记忆读通道（change: bridge-memory-read）
 // ─────────────────────────────────────────────────────────────
 

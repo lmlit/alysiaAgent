@@ -33,3 +33,25 @@ export function sessionIdOf(session: unknown): string {
 export function toAlysiaSessionId(dshSessionId: string): string {
   return `${DSH_SESSION_PREFIX}${dshSessionId}`;
 }
+
+/**
+ * 是否是**子 agent 会话**。
+ *
+ * ★★ 为什么必须判它（2026-10-02，change: exclude-subagent-sessions-from-bridge）：
+ *   preset 是**一个 standing mount 被所有 agent 共享**——父 agent 与子 agent 的 scope key
+ *   都直接绑到同一个 standing key，而 scope 事件**向上冒泡**
+ *   （dsh `packages/core/scope/src/index.ts:170-185`）。
+ *   所以本插件的 `session/event` / `session/disposed` **会收到全部子 agent 会话**，
+ *   而子会话内容是**执行过程**（任务书 / 工具输出 / 审计报告），不是「她与用户的对话」——
+ *   回传会污染人格与画像（实证：12 条人格化摘要、34 条 adaptation_hints、48 条 user facts，
+ *   还有「注入的人设上下文被回吸成新事实」的回流闭环）。
+ *
+ * ★ 判据用 `header.origin === 'subagent'`——dsh 的**持久化**字段，resume 后也在
+ *   （`packages/core/session/src/types.ts:85`；`Session.header` 是公开 readonly 属性）。
+ *   **不用 `parentSession`**：`SessionStore.fork()` 也会设它、但不设 origin。
+ *   **不用 id 形状**：主会话恰好是 `session-<uuid>`、子会话恰好是裸 uuid，那是命名巧合不是契约。
+ */
+export function isSubagentSession(session: unknown): boolean {
+  const s = session as { header?: { origin?: unknown } } | null | undefined;
+  return s?.header?.origin === 'subagent';
+}

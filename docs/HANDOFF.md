@@ -31,6 +31,55 @@ E2E（真 API）**5/5 全过**。
 
 ---
 
+## 🩹 2026-10-02：子 agent 会话过滤（change: `exclude-subagent-sessions-from-bridge`）
+
+**用户报**：「用 dsh 跑了一段时间，发现一个问题：子 agent 执行的东西也会提取人格。」
+
+**根因**：`dsh-adapter` spec §2.5 那句「插件在 preset 内挂载 → scoped 监听天然只收本 agent 事件」
+**是错的**——dsh 的 preset 是 **standing mount 被父/子 agent 共享**，scope 事件**向上冒泡**
+（`packages/core/scope/src/index.ts:170-185`），所以两个钩子会收到**全部子 agent 会话**，
+把它们当作新会话回传 + 结算。
+
+**实证污染**（本机库只读盘点）：11 个子 agent 会话 / 127 条事件入库；
+12 条**人格化摘要**（纯代码审计被写成「做起这份审计像在拆案……来了兴致」）、
+34 条 adaptation_hints、48 条 user facts、18 条 character_facts；
+还有**回流闭环**（注入子 agent 的人设上下文被当「新」用户事实回吸）。
+
+**修复**：`session.header.origin === 'subagent'` → **不回传、不结算**（每个子会话首见打一行 info，不静默）；
+主会话（code 模式）**保留现状**——「新积累回流」是 `record-dsh-as-coding-mode` 的既定设计（用户确认）。
+判据必须用 `origin`：别用 `parentSession`（fork 也设它）、别用 id 形状（`session-<uuid>` vs 裸 uuid 是巧合）。
+
+**验收**：包内 **73**、常规全仓 **989**、E2E **5/5**、`npm run build` 且**核过 dist 含新守卫**。
+⚠️ desktop profile 走 **`dist/`**（symlink 只到包目录）→ **重启桌面端**才生效（`E:\dsh\DeepSeek Harness.exe`）。
+
+**登记**：KI-18（extract 端点无校验）、KI-19（同会话 20 秒内重复摘要）。
+
+### 存量清理已完成（change: `purge-subagent-pollution`，同日归档）
+
+盘点修正了原口径：43 条「指向子会话」的 facts 里 **39/40 条内容是真的**（子 agent prompt 里注入了画像
+→ 被回吸），**不能按来源一刀切**。用户拍板：**facts 保留 / events 保留 / 参数不回滚**。
+
+实删：`conversations` **12 行**（含「拆案…来了兴致」那种人格化摘要）、工程任务类 facts **3 条**、
+子来源 `character_facts` **12 条**、工程来源 hints **4 条**、`dsh:logtest` 1 条。
+备份 `alysia.db.bak-before-subagent-purge`（3.27 MB）。
+★ 执行脚本**第一次被断言拦下并整体回滚**（`source_event` 前缀漏拼 `dsh-`）——断言+事务的价值当场兑现。
+⚠️ 复核时 hints/events 总数比预期**多**——不是漏，是**库是活的**（执行时桌面端正跑 `dsh:session-29b9865c`）。
+
+### ★★ 执行中发现的新缺陷（KI-20）：runtime context 快照被当 user 消息回传
+
+dsh 的 `Current runtime context. This snapshot supersedes…`（含 `[角色设定]` 参数 + `[关于你]` 全文画像）
+被当 `role:'user'` 回传入库，**全库 116 条**（单个主会话 35 次）。两条自指回路：
+
+1. **画像回吸**——ProfileExtractor 从画像里「重新学」出画像（就是上面那批 facts 的产地）
+2. **人格放大**——PersonaAdapter 出现「记忆触发记忆」的 hint（实测证据文案："记忆里轻月明确指出过…"）
+
+⚠️ **主会话同病，子 agent 过滤解决不了它**。候选方向：adapter 侧滤合成消息 / 提取侧打 `skip_profile`。
+**另开 change 处理（未建）**。
+
+⚠️ **仍未生效**：桌面端在跑**旧 dist**——**重启前，当前活会话派 subagent 仍会回传**。
+
+---
+
 ## 🧹 2026-10-02：治理债清理（22 个 change 补归档）
 
 **起因**：`openspec/changes/` 里压着 **30 个** change 没归档，其中一批其实早就实现了——
@@ -458,6 +507,7 @@ export PATH="/e/nodejs24:$PATH" && npx vitest run --exclude='tests/memory/e2e/*'
 
 | change | 状态 |
 |---|---|
+| 过滤 runtime context 快照（**未建**） | KI-20：`Current runtime context…` 被当 user 消息回传（全库 116 条，主会话同病，子 agent 过滤解决不了）。候选：adapter 滤合成消息 / 提取侧 `skip_profile`。出处：`purge-subagent-pollution` 执行记录 |
 | `add-ops-health-report` | 日报/监控。**用户 9-25 决定先记档后做**；前置：日志系统先整理（96.6% 是 QQ 噪声） |
 | `clean-spec-diff-residue` | `specs/memory-system/spec.md` 残留 5 行 `+ ` 标记——**已两次让校验工具给出错误结论** |
 | `console-a11y-motion` | 17 处动画缺 `prefers-reduced-motion`；用户指示先记档 |

@@ -14,7 +14,7 @@ import type { AssembleContext, SessionEvent } from './types.ts'
 import { createRecallMemoryTool } from './recall-memory.ts'
 import { AlysiaClient } from './alysia-client.ts'
 import type { IngestEvent } from './alysia-client.ts'
-import { sessionIdOf, toAlysiaSessionId } from './session-id.ts'
+import { isSubagentSession, sessionIdOf, toAlysiaSessionId } from './session-id.ts'
 // PERSONA_VARIABLE 定义在 persona.ts（与变量注册处共用同一常量）
 export { PERSONA_VARIABLE } from './persona.ts'
 
@@ -157,6 +157,10 @@ export function apply(ctx: Context, config: Config = {}): void {
  *
  * 队列策略：回传失败**保留一批**等下次重试（容忍 alysia 短暂重启）；
  * 但设上限，长期不可用时丢最旧的并计数——不能无限涨内存。
+ *
+ * ★ **子 agent 会话一律跳过**（2026-10-02，change: exclude-subagent-sessions-from-bridge）：
+ *   preset 是 standing mount 被父子 agent 共享，本插件的 scoped 监听**会**收到子会话事件
+ *   （spec §2.5 原句「天然只收本 agent 事件」已被实证推翻）。判据见 `session-id.ts`。
  */
 function installBridge(
   ctx: Context,
@@ -167,6 +171,24 @@ function installBridge(
 ): void {
   let pending: IngestEvent[] = [];
   let dropped = 0;
+  /** 已提示过的子 agent 会话——每个只打一行 info，避免刷屏 */
+  const notedSubagents = new Set<string>();
+
+  /**
+   * 子 agent 会话 → 跳过（返回 true），**不回传、不结算**。
+   *
+   * ★ 跳过**必须可观测**：静默丢弃会让「子 agent 没进来」和「回传坏了」
+   *   在日志里长得一样（本项目栽过三次的那类伪装）。
+   */
+  const skipSubagentSession = (session: unknown): boolean => {
+    if (!isSubagentSession(session)) return false;
+    const sid = sessionIdOf(session);
+    if (!notedSubagents.has(sid)) {
+      notedSubagents.add(sid);
+      ctx.logger.info(`[alysia-adapter] 跳过子 agent 会话 ${sid}（origin=subagent）——不回传、不结算`);
+    }
+    return true;
+  };
 
   const flush = async (): Promise<void> => {
     if (pending.length === 0) return;
@@ -194,6 +216,7 @@ function installBridge(
   };
 
   ctx.on('session/event', (session, event: SessionEvent) => {
+    if (skipSubagentSession(session)) return;
     const sid = sessionIdOf(session);
     if (event.type === 'user/message') {
       {
@@ -242,6 +265,7 @@ function installBridge(
 
   // 会话结束 → 先把尾巴发出去，再触发**结算**（摘要 + 画像 + 人格确认 + 固化）
   ctx.on('session/disposed', (session) => {
+    if (skipSubagentSession(session)) return;
     const sid = sessionIdOf(session);
     ctx.logger.info(`[alysia-adapter] session/disposed → 结算 ${toAlysiaSessionId(sid)}`);
     void (async () => {

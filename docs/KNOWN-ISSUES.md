@@ -262,6 +262,47 @@
 - **建议方向**：要么让生产改用这两个类（消除重复），要么明确标注「仅测试用」并把生产那套抽成正式类。
   **这是 P2/P3 重构时该顺手解决的结构问题。**
 
+### KI-18 🟡 `/api/sessions/:id/extract` 无任何校验
+
+- **现象**：`packages/server/src/webui/server.ts:223-227` 的 extract 路由**对 session id 不设防**——
+  而同文件的邻居都有边界：`/api/ingest` 只收 `dsh:` 前缀（`ingest.ts:41`）、
+  archive/delete 只收 `webui:`（`server.ts:206,216`）。
+- **影响**：任何通过鉴权的调用方可以对**任意会话**触发结算（摘要 + 画像 + 人格确认）——
+  既有成本（LLM 调用）也有数据正确性风险（对不该结算的会话跑提取）。
+  2026-10-02 的子 agent 污染事件里，它正是「插件回传 + 结算」链路的落点
+  （插件侧过滤已堵住这一条，但端点本身仍无校验）。
+- **证据**：路由代码；`exclude-subagent-sessions-from-bridge` 的调查记录。
+- **建议方向**：加与 ingest 同级的来源/形状校验（或至少在会话不存在时响亮失败而不是空转）。
+
+### KI-19 🟡 同一会话可能被重复摘要（20 秒内两条 conversation）
+
+- **现象**：`conversations` 表里同一子 agent 会话在 **09:29:56 与 09:30:14** 各产生一条记录
+  （实测 `dsh:9a33c81f-…`；`dsh:session-02e15a3c` 同样 2 条）。
+- **影响**：重复的 LLM 摘要调用（成本）＋可能有重复/漂移的记忆摘要。
+- **疑似原因（待查，未坐实）**：`session/disposed` 触发与 cron `archiveStaleSessions`
+  对该会话都跑了 `SessionEndProcessor.process()`；或 `process()` 对同一窗口不幂等。
+- **证据**：2026-10-02 本机库只读盘点（`conversations` 表按 session_id 分组计数 + 时间戳）。
+- **建议方向**：先看 `process()` 的幂等判据（processed 位 / 摘要锚点）在「没有新消息时」是否早退，
+  再决定是加幂等还是修触发方。**先取证再改**（同 KI-1 纪律）。
+
+### KI-20 🟠 dsh 的「runtime context 快照」被当用户消息回传入库（回流闭环）
+
+- **现象**：全库 **116 条** events 的 payload 以
+  `Current runtime context. This snapshot supersedes earlier runtime-context snapshots.` 开头，
+  内容是 `[角色设定]`（人格参数）+ `[关于你]`（完整画像）+ `[关于我]`——却被标成 `role: 'user'` 入库。
+  单个主会话 `dsh:session-29b9865c` 里出现 **35 次**（2026-10-02 实测）。
+- **影响**：两条自指回路——
+  ① **画像回吸**：`ProfileExtractor` 从画像里「重新学」出画像（facts 的 `valid_from` 被刷新、
+  `source_event` 指向这些事件）。本次 `purge-subagent-pollution` 里那些「内容为真但溯源指向子会话」的
+  facts 就是这个机制产出的（子 agent 的 prompt 里同样带这段快照）。
+  ② **人格放大**：`PersonaAdapter` 从这段文本再触发 hints——实测 15:21:12 一条 hint 的证据是
+  「记忆里轻月明确指出过『太整齐、分点…』」，即**记忆触发记忆**。
+- **证据**：`events` 表 payload 前缀统计（116 条）；`dsh:session-29b9865c` 15:18–15:22 的事件流。
+- **注意**：这是**主会话也有的独立缺陷**——与「子 agent 回传」不同源，子 agent 过滤解决不了它。
+- **建议方向**：adapter 侧过滤这类合成消息（payload 前缀判据），或提取侧对
+  `Current runtime context` 开头的 payload 打 `skip_profile`（后者是现成机制）。
+  ⚠️ 先确认这段文本是 dsh 合成注入还是真实用户输入（前者才该滤）。
+
 ---
 
 ## 📌 已定名但未开 change
