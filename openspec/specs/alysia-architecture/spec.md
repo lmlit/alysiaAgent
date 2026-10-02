@@ -123,11 +123,19 @@ alysia/
 │   │   │   │   ├── registry.ts    # 工具注册表
 │   │   │   │   ├── web-search.ts  # 网页搜索
 │   │   │   │   └── reminder.ts    # 定时提醒
+│   │   │   ├── kernel/            # ★ 2026-10-01：模块装载内核（Module 契约 + ModuleHost）
+│   │   │   ├── modules/           # ★ 2026-10-01：13 个装配模块（db/vector/embed/memory-llm/
+│   │   │   │                      #   provider/eventbus/memory/coalescer/persona-seed/tools/
+│   │   │   │                      #   commands/pipeline/boot）
+│   │   │   ├── options.ts         # ★ 2026-10-01：构造选项（从 index.ts 抽出，解 modules/ 循环依赖）
 │   │   │   └── index.ts           # AlysiaCore 统一入口
 │   │   └── package.json
 │   │
 │   ├── server/                    # @alysia/server
 │   │   ├── src/
+│   │   │   ├── modules/           # ★ 2026-10-01（P3）：10 个装配模块（config/logging/core/
+│   │   │   │                      #   vision/adapters/proactive/life/reminder/cron/webui）
+│   │   │   ├── prompts/           # ★ 2026-10-01（P4）：life 提示词资产（有意不做 .md，判据见其 README）
 │   │   │   ├── adapters/
 │   │   │   │   ├── telegram.ts    # TelegramAdapter
 │   │   │   │   └── webchat.ts     # WebChatAdapter (WebUI 内嵌聊天)
@@ -135,11 +143,18 @@ alysia/
 │   │   │   │   ├── server.ts      # Fastify 启动
 │   │   │   │   ├── api/           # REST API 路由
 │   │   │   │   └── dist/          # Vue.js SPA 静态文件
+│   │   │   ├── push.ts            # ★ 2026-10-01：PushChannel 接口（life/proactive 只用 sendProactive）
 │   │   │   ├── config.ts          # 配置加载
-│   │   │   └── bootstrap.ts       # 启动入口
+│   │   │   └── bootstrap.ts       # 启动入口 —— 只做装配（建宿主 + 注册模块 + 跑）
 │   │   ├── Dockerfile
 │   │   ├── compose.yml
 │   │   └── package.json
+│   │
+│   ├── console/                   # @alysia/console ★ 2026-09-24（adopt-nextjs-console）
+│   │   │                          #   Next.js 控制台：真数据 / 聊天流式 / Live2D；生产由 server 同源托管
+│   │   └── webui/                 # ⚠️ 待废弃（Vue 版旧前端，见 webui-system 行；整体删除尚未开 change）
+│   ├── dsh-adapter/               # @alysia/dsh-adapter ★ 2026-08-25：dsh 插件（人格/记忆接入）
+│   ├── dsh-console/               # @alysia/dsh-console ★ 2026-08-26：dsh 侧控制台插件（悬浮球 + 反代）
 │   │
 │   (desktop/ 已于 2026-09-25 删除 — change: drop-electron-desktop)
 │
@@ -160,7 +175,15 @@ alysia/
     模块定义在 `packages/core/src/modules/`（P2 会拆到 `modules/<name>/`）。
     新增两个入口文件：`src/kernel/`（装载内核）、`src/options.ts`（构造选项，
     从 `index.ts` 抽出以解 `modules/` 的循环依赖）。
-  - server 侧的 `bootstrap.ts` 仍是总装脚本 → P3 范围。
+  - ✅ 2026-10-01（P3，change: `modularize-server-assembly`）：server 侧的 `bootstrap.ts`
+    （原 ~330 行总装脚本）同样降为「**建宿主 + 注册 10 个模块 + 跑**」，
+    模块在 `packages/server/src/modules/`（config / logging / core / vision / adapters /
+    proactive / life / reminder / cron / webui），并抽出 `src/push.ts`（`PushChannel`）。
+    **行为逐位保留**，验收靠真启动 + curl 全部端点**比对响应字节数**
+    （`/api/life` 14998 / `/api/profile` 42752 / `/api/stats` 1641 改造前后一致）。
+    ⚠️ `consoleDist` 路径解析**刻意留在 `bootstrap.ts`**——`import.meta.url` 的上溯层级
+    只在该文件正确，挪进 `modules/` 会静默不注册静态路由（SPA 白屏且无报错）。
+    详见 `specs/module-kernel/spec.md` §5.1。
     背景与 dsh 迁移路径见 `docs/dsh-plugin-architecture.md`。
 
 ---

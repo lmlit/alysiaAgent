@@ -36,7 +36,9 @@ AI Agent 桌面应用：聊天模式 + 编程模式，搭载"昔涟"人格和记
 
 ## Current State
 
-**记忆系统核心 + 架构重构 + Feature Flag + AI 主动生活系统全部完成（187+ 测试通过）**
+**记忆系统核心 + 架构重构 + Feature Flag + AI 主动生活系统 + 模块化内核 + dsh 通道全部完成。**
+测试基线：**965**（常规，含 `dsh-adapter` / `dsh-console`）+ **E2E 5/5**（真实 API）。
+★ 2026-10-02 起**编程模式由 dsh 承接，四层通道（人格 / 记忆读 / 记忆写 / 结算）全通**。
 
 ### Tech Stack
 - TypeScript + better-sqlite3 (WAL) + LanceDB (嵌入式向量库)
@@ -56,14 +58,20 @@ AI Agent 桌面应用：聊天模式 + 编程模式，搭载"昔涟"人格和记
 
 ### 文件结构（core）
 ```
-src/memory/
+src/
+├── kernel/                     # ★ 2026-10-01：模块装载内核（Module 契约 + ModuleHost，cordis 形状）
+├── modules/                    # ★ 2026-10-01：13 个装配模块（db/vector/embed/memory-llm/provider/
+│                               #   eventbus/memory/coalescer/persona-seed/tools/commands/pipeline/boot）
+├── options.ts                  # ★ 2026-10-01：构造选项（从 index.ts 抽出，解 modules/ 循环依赖）
+├── index.ts                    # AlysiaCore 统一入口（公开面逐字不变）
+└── memory/
 ├── types.ts                    # 所有类型 + 位掩码常量
 ├── database.ts                 # 表 schema + 默认行种子
 ├── MemoryManager.ts            # 统一入口 (ingest/read/assemble/onSessionEnd/cron + 8 个生活方法)
 ├── PromptAssembler.ts          # 双模式 System Prompt (chat ≤3200, code ≤2450 tokens)
 ├── PIIFilter.ts / TokenBudget.ts
 ├── interfaces/                 # IVectorStore / IEmbedService / ILLMService
-├── services/                   # ★ OpenAI 协议通用服务（双 provider）
+├── services/                   # ★ OpenAI 协议通用服务（双 provider；⚠️ 仅测试在用的半死代码，见 KI-9）
 ├── stores/                     # 8 个 Store（Event/Profile/Persona/Conversation/Knowledge/
 │                               #   Worldbook/CodeContext/LifeStore + LanceDBStore 向量实现）
 ├── engines/                    # 3 个智能引擎（ProfileExtractor/PersonaAdapter 5 道护栏/WorldbookMatcher）
@@ -71,7 +79,10 @@ src/memory/
 ```
 
 ### 服务端（server）主要模块
-- `bootstrap.ts` — 接线总装（核心/Pipeline/适配器/Proactive/Life/Reminder 推送/WebUI）
+- `bootstrap.ts` — ★ 2026-10-01（P3）起**只做装配**（建宿主 + 注册 10 个模块 + 跑）
+- `modules/` — 10 个装配模块（config/logging/core/vision/adapters/proactive/life/reminder/cron/webui）
+- `push.ts` — `PushChannel` 接口（life/proactive 只用 `sendProactive`，不耦合具体适配器）
+- `prompts/` — life 提示词资产（**有意不做 `.md`**，判据见其 README）
 - `life.ts` — LifeService（AI 主动生活：事件生成/亲密度/每日摘要/剧情链）
 - `proactive.ts` — ProactiveService（时段问候/节日节气/关怀，stateFile 去重）
 - `adapters/qq-official.ts` — QQ 官方 Agent（WebSocket/图片识别/表情包/主动消息）
@@ -112,12 +123,27 @@ src/memory/
 
 ## Next（待做）
 
-1. Web 端 UI（Fastify + Vue SPA，契约已就绪 docs/Web-API-Design.md）
-2. Reminder 持久化到 SQLite（容器重启不丢失）
-3. 流式输出 Pipeline 接入 (LLMAgentStage → textChatStream)
-4. 桌面端 (Electron + Live2D, features.codeMode=true)
-5. Backlog changes（见 openspec/specs/index.md 📌 Backlog）：worldbook 采样 cooldown、/api/platforms、记忆旋钮进召回管道
-6. ai-life 二期：主提示词瘦身 / 窗口外事件补叙 / 事件向量检索 / worldbook life_event 种子 / 亲密度 Web UI
+> ★ 2026-10-02 重写：原列表**已全部过期**（Web UI 已上线 / Reminder 已持久化 /
+> 流式已接 / Electron 壳已砍）。**真正的待做以 `openspec/specs/index.md` 的 📌 Backlog
+> 与 `docs/KNOWN-ISSUES.md` 为准**，本节只留指针，不再重复维护。
+
+1. **调召回系数** `tune-recall-with-runtime-data` —— 阻塞已解除（摘要修好 + 存量回填干净），
+   但**先积累运行数据再调**，别拍脑袋改系数（部分指标现在还没日志）
+2. **两个老 backlog**：`add-platforms-endpoint`（契约声明了但全仓没建）、
+   `worldbook-sampling-cooldown`（世界书采样缺 cooldown 过滤）
+3. **可观测性** `add-ops-health-report` —— 存活指标骗过一次（22 天全绿）；
+   前置是日志降噪（96.6% 是 QQ 噪声）
+4. **文档卫生** `clean-spec-diff-residue` —— apply 残留的 `+ ` diff 标记。
+   ★ 2026-10-02 实测范围比立项时记的大（`ai-life-system` 约 42 行，不止 `memory-system` 那 5 行）；
+   ⚠️ **不能直接 `grep '^+'` 删**，里面混着 ASCII 树角字符和提示词模板正文
+5. **console 收尾**：表情包 `[表情包:名字]` 渲染（现按纯文本）、`play_live2d_action` 工具 +
+   输出驱动状态切换、**删 `packages/webui`**（三约束已解除，但**不是纯删**：
+   `server.ts` 的 `defaultDist`、`bootstrap.ts` 的 `IS_DESKTOP` 分支）
+6. **隐患**（`docs/KNOWN-ISSUES.md`）：KI-1 `life.generateEvent` 槽**没有 `max_tokens`**
+   —— 与已爆三次（会话摘要 22 天 / 每日反思 11 次 / 画像提取 6 个月）的槽**同形**。
+   按项目方法论：**先写真 API 探针实测，再决定加不加**，别凭感觉填数字
+7. **dsh 侧** `build-alysia-console-plugin` **进行中且上游已变**——原方案踩在已废弃的
+   `.agent-presets` / `tapIndex` 上（dsh 桌面端换代了插件机制），需重新判断范围
 
 ## 环境变量 (.env)
 > 实际 key 在项目根目录 .env 文件中（已 gitignore）。
@@ -146,7 +172,7 @@ source .env && npx vitest run
 
 ## 设计文档
 - **治理宪法（必读）**: `openspec/project.md` — OpenSpec 流程与对账规则
-- **Spec 索引**: `openspec/specs/index.md`（19 个子系统，新功能实现前先查这里）
+- **Spec 索引**: `openspec/specs/index.md`（21 个子系统，新功能实现前先查这里）
 - **Backlog**: `openspec/specs/index.md` 📌 Backlog 节（doc 声明 impl 未接的登记）
 - **总索引**: `docs/README.md`（所有文档入口）
 - Web 契约: `docs/Web-API-Design.md`（新增/修改 core 方法必须对照）

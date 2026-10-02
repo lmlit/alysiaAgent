@@ -108,7 +108,10 @@ ALTER TABLE worldbook_entries ADD COLUMN content_type TEXT DEFAULT 'text';  -- '
 ### 4.1 角色管理
 
 ```typescript
-/** 导入角色包（JSON 或文件路径）→ 写入 persona 行 + worldbook 条目 */
+/**
+ * 导入角色包（JSON 或文件路径）→ 写入 persona 行 + worldbook 条目
+ * ★ 包未提供的字段**按字段合并、保留已有**，不得用空默认值覆盖（见 §4.1.1）
+ */
 importRole(pkg: RolePackage): Promise<{ role: string; worldbookCount: number }>;
 
 /** 切换激活角色（原子操作：清旧 is_active + 设新） */
@@ -123,6 +126,34 @@ listRoles(): Array<{ role: string; name: string; isActive: boolean; worldbookCou
 /** 导出角色包（Web 下载按钮） */
 exportRole(roleId: string): RolePackage;
 ```
+
+#### 4.1.1 ★ `importRole` 的字段合并契约（2026-10-01，change: fix-role-import-wipes-persona）
+
+**契约**：`upsertRole` 是**整行 UPDATE**，因此 `importRole` **必须按字段合并**——
+包提供的字段用包的，包没提供的字段**保留数据库中已有的值**，两者都没有才落默认值。
+
+```typescript
+const existing = this.personaStore.getByRole(pkg.role);
+const merge = <T>(fromPkg: T | undefined, current: string | undefined, fallback: string): string =>
+  fromPkg !== undefined ? JSON.stringify(fromPkg) : (current ?? fallback);
+
+system_prompt: pkg.system_prompt ?? existing?.system_prompt ?? ''   // 普通字符串，非 JSON，单独处理
+```
+
+**曾经的故障（线上，已修）**：旧代码对包没提供的字段一律填空默认
+（`pkg.system_prompt ?? ''` / `pkg.persona?.tone ?? {}`）。后果是**表情包角色包**
+（`data/roles/stickers*.json`，`role` 同为 `'alysia'`，只有 worldbook、没有 persona）
+在**每次启动**把昔涟的整行 persona 冲掉——包括人格核心 `system_prompt`。
+
+**为什么只有它被发现**：`PersonaStore.get()` 检测到空的 `tone` / `speech_style` /
+`emotional_range` 会**自动填回结构默认值**（那是默认参数，不是真实调校，所以看起来"正常"）；
+`system_prompt` 没有兜底，只有它露馅。**整行都在被冲，只是只有它可见。**
+
+> ⚠️ 与 `docs/dsh-migration-guide.md` 坑 #7 **同族**——那次修的是世界书那半
+> （`DELETE WHERE role=?` 误删 seed 世界书 66 条与自写条目），persona 这半当时没修。
+
+**世界书侧的配套规则**（同 change 已修）：幂等替换**只删「本次包生成的 id」**，
+`DELETE WHERE role=?` 会误删同 role 的 seed 与自写条目，**禁止使用**。
 
 ### 4.2 配套改动
 
@@ -175,3 +206,4 @@ exportRole(roleId: string): RolePackage;
 | 日期 | 变更 |
 |------|------|
 | 2026-07-31 | 初始设计。角色 = 人格 + 世界书 + 素材；表情包并入世界书（content_type） |
+| 2026-10-01 | **修复 `importRole` 清空人设**（change: `fix-role-import-wipes-persona`）：改为按字段合并，包未提供的字段保留已有值；§4.1.1 固化为契约。实测 `system_prompt` 0 → 36351 字，`GET /api/persona/prompt` 0 → 6375 字 |

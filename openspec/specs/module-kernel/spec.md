@@ -210,3 +210,47 @@ P1（`modularize-core-assembly`）迁移时必须逐位保留的现存行为：
   `commandRegistry` / `eventBus` / `scheduler` / `coalescer` / `isGenerating()` /
   `registerPlatform()` / `registerChatTools()` / `registerCodeTools()` / `stop()`
   （server 与 console 依赖它们；console 对 core 是零 import，纯 HTTP）
+
+### 5.1 server 侧的落实（P3，change: `modularize-server-assembly`）
+
+> ✅ **2026-10-01 已兑现**：`packages/server/src/bootstrap.ts` 从 ~330 行总装脚本
+> （配置 → core → 三个 IM 适配器 → vision → proactive → life（含 6 段巨型 systemPrompt）
+> → reminder → cron → webui → 信号处理）降为「**建宿主 + 注册 10 个模块 + 跑**」。
+> 模块在 `packages/server/src/modules/`，全部**逐行搬运**（含条件门 `IS_DESKTOP` / `qqOff` /
+> `ownerId` 与日志措辞）。
+>
+> **验收方式**：真启动服务 + curl 全部端点，**比对响应字节数**——
+> 改造前后 `/api/life` 14998 B、`/api/profile` 42752 B、`/api/stats` 1641 B **完全一致**；
+> 启动日志逐行相同（仅多一行 server 宿主汇总）。源码改动面 `bootstrap.ts` −317/+66。
+
+server 侧 10 个模块与依赖图（`packages/server/src/modules/index.ts`）：
+
+```
+层级0  al:config
+层级1  al:logging ←(config)          al:vision ←(config)
+层级2  al:core ←(config, logging)
+层级3  al:adapters ←(core, config, vision)        ← 提供 al:push
+层级4  al:proactive / al:reminder ←(core, config, push)
+层级5  al:life ←(core, config, push, proactive)
+       al:cron ←(core)
+       al:webui ←(core, config)
+```
+
+server 侧同样**必须靠断言/注释守住**的隐性行为（破坏了不报错）：
+
+- **`al:reminder` 必须 `inject: ['al:core']`** —— `al:core` 先注册 no-op 版 reminder 工具，
+  server 侧之后覆盖成真实持久化版本（`ToolRegistry` 的 Map 同名覆盖）。
+  顺序反了会**静默用错版本**。
+- **`consoleDist` / `staticDist` 路径解析刻意留在 `bootstrap.ts`** —— `import.meta.url`
+  在 dev 是 `src/bootstrap.ts`、prod 是 `dist/bootstrap.js`，上溯两级才到 `packages/`；
+  挪进 `src/modules/` 会多一层上溯 → `existsSync` 为 false → **静态路由静默不注册、
+  SPA 白屏且无报错**。
+- **`PushChannel`**（`packages/server/src/push.ts`，本 change 抽出）—— `life.ts` /
+  `proactive.ts` 的 `qqOff` 参数类型从具体适配器收窄为 `PushChannel` 接口
+  （两者都**只用** `sendProactive`），使 life/proactive 不再耦合平台适配器。
+
+⚠️ **内核暴露的能力缺口**：`al:core` 需要「启动日志必须落进 `al:logging` 已配置的文件」，
+但 `al:logging` 是 `provides: false`，而内核**没有「只排序、不依赖服务」的表达方式**。
+当前用**能力令牌**绕过：`al:logging` 提供真值 `al:logDir`（日志目录），`al:core` 注入它
+**只为排序**、不使用该值。这类需求 ≥3 处时应给 `Module` 加 `after?: string[]`
+（本 change 不做，已登记 `docs/KNOWN-ISSUES.md` KI-10）。

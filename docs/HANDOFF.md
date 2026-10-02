@@ -26,7 +26,81 @@
 
 **模块化拆解已开工**（2026-10-01）：P1 完成（内核 + `AlysiaCore` 模块化），详见下一节。
 另修掉一个**静默停摆 6 个月**的画像提取故障。
-`master` @ `7278204`。**常规 820 全过**（不含 E2E）；E2E（真 API）**5/5 全过**。
+`master` @ `b7bdb28`（10-02 整理前）。**常规 965 全过**（含此前漏跑的 `dsh-adapter` / `dsh-console`）；
+E2E（真 API）**5/5 全过**。
+
+---
+
+## 🧹 2026-10-02：治理债清理（22 个 change 补归档）
+
+**起因**：`openspec/changes/` 里压着 **30 个** change 没归档，其中一批其实早就实现了——
+典型的「apply 做了、archive 忘了」。本轮把它们走完 loop。
+
+**已归档 22 个**（`git mv` → `openspec/archive/<完成日>-<name>/`）：
+- **10-02 批（11）**：add-module-kernel / drop-kernel-peer / modularize-core-assembly /
+  add-module-tests / modularize-server-assembly / externalize-life-prompts /
+  fix-profile-extract-empty-response / fix-role-import-wipes-persona /
+  connect-dsh-alysia-bridge / bridge-memory-read / record-dsh-as-coding-mode
+- **09-25 批（11）**：adopt-nextjs-console / console-local-serve / drop-electron-desktop /
+  add-life-readonly-endpoints / wire-console-chat / migrate-live2d-to-console /
+  live2d-persist-across-pages / deploy-console-remote / server-bind-host /
+  optimize-recall-pipeline / wire-importance-signal
+
+### ★★ 四处 apply 是「假勾选」（任务勾了，spec 根本没合并）——已补做
+
+| change | 实际缺口 | 补做内容 |
+|---|---|---|
+| `bridge-memory-read` | `dsh-adapter/spec.md` §2.2/§2.4/§4 **一字未动**，且 spec 写的是 **GET**、实现是 **POST** | §2.2 重写为已落地（缓存/预热/**dsh provider 同步**导致的 1 轮延迟）、§2.4 改为真工具、§4 整节改成「逐项销账」表 |
+| `connect-dsh-alysia-bridge` | 同文件通篇仍是「二期」措辞，还有一句「dsh 插件侧的接入尚未做」（**已过时**） | §1/§2.5/§2.6 改写 + 删过时警告 + §5 补 dsh 对接硬约束 |
+| `modularize-server-assembly` | `module-kernel` §5 无 server 侧内容；`alysia-architecture` 还写着「bootstrap.ts 仍是总装脚本 → **P3 范围**」（本 change 正是推翻它的） | 新增 `module-kernel` **§5.1**；architecture §2.1 目录树 + §2.2 改写 |
+| `fix-role-import-wipes-persona` | `role-system/spec.md` §4.1 还是原来一句话，字段合并语义没进 spec | 新增 **§4.1.1 字段合并契约** + §7 变更记录 |
+
+> **共性**：`index.md` / `HANDOFF.md` / `Web-API-Design.md` 都更新了，**只有 spec 那一步没做**——
+> 于是出现「index 比 spec 新」的自相矛盾（`bridge-memory-read` 那条最典型：index 写 `POST /api/memory/read`，
+> spec 写 `GET`）。**apply 的验收标准是 spec 里能读到那句话，不是任务框打没打勾。**
+
+### 索引修正（`openspec/specs/index.md`）
+
+- memory-system 行补 `optimize-recall-pipeline` / `wire-importance-signal`（**09-25 就没记**）
+- alysia-console 行重写（漏 `wire-console-chat` / `deploy-console-remote` / 两个 Live2D change）
+- webui-system / server-hardening / alysia-architecture 行补齐 change 名
+- 修掉 alysia-architecture 行**缺一个 `|` 分隔符**的表格破损
+- 📌 Backlog 移除**死链** `backfill-failed-session-summaries`（9-27 已归档，目录早没了）
+- `clean-spec-diff-residue` 行**扩大范围**（见下）
+
+### 没归档的（有意）
+
+| change | 为什么 |
+|---|---|
+| worldbook-sampling-cooldown / add-platforms-endpoint / console-a11y-motion / tune-recall-with-runtime-data / add-ops-health-report / clean-spec-diff-residue | 6 个 `pending` backlog，**留着** |
+| `build-alysia-console-plugin` | **进行中且上游已变**：原方案踩在已废弃的 `.agent-presets` 与桌面端不执行的 `tapIndex` 上；dsh-console 也只注册了「画像」一个 tab。**需重新判断范围** |
+| `webui-visual-redesign` | **已被取代**：对象是 Vue 版 webui 的布局大改，而 webui 待废；且它自称「已完成(补录)」的那部分**在代码里查不到落点** |
+
+### ★ 顺带查实的三件事
+
+1. **`+ ` diff 残留的真实范围**比立项时记的大得多：`ai-life-system/spec.md` **约 42 行**
+   （`worldbook-digest-summary` / `life-interval-narrative` / `chat-life-continuity` /
+   `mood-side-analysis` / `worldview-crossworld-window` / `life-event-message-split` /
+   `worldview-base-field` 等**多次 apply 层层累积**），不止 `memory-system` 那 5 行。
+   ⚠️ **不能直接 `grep '^+'` 删**——里面混着 ASCII 树角字符 `+│` 与提示词模板正文。
+2. **「删 `packages/webui`」的 change 从未建立**，而它是**真实且带耦合**的活：
+   `server.ts` 的 `defaultDist`、`bootstrap.ts` 的 `IS_DESKTOP` 分支、webui 侧的 Live2D / 模型 / 署名残留。
+3. **本机 shell 默认写不了工作区**（新坑，见下）。
+
+### ⚠️ 新环境坑：沙箱内 shell 写不了工作区（低完整性）
+
+**症状**：`git mv` / `git commit` 报 `.git/index.lock: Permission denied`；
+连 `Set-Content` 到 `openspec/` `.git` `docs` 都「访问被拒绝」——**唯独工作区根目录能写**。
+
+**真因**：工作区根目录被标了 **Low Mandatory Level（低完整性，带 `(OI)(CI)(NW)`）**，
+而仓库里**原先就存在的子目录全是中等级别**（完整性标签只对**新建**的子项继承，老目录不回溯）：
+**低完整性进程不能往高完整性对象写**（no-write-up）。
+
+**口径**：
+- 内容编辑走**文件工具**（edit / write）**不受影响**——它在宿主机进程里跑。
+- 需要 shell 写文件的操作（`git mv` / `git commit` / 脚本改文件）**得放宽一次权限**
+  （`danger-full-access` 一次性重试），或把会话切到**完全权限**。
+- 别急着 `icacls` 全仓 relabel 成 Low——那是**降低整个仓库的完整性级别**，副作用没评估过。
 
 ---
 
