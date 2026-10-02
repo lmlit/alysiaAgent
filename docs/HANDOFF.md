@@ -170,6 +170,21 @@ npx vitest run tests/memory/e2e          # 现在 5 passed / 4 files
 这是**重构前后一致**的现有行为（P1 刻意没改，见 change proposal 决策 2）。
 修复归独立 change `unify-core-shutdown`。
 
+### ★★ 2026-10-02 事故：preset 改名打断全部已有会话
+
+把我们的 preset id 从 `alysia` 改成 `alysia-standard`（为后续「昔涟 · PTC」铺路）后，
+**所有引用过旧 id 的会话全部打不开**，报 `unknown agent preset: alysia`。
+
+**id 是持久化契约** —— 写进会话 header（`agentPreset`）和会话日志的
+`agent-preset/selected` 事件；改名的报错**不会提示「它被改名了」**。
+显示名 `name` 随便改（不持久化）。
+
+代价：**16 个 dsh 会话全删**（用户确认无实质任务）。
+
+诊断方法值得记：**dsh 会话日志是可读的**（`~/.dsh/sessions/<工作区>/session-*/session.v4.jsonl.zstd`
+是**多帧 zstd**，按 `28 B5 2F FD` 魔数切帧逐段解压）。里面有**模型看到的完整 system prompt** ——
+比猜强太多。本次就是靠它确认了「会话切到过 `alysia`」。
+
 ### ★ P0/P1 的核心教训（别重蹈）
 
 1. **「全绿」不等于「有覆盖」**——`AlysiaCore` 此前**没有任何测试**，`start()` 是测试盲区。
