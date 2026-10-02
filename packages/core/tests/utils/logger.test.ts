@@ -1,5 +1,5 @@
 // tests/utils/logger.test.ts — 日志滚动清理：保留 7 天（用户拍板：清理太频繁丢失分析信息）
-import { describe, it, expect, afterAll } from 'vitest';
+import { describe, it, expect, afterAll, vi } from 'vitest';
 import { mkdtempSync, writeFileSync, readdirSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -69,5 +69,41 @@ describe('logger 日志清理（保留 7 天）', () => {
     expect(logFiles()).toEqual([]); // 超期 alysia-* 日志已删
     expect(readdirSync(dir).sort()).toEqual(['notes.txt', 'other-named.log']); // 其他文件不动
     if (timer) clearInterval(timer);
+  });
+});
+
+// ★ 2026-10-02 change: fix-migration-and-logger-silent-failure
+//
+// 日志子系统自己的失败以前是**一声不吭**的裸 catch。最坏的情况：
+// 磁盘满时所有"有痕迹"的路径集体变成"无痕迹"，而这个失败本身也无痕迹 ——
+// 整个可观测性的地基塌了，还没人知道。
+describe('logger 自身失败必须喊出来', () => {
+  let badRoot: string | null = null;
+
+  afterAll(() => {
+    // 恢复：一次成功的写入会把"已喊过"的标志位重置，避免影响别的用例
+    const good = mkdtempSync(join(tmpdir(), 'alysia-log-restore-'));
+    logger.configure({ logDir: good });
+    logger.info('restore');
+    rmSync(good, { recursive: true, force: true });
+    if (badRoot) rmSync(badRoot, { recursive: true, force: true });
+  });
+
+  it('日志目录建不出来 → console.error 喊一次（且不刷屏）', () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    badRoot = mkdtempSync(join(tmpdir(), 'alysia-log-bad-'));
+    // 拿一个「文件」当目录用 → mkdirSync 必然失败
+    const notADir = join(badRoot, 'not-a-dir');
+    writeFileSync(notADir, 'x');
+
+    logger.configure({ logDir: notADir });  // ← 第 1 次喊
+    logger.info('a');                        // 写文件也失败，但不应再喊
+    logger.info('b');
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(String(spy.mock.calls[0][0])).toContain('日志目录创建失败');
+
+    spy.mockRestore();
   });
 });

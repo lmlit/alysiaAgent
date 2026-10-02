@@ -84,14 +84,118 @@
 - **建议方向**：改用共用解析器 `parseLLMJson` + 失败 `logger.warn`
   （项目已有该工具，`SessionEndProcessor` / `ProfileExtractor` 都已切过去）。
 
-### KI-5 🟡 裸 `catch {}` 未做全仓清点
+### KI-5 🟡 裸 `catch {}`：**存储层已清点完，其余待清**
 
-- **现象**：本次一条链路就挖出**两个**裸 `catch {}`（`ProfileExtractor` / `CronProcessor`），
-  都造成了「失败 = 成功」的假象。**没有理由认为只有这两个。**
-- **证据**：`ProfileExtractor.ts`（该文件此前连 logger 都没 import）、`CronProcessor.ts`。
-- **影响**：同类静默失败未知数量。
-- **建议方向**：全仓 grep `catch {` / `catch (e) {}` 做一次清点，逐个判断
-  「这里吞掉是否合理」。**纯审计，产出是一份清单**，不直接改。
+> ★ **2026-10-02 更新（存储层审计 + change: `fix-migration-and-logger-silent-failure`）**：
+> 「全仓清点」在**存储/迁移/日志层**已经做完，清单如下。**不再是一条"未知数量"的债。**
+
+**✅ 本次已修（裸 catch 直接消除，不是加日志）**
+- `database.ts` —— **13 处迁移裸 catch**：改为探测式 `addColumnIfMissing()`（先查再改，真失败原样抛）。
+  「列已存在」是幂等成功，不是错误，所以**根本不需要 catch**。
+- `utils/logger.ts` —— 3 处（`writeFileLine` / `configure` 的 mkdir / `cleanupOldLogs`）：
+  改为 `console.error` **喊一次**（带标志位防刷屏；不能走 logger 自己，会递归）。
+
+**⬜ 仍未修（已定名，按危险度排序）**
+
+| 位置 | 吞掉了什么 | 后果 |
+|---|---|---|
+| `packages/server/src/life.ts`（`tick` 的 catch） | 无——**它记了 error** | 但**粒度太粗**：生成失败/存储失败/推送未发生混在同一条，日志上像是"这一轮什么都没发生" |
+| `CronProcessor.ts:99` | 知识库归档失败 | 90 天该归档的文档一个没归档，日志表现为"没有需要归档的文档" |
+| `PromptAssembler.ts:158` | `expireStaleFacts` 的**写**失败 | 过期事实永不清理，且是唯一自动调用点 → 端到端静默 |
+| `PersonaStore.ts:33-37`（`migrateMemoryConfig`） | `ALTER TABLE` 失败 | 人格 `memory_config` 列没加上也无人知 |
+| `LanceDBStore.ts:59` | `openTable` 的**所有**失败都被当作"表不存在" | 最终 warn 里的报错是**误导性的** |
+| `LanceDBStore.ts:96` | 删旧行失败 | 同 id 两条向量并存 → 召回里同一条记忆重复出现，无痕 |
+| `LanceDBStore.ts:160-162`（`count`） | 读失败 → 返回 `0` | 「库是空的」与「库读不了」完全同形 |
+| `MemoryManager.ts:197`（`saveTokenStats`） | **写**统计文件失败 | token 统计静默停摆（喂 `/api/stats`） |
+| `MemoryManager.ts:188 / 392 / 418` | 读失败 → 默认值 / `''` | 其中 `getWorldviewBlock` 会把失败**永久缓存成空**（每轮 prompt 少一段） |
+
+- **建议方向**：上面 9 条按同一手法处理——**能改探测式的改探测式，改不了的至少喊一次**。
+  合并成第二刀（`fix-store-write-trace`），与下一条 KI-11 一起做。
+
+---
+
+## 🟠 存储写入留痕（2026-10-02 全量审计：9 store / 55 写入点）
+
+> 起因：`life.generateEvent` 的观测补齐后，顺着问了一句「那所有存储节点有日志吗」。
+> 审计结论：**留下可查痕迹的接近 0**——而且问题比"没加日志"深三层。
+> 第一刀（迁移 + 日志子系统）已由 `fix-migration-and-logger-silent-failure` 落地；
+> 下面这些**仍未修**，是本项目所有"静默故障"的**共同产地**。
+
+### KI-11 🔴 52/55 个写入点不检查 `.changes`（"写成功"没有判据）
+
+- **现象**：`.run()` 返回 `{changes}`，**全 core 只有 3 处看了它**（还都在 `LifeStore`）。
+  `UPDATE … WHERE id = ?` 命中 0 行**不报错**——「改到了」和「什么都没改」完全同形。
+- **证据**：`grep '.changes' packages/core/src` → 仅 `LifeStore.ts:149/240/246`。
+- **后果（已定位的受害点）**：
+  - `LifeStore.markDelivered`（`:107-109`）——「已推送」这一位**不可信**。它还在
+    `life.ts:267` 推送成功**之后**、`[Life] pushed` **之前**：失败只留一条与推送无关的
+    tick 错误，**没有任何日志能证明消息已经推出去了**；反向则会导致**重复推送**。
+  - `WorldbookStore.recordTrigger`（`:66-71`）——命中计数空转 → **世界书采样权重失真**。
+  - `WorldbookStore.updateEntry`（`:78-91`）——编辑不存在的条目**返回成功**（Web 端可见）。
+  - `EventStore.archiveBySession` / `deleteBySession`——**祖先级**「空转伪装成归档」。
+- **方向**：写入必须检查 `.changes`（或显式豁免）；**但需先定口径**——幂等跳过（如
+  `INSERT OR IGNORE`）为 0 是正常的，一刀切会把正常路径变成噪声。
+
+### KI-12 🔴 `EventStore.insert` 的 `INSERT OR REPLACE` 列单不含 `archived`
+
+- **现象**：列单缺 `archived`，而它是 `DEFAULT 0`。同 id 重投（**QQ 重连 / 重试**）→
+  **静默复活软删除的会话**、把已摘要事件的 `processed` 归 0（**再摘要 + 再画像提取**）、
+  清掉 LLM 打的 `importance`、改写 `created_at`（可能挪出摘要窗口）。
+- **证据**：`EventStore.ts:27-40` vs `database.ts` 的 `archived INTEGER DEFAULT 0`。
+- **方向**：改 `INSERT … ON CONFLICT DO UPDATE`（只更新 payload），或列单覆盖全部状态列。
+
+### KI-13 🔴 知识库「半截文档 + hash 去重锁死」
+
+- **现象**：先落 doc（`chunk_count = chunks.length`、`status='active'`）再循环落 chunk，
+  **两者不在一个事务里**。中途失败留下一个"完全正常的活跃文档"外壳；重试被 `getByHash`
+  命中残行 → 返回**从未兑现的块数**并宣布「已导入 N 块」。**零日志、永不自愈。**
+- **证据**：`KnowledgeStore.ts:9 / :77` + `MemoryManager.ts:1346-1390`。
+- **同时命中三个已知病灶**：状态标记与实际不符 / 失败返回看起来正常的默认值 / 空转伪装成归档。
+- **方向**：包事务；`chunk_count` 用实到块数；重试路径校验 chunk 实存数。
+
+### KI-14 🟠 `LanceDBStore.insert` 永不抛 → 上游所有 try/catch 是**死代码**
+
+- **现象**：`insert` catch 后只 warn、**不 rethrow**。于是上游每一处
+  `try { insert } catch { warn('...向量失败') }` 的 warn **永远不会打印**，
+  而计数照样 `applied++` / `done++`、日志照样打全绿。
+- **证据**：`LanceDBStore.ts:104-106`；死代码在 `RealtimeProcessor.ts:99-102`、
+  `SessionEndProcessor.ts:377-379`、`MemoryManager.ts:558`、`:1386-1388`。
+- **★ 2026-09-27 那次事故的同形代码今天仍然活着**：
+  `packages/server/scripts/backfill-life-importance.ts:118-138` ——
+  `done++` 计的是"没抛异常"，**一条向量都没写也会打 `✅ 回填完成: 成功 N / 失败 0`**。
+- **方向**：`insert`/`delete` 的失败要么 rethrow，要么返回成功/失败标记（**让调用方能判**）。
+
+### KI-15 🟠 `vectorStore` 为 null 时**静默跳过嵌入**（10 条路径，全部无痕）
+
+- **路径**：`RealtimeProcessor.ts:85` / `MemoryManager.ts:542` / `:1378` / `:290` / `:1417` /
+  `SessionEndProcessor.ts:160 / :291 / :366` / `ConversationStore.ts:17 / :61`。
+- **最危险的**：`SessionEndProcessor.ts:160` 的 `if (ok && this.vectorStore)`——
+  null 时摘要照写、向量静默不写，行仍是 `summary_status='ok'`，
+  `MemoryManager.ts:1096-1101` 的 `archived N/M` **照打全绿**：**计数只数摘要、不数向量**。
+  删除路径同理 → **孤儿向量继续被召回**（"删干净了"是假的，比丢向量更危险）。
+- **读侧同形**：`MemoryManager.ts:784`（**零日志**）、`ConversationStore.ts:133`、
+  `EventStore.ts:13`、`KnowledgeStore.ts:39`（都返回 `[]`）。
+- **方向**：降级要**逐次可区分**（启动那一行 warn 不够）；`count()` 纳入健康检查。
+
+### KI-16 🟠 `PersonaStore.get()` 的「读时回写默认值」**还在**
+
+- **现象**：检测到空的 `tone`/`speech_style`/`emotional_range` 就**填回结构默认值并写回 DB**
+  （`PersonaStore.ts:21-28`）——这**本身是一次静默写操作**，且**无日志**。
+- **为什么危险**：它把「人格被冲成空」**整形成一组合法出厂默认值**（与 seed 逐字相同），
+  **骗过数据层，也骗过人工巡检**；`fix-role-import-wipes-persona` 只修了 `importRole` 的合并，
+  **没动这层** —— 所以下一次"被冲空"**依旧只有没兜底的 `system_prompt` 会露馅**。
+- **同族**：`ProfileStore.migrateFact` 读时补默认，且结果被 `writeFacts` **回写**
+  → 每加一条新事实就重写一遍存量；`PersonaStore` 的三个读兜底 `[]` 会被
+  `addAdaptationHint` / `appendOverlayNote` **原样写回** → 把「曾存在但读坏了」**持久化成「本来就没有」**。
+- **方向**：兜底与回写分离——读可以给默认值，但**不许把默认值写回去**；真要修就显式修。
+
+### KI-17 🟡 `summary_status` 默认 `'ok'`；`ConversationStore.updateSummaryResult` 0 行也算成功
+
+- `ConversationStore.ts:15` 的 `?? 'ok'` 与 `:164` 的 NULL→`'ok'`：当前唯一调用方显式传值，
+  属**潜伏**；将来任何新导入/迁移路径漏传就会写出"空摘要 + 状态 ok"= **22 天全绿的同款构造**。
+  → 建议默认改 `'failed'`。
+- `updateSummaryResult` 0 行更新时，`SessionEndProcessor.ts:313` 仍打「补处理成功」+ `return true`，
+  与真正补处理**逐字相同**。→ 判 `changes === 0` 降级为失败。
 
 ---
 

@@ -1,6 +1,33 @@
 // src/memory/database.ts
 import type Database from 'better-sqlite3';
 
+/**
+ * 幂等加列 —— **迁移的唯一入口**。
+ *
+ * ★ 2026-10-02（change: fix-migration-and-logger-silent-failure）
+ *
+ * 旧写法是 `try { ALTER } catch { /* column already exists *\/ }`，
+ * 那句注释是**假设，不是验证**——它把两种情况完全混同：
+ *   - 「列已存在」（正常的幂等跳过）
+ *   - 「锁库 / 磁盘满 / 权限不足」（**迁移真失败**）
+ * 后果链：迁移静默失败 → 列没加上 → **进程照常启动、启动日志全绿** →
+ * 直到某次写该列才报 `no such column`；而读到 undefined 时又走「回落默认值」，
+ * 于是「库结构不对」长期伪装成「还没有数据」。
+ *
+ * 这里**先探测再执行**：列已在 → 跳过；否则执行，**失败原样抛出**（大声）。
+ * 「列已存在」根本不是错误，是幂等成功——所以不需要 catch，也就不会有裸 catch。
+ */
+export function addColumnIfMissing(
+  db: Database.Database,
+  table: string,
+  column: string,
+  ddl: string,
+): void {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (cols.some(c => c.name === column)) return;
+  db.exec(ddl);
+}
+
 export function initializeDatabase(db: Database.Database): void {
   db.pragma('journal_mode = WAL');
 
@@ -187,9 +214,8 @@ export function initializeDatabase(db: Database.Database): void {
   `);
 
   // Migration: add memory_config to existing persona table (v2)
-  try {
-    db.exec(`ALTER TABLE persona ADD COLUMN memory_config TEXT NOT NULL DEFAULT '{"retention_bias":0.2,"decay_rate":0.3,"importance_threshold":0.4,"recency_weight":0.3,"confirmation_bias":0.3}'`);
-  } catch { /* column already exists */ }
+  addColumnIfMissing(db, 'persona', 'memory_config',
+    `ALTER TABLE persona ADD COLUMN memory_config TEXT NOT NULL DEFAULT '{"retention_bias":0.2,"decay_rate":0.3,"importance_threshold":0.4,"recency_weight":0.3,"confirmation_bias":0.3}'`);
 
   // Migration: 角色系统 (v3) — persona 多行化 + worldbook role 维度
   const personaCols = db.prepare(`PRAGMA table_info(persona)`).all() as Array<{ name: string }>;
@@ -227,41 +253,33 @@ export function initializeDatabase(db: Database.Database): void {
   }
 
   // ★ 8-27 世界书 digest 简介（worldbook-digest-summary）：LLM 生成的 120-150 字角色简介，
-  //   采样注入优先用 digest 而非截断正文。ALTER + try-catch，不 DROP。
-  try {
-    db.exec(`ALTER TABLE worldbook_entries ADD COLUMN digest TEXT`);
-  } catch { /* column already exists */ }
+  //   采样注入优先用 digest 而非截断正文。走 addColumnIfMissing（探测式幂等，不 DROP）。
+  addColumnIfMissing(db, 'worldbook_entries', 'digest', `ALTER TABLE worldbook_entries ADD COLUMN digest TEXT`);
 
-  // ★ 8-28 角色视角（memory-character-perspective）——三处迁移，全部 ALTER + try-catch
+  // ★ 8-28 角色视角（memory-character-perspective）——三处迁移，全部探测式幂等
   // 1) user_profile.character_facts：昔涟自己的事实（与 facts 用户事实并列，同 ProfileFact 结构）
-  try {
-    db.exec(`ALTER TABLE user_profile ADD COLUMN character_facts TEXT NOT NULL DEFAULT '[]'`);
-  } catch { /* column already exists */ }
+  addColumnIfMissing(db, 'user_profile', 'character_facts',
+    `ALTER TABLE user_profile ADD COLUMN character_facts TEXT NOT NULL DEFAULT '[]'`);
   // 2) events.perspective：'interaction'(与用户互动) | 'self'(昔涟自己的生活)
-  try {
-    db.exec(`ALTER TABLE events ADD COLUMN perspective TEXT DEFAULT 'interaction'`);
-  } catch { /* column already exists */ }
+  addColumnIfMissing(db, 'events', 'perspective',
+    `ALTER TABLE events ADD COLUMN perspective TEXT DEFAULT 'interaction'`);
   // 3) conversations.character_perspective：会话摘要的角色视角（昔涟在对话中的感受/变化）
-  try {
-    db.exec(`ALTER TABLE conversations ADD COLUMN character_perspective TEXT DEFAULT ''`);
-  } catch { /* column already exists */ }
+  addColumnIfMissing(db, 'conversations', 'character_perspective',
+    `ALTER TABLE conversations ADD COLUMN character_perspective TEXT DEFAULT ''`);
 
   // ★ 9-25 fix-session-summary-silent-failure：conversations.summary_status
   //   摘要生成状态（'ok' | 'failed'）。失败行 summary 为空且无向量，可被捞出补处理。
-  //   迁移遵循项目规范：ALTER TABLE + try-catch，**不 DROP**（存量行由 DEFAULT 填 'ok'）。
-  try {
-    db.exec(`ALTER TABLE conversations ADD COLUMN summary_status TEXT DEFAULT 'ok'`);
-  } catch { /* column already exists */ }
+  //   迁移遵循项目规范：探测式幂等加列，**不 DROP**（存量行由 DEFAULT 填 'ok'）。
+  addColumnIfMissing(db, 'conversations', 'summary_status',
+    `ALTER TABLE conversations ADD COLUMN summary_status TEXT DEFAULT 'ok'`);
 
-  // ★ 8-27 叙事化重构（life-system-narrative-refactor）迁移——全部 ALTER + try-catch，不 DROP
+  // ★ 8-27 叙事化重构（life-system-narrative-refactor）迁移——全部探测式幂等，不 DROP
   // 1) ai_life_state.mood_value：情绪累积值 -100..100（同向加成/反向衰减/8h 回归 0）
-  try {
-    db.exec(`ALTER TABLE ai_life_state ADD COLUMN mood_value INTEGER DEFAULT 0`);
-  } catch { /* column already exists */ }
+  addColumnIfMissing(db, 'ai_life_state', 'mood_value',
+    `ALTER TABLE ai_life_state ADD COLUMN mood_value INTEGER DEFAULT 0`);
   // 2) ai_life_events.origin：'regular'(常规) | 'followup'(对话余波，不推送只记录)
-  try {
-    db.exec(`ALTER TABLE ai_life_events ADD COLUMN origin TEXT DEFAULT 'regular'`);
-  } catch { /* column already exists */ }
+  addColumnIfMissing(db, 'ai_life_events', 'origin',
+    `ALTER TABLE ai_life_events ADD COLUMN origin TEXT DEFAULT 'regular'`);
   // 3) life_templates.category（独处/互动/分享）+ group_name（角色关系分组，回落按在场匹配）
   const ltCols = db.prepare(`PRAGMA table_info(life_templates)`).all() as Array<{ name: string }>;
   const ltColNames = new Set(ltCols.map(c => c.name));
@@ -272,25 +290,20 @@ export function initializeDatabase(db: Database.Database): void {
     db.exec(`ALTER TABLE life_templates ADD COLUMN group_name TEXT DEFAULT 'none'`);
   }
   // 4) ai_life_intents.evidence（★ 8-28 承诺闭环：原始承诺句备份，到期裁决还原语气）
-  try {
-    db.exec(`ALTER TABLE ai_life_intents ADD COLUMN evidence TEXT DEFAULT ''`);
-  } catch { /* column already exists */ }
+  addColumnIfMissing(db, 'ai_life_intents', 'evidence',
+    `ALTER TABLE ai_life_intents ADD COLUMN evidence TEXT DEFAULT ''`);
   // 5) ai_life_intents.defer_count（★ 8-28 承诺闭环：延期次数，上限 2 次防无限拖延）
-  try {
-    db.exec(`ALTER TABLE ai_life_intents ADD COLUMN defer_count INTEGER DEFAULT 0`);
-  } catch { /* column already exists */ }
+  addColumnIfMissing(db, 'ai_life_intents', 'defer_count',
+    `ALTER TABLE ai_life_intents ADD COLUMN defer_count INTEGER DEFAULT 0`);
   // 6) ai_life_state.mood_note（★ 8-29 情绪侧端分析：深度阈值后 LLM 生成的描述性氛围）
-  try {
-    db.exec(`ALTER TABLE ai_life_state ADD COLUMN mood_note TEXT DEFAULT ''`);
-  } catch { /* column already exists */ }
+  addColumnIfMissing(db, 'ai_life_state', 'mood_note',
+    `ALTER TABLE ai_life_state ADD COLUMN mood_note TEXT DEFAULT ''`);
   // 7) persona.overlay_notes（★ 8-29 Overlay：证据门槛固化的稳定人格演化备注，JSON array）
-  try {
-    db.exec(`ALTER TABLE persona ADD COLUMN overlay_notes TEXT NOT NULL DEFAULT '[]'`);
-  } catch { /* column already exists */ }
+  addColumnIfMissing(db, 'persona', 'overlay_notes',
+    `ALTER TABLE persona ADD COLUMN overlay_notes TEXT NOT NULL DEFAULT '[]'`);
   // 8) ai_life_state.reflection（★ 8-31 每日反思闭环 life-reflection-loop：LLM 生成的行为反思）
-  try {
-    db.exec(`ALTER TABLE ai_life_state ADD COLUMN reflection TEXT DEFAULT ''`);
-  } catch { /* column already exists */ }
+  addColumnIfMissing(db, 'ai_life_state', 'reflection',
+    `ALTER TABLE ai_life_state ADD COLUMN reflection TEXT DEFAULT ''`);
 
   // Seed default singleton rows
   const now = new Date().toISOString();

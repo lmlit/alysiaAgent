@@ -23,13 +23,43 @@ function todayLogPath(): string | null {
   return join(logDir, `alysia-${day}.log`);
 }
 
-/** 追加写文件；失败不抛（文件写坏不影响控制台） */
+/**
+ * 日志子系统自身失败时的**最后出口**。
+ *
+ * ★ 2026-10-02（change: fix-migration-and-logger-silent-failure）
+ *
+ * 以前这里（以及 configure 的 mkdir、cleanupOldLogs）失败都是**一声不吭**的裸 catch。
+ * 那样最坏的情况是：**磁盘满时所有"有痕迹"的路径集体变成"无痕迹"，
+ * 而这个失败本身也无痕迹**——整个可观测性的地基就塌了，还没人知道。
+ *
+ * 注意两点：
+ * 1. **不能调 `logger.warn`** —— `fmt()` 内部就是 `console.log` + `writeFileLine`，
+ *    会无限递归。所以直写 `console.error`。
+ * 2. **只在第一次喊**（`fileWriteFailed` 标志位）——磁盘满会持续失败，
+ *    每次都喊会把 stderr 刷爆，反而淹没别的信息。
+ *
+ * catch 本身保留（文件写坏不该拖垮进程）：**不吞的是"知道"，不是"异常"**。
+ */
+let fileWriteFailed = false;
+
+function shoutOnce(msg: string): void {
+  if (fileWriteFailed) return;
+  fileWriteFailed = true;
+  console.error(msg);
+}
+
+/** 追加写文件；失败不抛（文件写坏不影响控制台），但**第一次失败会喊一声** */
 function writeFileLine(line: string): void {
   const path = todayLogPath();
   if (!path) return;
   try {
     appendFileSync(path, line + '\n');
-  } catch { /* file write failure is non-fatal */ }
+    fileWriteFailed = false; // 恢复后允许下次再喊（例如磁盘腾出来了又满）
+  } catch (err: any) {
+    shoutOnce(
+      `[logger] 日志文件写入失败 —— 文件持久化已停摆，之后所有日志只剩控制台: ${path} — ${err?.message ?? err}`
+    );
+  }
 }
 
 /** 清理超过 7 天的滚动日志文件（启动时调用一次） */
@@ -44,7 +74,10 @@ function cleanupOldLogs(): void {
         rmSync(join(logDir, f));
       }
     }
-  } catch { /* cleanup failure is non-fatal */ }
+  } catch (err: any) {
+    // 清理失效不是致命的，但会让磁盘被日志慢慢吃满 —— 静默的话没人会提前发现
+    shoutOnce(`[logger] 旧日志清理失败（磁盘可能被日志逐渐占满）: ${err?.message ?? err}`);
+  }
 }
 
 /** 每日定时清理（保留 7 天日志，用户拍板：清理太频繁会丢失分析信息）。
@@ -87,7 +120,10 @@ export const logger = {
     try {
       mkdirSync(logDir, { recursive: true });
       cleanupOldLogs();
-    } catch { /* dir creation failure is non-fatal */ }
+    } catch (err: any) {
+      // ★ 日志目录建不出来 = 文件持久化从未生效 —— 这是"以后什么都查不到"的起点，必须喊
+      shoutOnce(`[logger] 日志目录创建失败 —— 本次运行不写日志文件: ${logDir} — ${err?.message ?? err}`);
+    }
   },
 
   debug(msg: string, ...args: unknown[]): void {

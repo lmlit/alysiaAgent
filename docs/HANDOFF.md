@@ -104,6 +104,59 @@ E2E（真 API）**5/5 全过**。
 
 ---
 
+## 🗄️ 2026-10-02：存储写入留痕审计 + 第一刀（change: `fix-migration-and-logger-silent-failure`）
+
+**起因**：预算观测补齐后顺手问了一句「所有存储节点有日志吗」。答案是**接近 0**——
+**9 个 store / 55 个写入点**，只有 `LanceDBStore` 有真日志（而它还见下），
+`LifeStore` 唯一那行是 `debug`（产线不输出），**其余 7 个 store 一行 logger 都没有**。
+
+**但真正的问题不是"忘了加日志"，是三层系统性伪装**（全都属于项目栽过三次的那一类）。
+完整清单已登记 `docs/KNOWN-ISSUES.md` **KI-5（重写）+ KI-11～KI-17（新增）**。
+
+### ★ 第一刀做了什么（只修地基，行为零变化）
+
+| 位置 | 改动 |
+|---|---|
+| `database.ts` | **13 处迁移裸 catch 直接消除** —— 改探测式 `addColumnIfMissing()`（先查再改，真失败原样抛）；DDL 与顺序逐字未变 |
+| `utils/logger.ts` | `writeFileLine` / `configure` mkdir / `cleanupOldLogs` 三处失败 → `console.error` **喊一次**（标志位防刷屏；**不调 logger 自己**，会递归） |
+
+**设计要点：不给裸 catch 加日志，而是去掉它。** 「列已存在」是**幂等成功**，不是错误——
+加日志会让每次启动刷 13 行噪声，而探测式**根本不需要 catch**，真失败自然抛出。
+（否决了 `err.message.includes('duplicate column')`：**靠错误文案匹配**比探测脆弱，
+SQLite 换版本改措辞就静默失效。）
+
+**第二条为什么排第一刀**：日志子系统是**所有其他日志的地基**。它自己静默失败时，
+磁盘满会让**所有"有痕迹"的路径集体变"无痕迹"，而这个失败本身也无痕迹**。
+
+**验收**：core **618 passed**（+6 新用例）、server **223 passed**、两个包 `tsc` 干净、
+core 已 build 且**核过 dist 含新代码**；`database.ts` 残留裸 catch **0 处**。
+
+### ⬜ 仍未修（第二刀 `fix-store-write-trace`，按危险度）
+
+1. **KI-11 🔴 52/55 个写入点不检查 `.changes`** —— 「写成功」没有判据。
+   受害最重的是 `LifeStore.markDelivered`：「已推送」这一位不可信（还会导致**重复推送**）。
+   ⚠️ **改之前必须先定口径**：幂等跳过（`INSERT OR IGNORE`）为 0 是正常的。
+2. **KI-12 🔴 `EventStore.insert` 的 `INSERT OR REPLACE` 列单不含 `archived`** ——
+   同 id 重投（QQ 重连/重试）会**静默复活软删除的会话、清掉 importance、把 processed 归 0**。
+3. **KI-13 🔴 知识库「半截文档 + hash 去重锁死」** —— doc 与 chunk 不在一个事务里，
+   重试被 `getByHash` 命中 → 返回**从未兑现的块数**并宣布"已导入 N 块"，**永不自愈**。
+4. **KI-14 🟠 `LanceDBStore.insert` 永不抛 → 上游所有 try/catch 是死代码**。
+   **★ 2026-09-27 那次事故的同形代码今天仍然活着**：
+   `scripts/backfill-life-importance.ts:118-138` 的 `done++` 计的是"没抛异常"，
+   **一条向量都没写也会打 `✅ 回填完成: 成功 N / 失败 0`**。
+5. **KI-15 🟠 `vectorStore` 为 null 时静默跳过嵌入（10 条路径）** ——
+   最危险是 `SessionEndProcessor.ts:160`：**计数只数摘要、不数向量**，
+   `archived N/M` 照打全绿；删除路径同理 → **孤儿向量继续被召回**。
+6. **KI-16 🟠 `PersonaStore.get()` 的「读时回写默认值」还在** ——
+   它把「人格被冲成空」整形成一组合法默认值（与 seed 逐字相同），
+   **骗过数据层也骗过人工巡检**，且无日志。
+
+> 💡 **给下一个人的提醒**：这个项目的静默故障**产地就在存储层**。
+> 看到"日志全绿但数据不对"时，先查 `.changes`、先查 `vectorStore` 是不是 null、
+> 先查那几处 `catch` 是否吞掉了写失败。
+
+---
+
 ## 🔭 2026-10-02：LLM 预算可观测化（change: `add-llm-budget-observability`）
 
 **起因**：`docs/KNOWN-ISSUES.md` 的 **KI-1**（`life.generateEvent` 没有 `max_tokens`）**无法判定**。
