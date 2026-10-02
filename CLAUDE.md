@@ -93,11 +93,12 @@ src/memory/
 - 记忆旋钮 memory_config：decay_rate/importance_threshold/recency_weight/confirmation_bias/retention_bias（亲密度已接线，召回管道待接 → backlog）
 
 ### Git 推送
-- Clash 代理: 127.0.0.1:7890，推送前需开启
+- Clash 代理: **127.0.0.1:7897**（★ 2026-10-02 更正：原写 7890，实测该端口已失效；
+  以 `netstat \| grep LISTENING` 实测为准），推送前需开启
 - Skill: `/clash-proxy` 或直接:
   ```bash
-  git config --global http.proxy http://127.0.0.1:7890
-  git config --global https.proxy http://127.0.0.1:7890
+  git config --global http.proxy http://127.0.0.1:7897
+  git config --global https.proxy http://127.0.0.1:7897
   # 推送后关闭
   git config --global --unset http.proxy
   git config --global --unset https.proxy
