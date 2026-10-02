@@ -81,9 +81,11 @@ export class LLMAgentStage implements Stage {
     // ===== PRE: LLM call =====
     // Build system prompt: 激活角色的 system_prompt（v3 角色系统，替代读 md 文件）
     const memoryContext = event.getExtra('memory_context') || '';
-    const activeRolePrompt = this.ctx.memoryManager.getActiveSystemPrompt();
+    // ★ 2026-10-01：紧凑人设改走 MemoryManager.getCompactPersonaPrompt() ——
+    //   这段逻辑原先内联在这里；提出来是为了让 dsh 侧的动态人设能取到**同一份文本**
+    //   （见 change: connect-dsh-alysia-bridge）。行为逐字不变。
     // Use compact persona to save context space (worldbook is 66 entries = ~15k chars!)
-    const compactPersona = activeRolePrompt.split('\n---\n').slice(0, 4).join('\n---\n');
+    const compactPersona = this.ctx.memoryManager.getCompactPersonaPrompt();
     let systemPrompt = [
       compactPersona,
       memoryContext ? '\n---\n## 当前记忆\n' + memoryContext : '',

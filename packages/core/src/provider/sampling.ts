@@ -22,8 +22,20 @@ export interface SamplingConfig {
   vision: { describe: SamplingSlot };
   life: { generateEvent: SamplingSlot; generateSummary: SamplingSlot };
   proactive: { personalize: SamplingSlot };
-  /** 画像事实提取（SessionEnd + Cron 深度画像） */
-  profile: { extract: SamplingSlot };
+  /** 画像事实提取（SessionEndProcessor → ProfileExtractor，**返回 JSON**） */
+  profile: {
+    extract: SamplingSlot;
+    /** ★ 2026-10-01 fix-profile-extract-empty-response：Cron 深度画像重写
+     *  （CronProcessor.deepProfile，**返回纯文本**）。
+     *
+     *  原先它与 `extract` 共用同一个槽——但两者**输出契约相反**：
+     *  extract 要 JSON（`json_object` 模式），deepRewrite 要自然语言。
+     *  共用会导致任一方的 output 设置都会破坏另一方：
+     *    - 给槽开 `json_object` → deepProfile 直接被 API 拒（400，prompt 里没有 "json"）
+     *    - 不开 → extract 只能靠裸 JSON.parse（遇围栏即失败，且被 catch 吞掉）
+     *  故拆成独立槽。 */
+    deepRewrite: SamplingSlot;
+  };
   /** 会话摘要（SessionEndProcessor） */
   session: { summary: SamplingSlot };
 }
@@ -57,7 +69,21 @@ export const DEFAULT_SAMPLING: SamplingConfig = {
     personalize: { temperature: 0.7, max_tokens: 256 }, // 问候/关怀文案
   },
   profile: {
-    extract: { temperature: 0.1, max_tokens: 1024 }, // 事实提取，低温
+    // ★ 2026-10-01 fix-profile-extract-empty-response：原 1024 —— **对推理模型太小**。
+    //   这是 9-25 那次修复（session.summary 512→2048）**漏掉的同源槽位**：
+    //   两者都是「要求返回多字段 JSON」的复杂任务，reasoning 与 content 共用同一个
+    //   max_tokens 预算，预算被推理吃光 → content 为空、HTTP 200、finish_reason=length。
+    //
+    //   实测证据（cron.test.ts，2026-10-01）：1024 全花在 reasoning 上且仍未结束，
+    //   模型返回空 content → OpenAILLMService 抛 "empty response"
+    //   → ProfileExtractor 裸 catch 吞掉 → 画像事实 6 个月只进不出。
+    //
+    //   提到 4096（4×），并开 JSON 模式——与 session.summary 同款处理，从源头消除围栏。
+    extract: { temperature: 0.1, max_tokens: 4096, response_format: 'json_object' },
+    // ★ 2026-10-01：纯文本输出——**绝不能加 response_format**（见上）。
+    //   原实现（共用 extract 槽）拿到的是 1024 预算且无 JSON 模式，
+    //   推理吃光预算 → 空响应 → CronProcessor 裸 catch 吞掉 → basics 长期为 {}。
+    deepRewrite: { temperature: 0.3, max_tokens: 2048 },
   },
   session: {
     // ★ 9-25 fix-session-summary-silent-failure：原来是 max_tokens 512 —— **太小**。
@@ -96,7 +122,10 @@ export function mergeSampling(override?: DeepPartial<SamplingConfig>): SamplingC
       generateSummary: mergeSlot(DEFAULT_SAMPLING.life.generateSummary, override.life?.generateSummary),
     },
     proactive: { personalize: mergeSlot(DEFAULT_SAMPLING.proactive.personalize, override.proactive?.personalize) },
-    profile: { extract: mergeSlot(DEFAULT_SAMPLING.profile.extract, override.profile?.extract) },
+    profile: {
+      extract: mergeSlot(DEFAULT_SAMPLING.profile.extract, override.profile?.extract),
+      deepRewrite: mergeSlot(DEFAULT_SAMPLING.profile.deepRewrite, override.profile?.deepRewrite),
+    },
     session: { summary: mergeSlot(DEFAULT_SAMPLING.session.summary, override.session?.summary) },
   };
 }

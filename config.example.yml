@@ -60,21 +60,31 @@ sampling:
   #   describe:          # 图→描述，默认 temperature 0.1 / max_tokens 200
   #     temperature: 0.1
   #     max_tokens: 200
+  # ⚠️ CHAT_MODEL 是**推理模型**：可见内容与 reasoning **共用同一个 max_tokens 预算**。
+  #    预算给小了 → reasoning 吃光 → content 为空、HTTP 200、finish_reason=length。
+  #    线上因此出过三次事故：会话摘要 22 天 100% 失败 / 每日反思 11 次空响应 /
+  #    画像提取长期静默停摆（2026-10-01 修复）。**调小这些值前先读这条。**
+  #    （同步自 core 实测值；此前本文件停留在 512，落后实现两个版本）
   # life:
   #   generateEvent:     # 事件生成，默认 temperature 0.9（偏高/活）
   #     temperature: 0.9
-  #   generateSummary:   # 每日摘要，默认 temperature 0.3 / max_tokens 512（低温/忠）
+  #   generateSummary:   # 每日反思，默认 temperature 0.3 / max_tokens 2048（低温/忠）
   #     temperature: 0.3
-  #     max_tokens: 512
+  #     max_tokens: 2048
   # proactive:
   #   personalize:       # 问候/关怀文案，默认 temperature 0.7 / max_tokens 256
   #     temperature: 0.7
   #     max_tokens: 256
   # profile:
-  #   extract:           # 事实提取，默认 temperature 0.1 / max_tokens 1024（低温）
+  #   extract:           # 事实提取（输出 JSON），默认 temperature 0.1 / max_tokens 4096
   #     temperature: 0.1
-  #     max_tokens: 1024
-  # session:
-  #   summary:           # 会话摘要，默认 temperature 0.3 / max_tokens 512（低温）
+  #     max_tokens: 4096
+  #   deepRewrite:       # Cron 深度画像重写（输出**纯文本**，
+  #                      # 故 core 侧不开 response_format——开了 API 会 400），
+  #                      # 默认 temperature 0.3 / max_tokens 2048
   #     temperature: 0.3
-  #     max_tokens: 512
+  #     max_tokens: 2048
+  # session:
+  #   summary:           # 会话摘要（输出 JSON），默认 temperature 0.3 / max_tokens 2048
+  #     temperature: 0.3
+  #     max_tokens: 2048

@@ -410,6 +410,50 @@ interface IVectorStore {
 4. `source='user'` 的事实（用户主动声明）不会被 `inferred` 覆盖
 5. 证据优先级: 用户纠正 > 行为模式 > 稳定模式 > 单次推断
 
+### 4.1.1 画像链路的采样槽契约（2026-10-01，change: fix-profile-extract-empty-response）
+
+> 本条来自一次**静默停摆 6 个月**的故障：用户说过的所有事实从未进入画像，
+> `[关于你]` 段永远为空。根因不是逻辑错，是**两个契约被同时违反**。
+
+**链路上的三个 LLM 调用，各吃一个槽：**
+
+| 调用方 | 槽 | 输出契约 | prompt 含 "json" |
+|---|---|---|---|
+| `ProfileExtractor.extract` | `profile.extract` | **JSON** | ✅ `返回JSON` |
+| `PersonaAdapter.processSignal` | `profile.extract` | **JSON** | ✅ `返回JSON` |
+| `CronProcessor.deepProfile` | `profile.deepRewrite` | **纯文本** | ❌ `返回纯文本总结` |
+
+**契约 1：`max_tokens` 是可见内容与 reasoning 的共享预算。**
+
+`CHAT_MODEL` 是推理模型，每次调用先花掉一笔 reasoning token，**与 content 共用同一个
+`max_tokens`**。预算给小了 → reasoning 吃光 → `content` 为空、HTTP 200、
+`finish_reason: length` → 服务层抛 `empty response`。
+
+- 这条已造成三次线上故障：会话摘要（22 天 100% 失败）、每日反思（11 次空响应）、
+  画像提取（长期静默停摆）。
+- **要求 LLM 产内容的结构化槽位，`max_tokens` 不得低于 2048。**
+  `tests/provider/sampling.test.ts` 有守卫，调小即测试失败。
+
+**契约 2：`response_format: 'json_object'` 要求 prompt 里含 "json" 字样，否则 API 400。**
+
+判据是该槽**全部消费者**的输出契约，不是「槽看起来像不像结构化任务」。
+`profile.extract` 与 `profile.deepRewrite` 必须分开，正是因为前者的消费者全产 JSON、
+后者产纯文本——**共用一个槽会让任一方都活不了**（开 JSON 模式则 deepRewrite 被 400 拒；
+不开则 extract 只能裸 `JSON.parse`，遇 markdown 围栏即失败）。
+
+**契约 3：`ILLMService.complete` 的第三参 `sampling` 必须生效。**
+
+`MemoryManager` 用 `slotify(slot)` 按场景绑定槽位。实现方若**少声明一个形参**，
+TS 不报错（少形参可赋给多形参签名），但槽位会被静默丢弃——
+所有调用塌回实现自己的默认槽。`OpenAILLMService` 曾如此。
+语义是**替换**默认槽，不是合并（否则调用方无法摆脱默认槽的字段，例如去掉 `json_object`）。
+
+**契约 4：这条链路上禁止裸 `catch {}`。**
+
+`ProfileExtractor` 与 `CronProcessor` 都曾用裸 `catch` 吞掉失败——失败与
+「正常但没提取到」在日志里长得一模一样，这是它停摆 6 个月无人察觉的直接原因。
+**提取类失败必须 `logger.error`**：一次失败 = 这一批事件的事实永久丢失。
+
 ### 4.2 人格自适应引擎
 
 触发源:

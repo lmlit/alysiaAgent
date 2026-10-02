@@ -10,7 +10,11 @@ describe('mergeSampling', () => {
     expect(s.chat).toEqual({});
     expect(s.vision.describe).toEqual({ temperature: 0.1, max_tokens: 200 });
     expect(s.life.generateEvent).toEqual({ temperature: 0.9 });
-    expect(s.profile.extract).toEqual({ temperature: 0.1, max_tokens: 1024 });
+    // ★ 2026-10-01 fix-profile-extract-empty-response：曾是 max_tokens 1024 且无 JSON 模式。
+    //   1024 被 reasoning 吃光 → 空响应 → ProfileExtractor 裸 catch 吞掉 → 画像长期不生长。
+    expect(s.profile.extract).toEqual({ temperature: 0.1, max_tokens: 4096, response_format: 'json_object' });
+    // CronProcessor.deepProfile 专用：纯文本输出，**不能**带 response_format
+    expect(s.profile.deepRewrite).toEqual({ temperature: 0.3, max_tokens: 2048 });
     // ★ 9-25 fix-session-summary-silent-failure：曾是 max_tokens 512 —— 太小，
     //   摘要要返回 6 字段 JSON（含逐字摘句），中文下必然触顶截断 → 线上 22 天 100% 失败。
     expect(s.session.summary).toEqual({ temperature: 0.3, max_tokens: 2048, response_format: 'json_object' });
@@ -60,14 +64,34 @@ describe('mergeSampling — response_format（★ 9-25）', () => {
   //   可见内容与 reasoning 共用同一个 max_tokens 预算。512 会让对话稍长时内容额度归零
   //   → 空响应。这同一个 512 造成了线上「会话摘要 22 天 100% 失败」与「每日反思 11 次
   //   empty response」两处故障。此测试防止有人把预算又调回小值。
-  it('★ 结构化输出槽位的 max_tokens 必须给 reasoning 留余量（≥1024）', () => {
-    expect(DEFAULT_SAMPLING.session.summary.max_tokens!).toBeGreaterThanOrEqual(1024);
-    expect(DEFAULT_SAMPLING.life.generateSummary.max_tokens!).toBeGreaterThanOrEqual(1024);
+  it('★ 需要 LLM 生成内容的槽位，max_tokens 必须给 reasoning 留余量（≥2048）', () => {
+    // ★ 2026-10-01 fix-profile-extract-empty-response：
+    //   这个守卫**原先漏了 profile 两个槽**，于是 `profile.extract` 的 1024
+    //   与 `profile.deepRewrite` 的「无限制」都逃过了它——而它们正是同一类故障：
+    //   实测 1024 被 reasoning 吃光仍没结束（finish_reason=length）→ content 为空。
+    //   把它们补进守卫，这类 bug 才不会再从缝里漏过去。
+    expect(DEFAULT_SAMPLING.session.summary.max_tokens!).toBeGreaterThanOrEqual(2048);
+    expect(DEFAULT_SAMPLING.life.generateSummary.max_tokens!).toBeGreaterThanOrEqual(2048);
+    expect(DEFAULT_SAMPLING.profile.extract.max_tokens!).toBeGreaterThanOrEqual(2048);
+    expect(DEFAULT_SAMPLING.profile.deepRewrite.max_tokens!).toBeGreaterThanOrEqual(2048);
   });
 
-  it('其它槽位默认不带（避免误开 JSON 模式）', () => {
+  // ★ 2026-10-01：JSON 模式的两条守卫**按输出契约分类**，而不是按槽名列举。
+  //   原因：`response_format: 'json_object'` 要求 prompt 里含 "json" 字样，
+  //   否则 API 直接 400。所以判据是「该槽的**全部**消费者是否都产 JSON」，
+  //   不是「这个槽看起来像不像结构化任务」。
+  //   （反面教材：profile.extract 曾被误判为"非结构化槽"而不该带它；
+  //     CronProcessor.deepProfile 又因为与它共用槽而被套上它 → 400。）
+  it('结构化输出槽位（消费者 prompt 均含 "json"）必须开 JSON 模式', () => {
+    // ProfileExtractor「返回JSON」/ PersonaAdapter「返回JSON」/ SessionEndProcessor 六字段 JSON
+    expect(DEFAULT_SAMPLING.profile.extract.response_format).toBe('json_object');
+    expect(DEFAULT_SAMPLING.session.summary.response_format).toBe('json_object');
+  });
+
+  it('纯文本输出槽位不得带 JSON 模式（否则 API 400）', () => {
+    // deepRewrite 的 prompt 是「返回纯文本总结」，里面没有 "json"
+    expect(DEFAULT_SAMPLING.profile.deepRewrite.response_format).toBeUndefined();
     expect(DEFAULT_SAMPLING.life.generateEvent.response_format).toBeUndefined();
-    expect(DEFAULT_SAMPLING.profile.extract.response_format).toBeUndefined();
   });
 
   it('合并时 response_format 不被 hasValue 丢掉（它是字符串不是数字）', () => {

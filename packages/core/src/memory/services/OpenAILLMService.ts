@@ -18,7 +18,27 @@ export class OpenAILLMService {
     this.sampling = { ...DEFAULT_SAMPLING.profile.extract, ...(sampling ?? {}) };
   }
 
-  async complete(systemPrompt: string, userPrompt: string): Promise<string> {
+  /**
+   * ★ 2026-10-01 fix-profile-extract-empty-response：
+   *   **第三参 `sampling` 原先被静默丢弃**——本方法此前只声明两个形参，
+   *   而 `ILLMService` 契约（`interfaces/ILLMService.ts` 白纸黑字）要求
+   *   `(sys, usr, sampling?)`。TS 允许「少形参」赋给「多形参」签名，
+   *   所以违约不报错，代价是 `MemoryManager` 的 `slotify` 按场景传进来的槽位
+   *   **全部失效**，所有调用（摘要 / 事实提取 / 深度画像 / 人格调整）
+   *   都吃构造函数里那一份默认槽。
+   *
+   *   后果实例：`CronProcessor.deepProfile`（要纯文本）被套上默认槽的
+   *   `response_format: 'json_object'` → API 400（它的 prompt 里没有 "json"）。
+   *
+   *   语义取**替换**而非合并——与构造函数注释「可显式传其他槽」一致；
+   *   合并会让调用方**无法摆脱**默认槽的字段（例如去掉 json_object）。
+   */
+  async complete(
+    systemPrompt: string,
+    userPrompt: string,
+    sampling?: Partial<SamplingSlot>,
+  ): Promise<string> {
+    const slot = sampling ?? this.sampling;
     const messages: Array<{ role: string; content: string }> = [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userPrompt },
@@ -33,7 +53,7 @@ export class OpenAILLMService {
       body: JSON.stringify({
         model: this.config.chatModel,
         messages,
-        ...slotToBody(this.sampling),
+        ...slotToBody(slot),
       }),
     });
 

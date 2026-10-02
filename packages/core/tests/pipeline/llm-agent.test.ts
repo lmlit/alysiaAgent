@@ -69,6 +69,10 @@ function makeMockContext(): PipelineContext {
     commandRegistry: cmdRegistry,
     memoryManager: {
       getActiveSystemPrompt: vi.fn().mockReturnValue('测试人格提示词'),
+      // ★ 2026-10-01：管线改用 getCompactPersonaPrompt()（见 MemoryManager）。
+      //   这里的 mock 忠实复现「无 --- 分隔时切片结果不变」——切片逻辑本身在
+      //   tests/memory/unit/compact-persona-prompt.test.ts 里单独锁。
+      getCompactPersonaPrompt: vi.fn().mockReturnValue('测试人格提示词'),
       onSessionEnd: vi.fn().mockResolvedValue(undefined),
       // ★ 8-09 输出回写 mock
       ingest: vi.fn().mockResolvedValue(undefined),

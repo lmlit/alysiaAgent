@@ -29,6 +29,7 @@ import { DEFAULT_MEMORY_CONFIG, FACT_CONFIRM_WINDOW_MS } from './types.js';
 import type { IVectorStore } from './interfaces/IVectorStore.js';
 import type { IEmbedService } from './interfaces/IEmbedService.js';
 import type { ILLMService } from './interfaces/ILLMService.js';
+import { DEFAULT_SAMPLING } from '../provider/sampling.js';
 import type { SamplingConfig, SamplingSlot } from '../provider/sampling.js';
 
 // ── 知识库分块参数（参考 AstrBot：chunk 512 / overlap 50）──
@@ -105,9 +106,13 @@ export class MemoryManager {
     private vectorStore: IVectorStore | null,
     private embedService: IEmbedService,
     private llmService: ILLMService,
-    /** ★ 8-10 采样配置（sampling-config-unify）：按 engine 场景绑定槽位 */
+    /** ★ 8-10 采样配置（sampling-config-unify）：按 engine 场景绑定槽位。
+     *  ★ 2026-10-01：缺省填 `DEFAULT_SAMPLING`（原先缺省 `undefined` →
+     *    slotify 传 `undefined` 给 llmService → 落回它自己的默认槽 →
+     *    **所有场景塌成同一个槽**，分槽机制形同虚设）。 */
     private sampling?: SamplingConfig,
   ) {
+    this.sampling = sampling ?? DEFAULT_SAMPLING;
     this.eventStore = new EventStore(db, vectorStore);
     this.profileStore = new ProfileStore(db);
     this.personaStore = new PersonaStore(db);
@@ -121,7 +126,12 @@ export class MemoryManager {
     const slotify = (slot?: Partial<SamplingSlot>): ILLMService => ({
       complete: (sys, usr) => this.llmService.complete(sys, usr, slot),
     });
+    // ★ 2026-10-01 fix-profile-extract-empty-response：`profile.extract` 槽是 **JSON 契约**
+    //   （prompt 里含 "JSON"），消费者：PersonaAdapter（人格调整）/ ProfileExtractor（事实提取）。
+    //   CronProcessor.deepProfile 要的是**自然语言画像描述**，共用该槽会被 json_object 模式
+    //   直接拒（API 400：Prompt must contain the word 'json'）——故走独立槽。
     const profileLlm = slotify(this.sampling?.profile?.extract);
+    const deepRewriteLlm = slotify(this.sampling?.profile?.deepRewrite);
     const summaryLlm = slotify(this.sampling?.session?.summary);
 
     this.worldbookMatcher = new WorldbookMatcher(this.worldbookStore);
@@ -143,7 +153,7 @@ export class MemoryManager {
     );
     this.cronProcessor = new CronProcessor(
       this.eventStore, this.conversationStore, this.knowledgeStore,
-      this.profileStore, this.profileExtractor, profileLlm, this.vectorStore,
+      this.profileStore, this.profileExtractor, deepRewriteLlm, this.vectorStore,
     );
 
     // Load persisted token stats on startup
@@ -1474,14 +1484,34 @@ export class MemoryManager {
     const now = new Date().toISOString();
 
     // 1. Persona 行（upsert）
+    //
+    // ★★ 2026-10-01 fix-role-import-wipes-persona：**按字段合并，不用空默认值覆盖**。
+    //
+    //   `upsertRole` 是整行 UPDATE，而旧代码对包没提供的字段一律填空默认
+    //   （`pkg.system_prompt ?? ''` / `pkg.persona?.tone ?? {}`）。
+    //   后果：表情包角色包（`data/roles/stickers*.json`，role 同为 `'alysia'`，
+    //   只有 worldbook 没有 persona）在**每次启动**把昔涟的整行 persona 冲掉——
+    //   包括人格核心 `system_prompt`。
+    //
+    //   `tone` 等列之所以看着正常，是 `PersonaStore.get()` 检测到空值会自动填回
+    //   结构默认值（那是默认参数，不是她的真实调校）；`system_prompt` 没有兜底，
+    //   所以只有它表现出「空」。**整行都在被冲，只是只有它露馅。**
+    //
+    //   与 `docs/dsh-migration-guide.md` 坑 #7 同族（那次修的是世界书那半）。
+    const existing = this.personaStore.getByRole(pkg.role);
+    /** 包提供了就用包的；否则保留已有；都没有才落默认 */
+    const merge = <T>(fromPkg: T | undefined, current: string | undefined, fallback: string): string =>
+      fromPkg !== undefined ? JSON.stringify(fromPkg) : (current ?? fallback);
+
     this.personaStore.upsertRole({
       role: pkg.role,
       name: pkg.name,
-      tone: JSON.stringify(pkg.persona?.tone ?? {}),
-      speech_style: JSON.stringify(pkg.persona?.speech_style ?? {}),
-      emotional_range: JSON.stringify(pkg.persona?.emotional_range ?? {}),
-      memory_config: JSON.stringify(pkg.persona?.memory_config ?? DEFAULT_MEMORY_CONFIG),
-      system_prompt: pkg.system_prompt ?? '',
+      tone: merge(pkg.persona?.tone, existing?.tone, '{}'),
+      speech_style: merge(pkg.persona?.speech_style, existing?.speech_style, '{}'),
+      emotional_range: merge(pkg.persona?.emotional_range, existing?.emotional_range, '{}'),
+      memory_config: merge(pkg.persona?.memory_config, existing?.memory_config, JSON.stringify(DEFAULT_MEMORY_CONFIG)),
+      // system_prompt 是普通字符串（不是 JSON），单独处理
+      system_prompt: pkg.system_prompt ?? existing?.system_prompt ?? '',
       is_active: pkg.activate ?? false,
     });
 
@@ -1563,6 +1593,22 @@ export class MemoryManager {
   /** 获取激活角色的 system_prompt（LLMAgentStage 使用，替代读 md 文件） */
   getActiveSystemPrompt(): string {
     return this.personaStore.get().system_prompt || '';
+  }
+
+  /**
+   * 人设的**紧凑形式**：只取前 N 节，丢掉 worldbook 类的大段设定。
+   *
+   * ★ 2026-10-01（change: connect-dsh-alysia-bridge）：从 `LLMAgentStage` 里
+   *   的一句内联表达式提出来。提出来的理由不是「好看」，是**只能有一处定义**——
+   *   dsh 侧的动态人设（`GET /api/persona/prompt`）必须和聊天管线取到同一份文本，
+   *   否则她在 dsh 里和 QQ 里会是两个人。
+   *
+   *   原注释：worldbook 66 条约 15k 字符，全量注入会吃光 context。
+   *
+   * @param sections 保留前几节（默认 4，与管线历史行为一致）
+   */
+  getCompactPersonaPrompt(sections: number = 4): string {
+    return this.getActiveSystemPrompt().split('\n---\n').slice(0, sections).join('\n---\n');
   }
 
   private hashStr(s: string): string {

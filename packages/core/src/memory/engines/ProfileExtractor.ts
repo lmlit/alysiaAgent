@@ -2,6 +2,11 @@
 import type { MemoryEvent, ProfileFact } from '../types.js';
 import { FACT_TTL_BY_CATEGORY } from '../types.js';
 import type { ILLMService } from '../interfaces/ILLMService.js';
+import { logger } from '../../utils/logger.js';
+// ★ 2026-10-01：改用共用解析器（剥 markdown 围栏 + 空判 + 裸文本分类）——
+//   与 SessionEndProcessor 同款。原来的裸 `JSON.parse` 遇到围栏直接抛，
+//   抛了又被 catch 吞掉，是画像静默停摆的帮凶。
+import { parseLLMJson } from '../../utils/llm-json.js';
 
 export interface CorrectionSignal {
   isCorrection: boolean;
@@ -90,7 +95,16 @@ export class ProfileExtractor {
         '返回JSON: {"facts": [{"fact": "...", "confidence": 0.8, "evidence": "...", "directly_stated": true, "transient": false, "category": "preference"}], "character_facts": [{"fact": "...", "confidence": 0.6, "evidence": "...", "category": "preference"}]}',
         userMessages
       );
-      const parsed = JSON.parse(response);
+      // parseLLMJson 在 kind === 'json' 时 value 为 any——沿用原实现对该值的宽松处理
+      const r = parseLLMJson(response);
+      if (r.kind === 'empty') {
+        throw new Error('LLM 返回空响应（推理预算可能被耗尽——见 sampling.ts 的 profile.extract）');
+      }
+      if (r.kind === 'bare') {
+        // 裸文本对画像提取**没有用**：拿不到 fact/confidence/category 结构。
+        throw new Error(`LLM 未返回合法 JSON（truncated=${r.truncated}）: ${r.text.slice(0, 80)}`);
+      }
+      const parsed = r.value;
       // ★ 8-28 分类接线：按 category 设 valid_until（TTL：identity 365d/preference 90d/status 14d/
       //   relationship 90d/general 60d）；transient 兼容（无 category 时 transient=true → status 14 天）
       const ttlMs = (cat: string) => FACT_TTL_BY_CATEGORY[cat as keyof typeof FACT_TTL_BY_CATEGORY] ?? FACT_TTL_BY_CATEGORY.general;
@@ -124,7 +138,17 @@ export class ProfileExtractor {
         source_event: events[0]?.id || `unknown-c${i}`,
       }));
       return { facts: userFacts, characterFacts };
-    } catch {
+    } catch (err: any) {
+      // ★ 2026-10-01 fix-profile-extract-empty-response：
+      //   原来是**裸 `catch {}`**（这个文件此前连 logger 都没 import）——
+      //   失败与「正常但没提取到」长得一模一样，画像因此静默停摆且无人察觉。
+      //   同一模式在本项目已酿成 3 次事故（HANDOFF：成功日志掩盖了没做的事）。
+      //
+      //   ⚠️ 这里**故意仍返回空**（调用方契约是「提取不到就是空数组」），
+      //   但**留痕**——一次提取失败 = 这一批事件的事实永久丢失，必须能在日志里看见。
+      logger.error(
+        `[ProfileExtractor] 提取失败，本批 ${events.length} 条事件的事实丢失: ${err?.message ?? err}`,
+      );
       return { facts: [], characterFacts: [] };
     }
   }

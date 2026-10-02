@@ -7,6 +7,7 @@ import type { ProfileStore } from '../stores/ProfileStore.js';
 import type { ProfileExtractor } from '../engines/ProfileExtractor.js';
 import type { ILLMService } from '../interfaces/ILLMService.js';
 import type { IVectorStore } from '../interfaces/IVectorStore.js';
+import { logger } from '../../utils/logger.js';
 
 /**
  * CronProcessor handles periodic maintenance tasks:
@@ -76,8 +77,12 @@ export class CronProcessor {
       );
 
       this.profileStore.updateBasics(summary);
-    } catch {
-      // LLM failure is non-fatal
+    } catch (err: any) {
+      // ★ 2026-10-01 fix-profile-extract-empty-response：原来是**裸 `catch {}`**。
+      //   失败与「没事实可总结」长得一样，`basics` 长期为 `{}` 无人察觉
+      //   （同 ProfileExtractor，本项目的第 4 次「静默吞错」）。
+      //   `basics` 是 PromptAssembler 的 `[关于你]` 段来源，空 = 她对用户一无所知。
+      logger.error(`[CronProcessor] 深度画像重写失败，basics 未更新: ${err?.message ?? err}`);
     }
   }
 
