@@ -2,6 +2,7 @@
 import type Database from 'better-sqlite3';
 import type { KnowledgeDoc, SearchResult } from '../types.js';
 import type { IVectorStore } from '../interfaces/IVectorStore.js';
+import { traceZeroRows } from '../../utils/write-trace.js';
 
 export class KnowledgeStore {
   constructor(private db: Database.Database, private vectorStore: IVectorStore | null) {}
@@ -31,8 +32,9 @@ export class KnowledgeStore {
   }
 
   archive(id: string): void {
-    this.db.prepare("UPDATE knowledge_docs SET status = 'archived', updated_at = ? WHERE id = ?")
+    const r = this.db.prepare("UPDATE knowledge_docs SET status = 'archived', updated_at = ? WHERE id = ?")
       .run(new Date().toISOString(), id);
+    traceZeroRows('KnowledgeStore.archive', r.changes);
   }
 
   async searchByVector(vector: number[], topK: number): Promise<SearchResult[]> {
@@ -89,8 +91,10 @@ export class KnowledgeStore {
   }
 
   deleteDoc(id: string): void {
-    this.db.prepare('DELETE FROM knowledge_chunks WHERE doc_id = ?').run(id);
-    this.db.prepare('DELETE FROM knowledge_docs WHERE id = ?').run(id);
+    const rChunks = this.db.prepare('DELETE FROM knowledge_chunks WHERE doc_id = ?').run(id);
+    traceZeroRows('KnowledgeStore.deleteDoc.chunks', rChunks.changes);
+    const rDocs = this.db.prepare('DELETE FROM knowledge_docs WHERE id = ?').run(id);
+    traceZeroRows('KnowledgeStore.deleteDoc.docs', rDocs.changes);
   }
 
   private rowToDoc(row: Record<string, unknown>): KnowledgeDoc {

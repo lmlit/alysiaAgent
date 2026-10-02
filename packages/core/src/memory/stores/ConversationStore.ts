@@ -2,6 +2,7 @@
 import type Database from 'better-sqlite3';
 import type { Conversation, SearchResult } from '../types.js';
 import type { IVectorStore } from '../interfaces/IVectorStore.js';
+import { traceZeroRows } from '../../utils/write-trace.js';
 
 export class ConversationStore {
   constructor(private db: Database.Database, private vectorStore: IVectorStore | null) {}
@@ -51,12 +52,13 @@ export class ConversationStore {
     },
     vector?: number[],
   ): Promise<void> {
-    this.db.prepare(`
+    const r = this.db.prepare(`
       UPDATE conversations
          SET summary = ?, participants = ?, topics = ?, key_decisions = ?,
              character_perspective = ?, summary_status = 'ok'
        WHERE id = ?
     `).run(data.summary, data.participants, data.topics, data.key_decisions, data.character_perspective, id);
+    traceZeroRows('ConversationStore.updateSummaryResult', r.changes);
 
     if (vector && this.vectorStore) {
       const row = this.db.prepare('SELECT session_id, ended_at FROM conversations WHERE id = ?').get(id) as
@@ -98,7 +100,8 @@ export class ConversationStore {
 
   /** ★ 8-15 WebUI 会话删除:清空该会话摘要 */
   deleteBySession(sessionId: string): void {
-    this.db.prepare('DELETE FROM conversations WHERE session_id = ?').run(sessionId);
+    const r = this.db.prepare('DELETE FROM conversations WHERE session_id = ?').run(sessionId);
+    traceZeroRows('ConversationStore.deleteBySession', r.changes);
   }
 
   /** ★ 8-09：session 最新摘要（定期归档的 since 锚点） */

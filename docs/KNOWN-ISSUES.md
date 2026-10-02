@@ -123,6 +123,17 @@
 
 ### KI-11 🔴 52/55 个写入点不检查 `.changes`（"写成功"没有判据）
 
+> ★ **2026-10-02 更新：观测已上线，等运行数据。**
+> change `observe-zero-row-writes` 已在「0 行可疑」的写点接上 `traceZeroRows()`：
+> 命中 0 行时打一行 `[WriteTrace] <类名.方法名> 命中 0 行 — <上下文>`（**只观测，不改判断**）。
+> **决策入口已立**：`openspec/changes/tune-zero-row-checks/proposal.md`（📌 Backlog）。
+> 跑一段时间后按 tag 统计分布，再逐点定性「豁免 / 硬校验」。
+>
+> **为什么不直接硬校验**：`changes === 0` 有两种含义且静态分不出来 ——
+> **正常**（幂等跳过，如 `INSERT OR IGNORE` 碰到已存在的行）vs
+> **异常**（写错 id / 行被并发删除 / **表结构不对，列没迁上**）。
+> 一刀切会把正常路径变成噪声，**比现在更糟**。**先取证据，再改代码**（与 KI-1 同款处理）。
+
 - **现象**：`.run()` 返回 `{changes}`，**全 core 只有 3 处看了它**（还都在 `LifeStore`）。
   `UPDATE … WHERE id = ?` 命中 0 行**不报错**——「改到了」和「什么都没改」完全同形。
 - **证据**：`grep '.changes' packages/core/src` → 仅 `LifeStore.ts:149/240/246`。
@@ -132,9 +143,10 @@
     tick 错误，**没有任何日志能证明消息已经推出去了**；反向则会导致**重复推送**。
   - `WorldbookStore.recordTrigger`（`:66-71`）——命中计数空转 → **世界书采样权重失真**。
   - `WorldbookStore.updateEntry`（`:78-91`）——编辑不存在的条目**返回成功**（Web 端可见）。
+  - `PersonaStore` 的 8 个 `WHERE is_active = 1` 写方法 —— 没有激活行时
+    「**读到正常人格 + 写入 0 行 + 不报错**」三件事同时成立并报成功。
   - `EventStore.archiveBySession` / `deleteBySession`——**祖先级**「空转伪装成归档」。
-- **方向**：写入必须检查 `.changes`（或显式豁免）；**但需先定口径**——幂等跳过（如
-  `INSERT OR IGNORE`）为 0 是正常的，一刀切会把正常路径变成噪声。
+- **方向**：见 `tune-zero-row-checks` —— **先按 tag 统计分布，再逐点定性**。
 
 ### KI-12 🔴 `EventStore.insert` 的 `INSERT OR REPLACE` 列单不含 `archived`
 

@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import type { WorldbookEntry } from '../types.js';
+import { traceZeroRows } from '../../utils/write-trace.js';
 
 export class WorldbookStore {
   constructor(private db: Database.Database) {}
@@ -65,9 +66,10 @@ export class WorldbookStore {
 
   recordTrigger(id: string): void {
     const now = new Date().toISOString();
-    this.db.prepare(
+    const r = this.db.prepare(
       'UPDATE worldbook_entries SET last_triggered = ?, hit_count = hit_count + 1, updated_at = ? WHERE id = ?'
     ).run(now, now, id);
+    traceZeroRows('WorldbookStore.recordTrigger', r.changes);
   }
 
   private static ALLOWED_COLUMNS = new Set([
@@ -87,11 +89,13 @@ export class WorldbookStore {
     values.push(new Date().toISOString());
     values.push(id);
 
-    this.db.prepare(`UPDATE worldbook_entries SET ${sets.join(', ')} WHERE id = ?`).run(...values);
+    const r = this.db.prepare(`UPDATE worldbook_entries SET ${sets.join(', ')} WHERE id = ?`).run(...values);
+    traceZeroRows('WorldbookStore.updateEntry', r.changes);
   }
 
   deleteEntry(id: string): void {
-    this.db.prepare('DELETE FROM worldbook_entries WHERE id = ?').run(id);
+    const r = this.db.prepare('DELETE FROM worldbook_entries WHERE id = ?').run(id);
+    traceZeroRows('WorldbookStore.deleteEntry', r.changes, `id=${id}`);
   }
 
   private rowToEntry(row: Record<string, unknown>): WorldbookEntry {

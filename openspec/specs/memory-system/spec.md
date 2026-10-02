@@ -651,6 +651,40 @@ active fact 永久固化（valid_until=null）→ `getUserActivitySummary` 按 c
 `catch` 本身保留是对的（文件写坏不该拖垮进程）：
 **不吞的是「知道」，不是「异常」**——区别在于现在它会喊。
 
+**契约 3：写入影响行数先「观测」，再「定性」——不许跳过证据直接硬校验。**
+
+`UPDATE … WHERE id = ?` 命中 0 行**不报错**——「改到了」与「什么都没改」完全同形。
+这是本项目栽过三次的「空转伪装成归档」的产地（`docs/KNOWN-ISSUES.md` KI-11）。
+
+**但 `changes === 0` 有两种含义，且静态分不出来：**
+
+| 含义 | 例子 | 该不该报错 |
+|---|---|---|
+| **正常**：幂等跳过 | `INSERT OR IGNORE` 遇到已存在的行 | ❌ 不该（会变成噪声） |
+| **异常**：目标行不存在 | 写错 id / 行被并发删除 / **表结构不对（列没迁上）** | ✅ 该 |
+
+一刀切硬校验会把正常路径变成噪声，**比现在更糟**。所以分两步走：
+
+1. **观测（change: `observe-zero-row-writes` 已落地）**：在「0 行可疑」的写点调用
+   `traceZeroRows(tag, changes, context?)` —— 命中 0 行时打一行
+   `[WriteTrace] <类名.方法名> 命中 0 行 — <上下文>`。
+   - **只观测，不拦截**：不 `throw`、不改返回值、不改控制流、不改 SQL。
+   - **必须用 `warn`，不得用 `debug`** —— `debug` 被 `ALYSIA_DEBUG` 门控、产线不输出
+     （`LifeStore` 唯一那行日志就是这么变成"等于没有"的）。
+   - **幂等插入不接**（`INSERT OR IGNORE` / `INSERT OR REPLACE`）：它们为 0 行是设计意图。
+   - 已接：`LifeStore`（`updateState`/`markDelivered`/`deferIntent`/`markIntentStatus`/`deleteTemplate`）、
+     `WorldbookStore`（`recordTrigger`/`updateEntry`/`deleteEntry`）、
+     `EventStore`（`markProcessed`/`updateImportance`/`archiveBySession`/`deleteBySession`）、
+     `ConversationStore`（`updateSummaryResult`/`deleteBySession`）、
+     `KnowledgeStore`（`archive`/`deleteDoc` ×2）、
+     `PersonaStore`（8 个 `WHERE is_active = 1` 写方法，走私有包装 `updateActive`）。
+2. **定性（`tune-zero-row-checks`，等运行数据）**：按 tag 聚合统计 0 行发生率，
+   逐点判定「显式豁免」或「升级为硬校验（`logger.error` + 返回失败，让调用方能判）」。
+   **定性结果要写回本条**，形成「逐点口径表」。
+
+**判定铁律**：**没有跑出来的分布，不许改判断逻辑**——与 §4.1.2 的
+「没有观测就不许改预算数字」是同一条纪律。
+
 ---
 
 ## 5. System Prompt 注入

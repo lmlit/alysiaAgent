@@ -104,6 +104,47 @@ E2E（真 API）**5/5 全过**。
 
 ---
 
+## 🔢 2026-10-02：零行写入观测（change: `observe-zero-row-writes`）
+
+**承接 KI-11**（52/55 个写入点不检查 `.run().changes`）。用户拍板：
+**「先打日志，后续运行一段时间后检查再决策」** —— 这也正是这条债的正确解法。
+
+**为什么不直接硬校验**：`changes === 0` 有**两种含义，静态分不出来** ——
+- **正常**：幂等跳过（`INSERT OR IGNORE` 遇到已存在的行）
+- **异常**：目标行不存在（写错 id / 行被并发删除 / **表结构不对，列没迁上**）
+
+一刀切会把正常路径变成噪声，**比现在更糟**。**先取证据，再改代码**（与 KI-1 同款）。
+
+**做了什么（22 个观测点，只观测不拦截）**：
+- `utils/write-trace.ts` → `traceZeroRows(tag, changes, context?)`：命中 0 行打一行
+  `[WriteTrace] <类名.方法名> 命中 0 行 — <上下文>`
+- 接在「0 行**可疑**」的写点上：`LifeStore`(5) / `WorldbookStore`(3) / `EventStore`(4) /
+  `ConversationStore`(2) / `KnowledgeStore`(3) / `PersonaStore`(8，走私有 `updateActive`)
+- **幂等插入不接**（`INSERT OR IGNORE` / `INSERT OR REPLACE`）——它们为 0 行是设计意图
+- **用 `warn` 不用 `debug`**：`debug` 被 `ALYSIA_DEBUG` 门控、产线不输出
+
+**验收**：core **622 passed**、server **223 passed**、两包 `tsc` 干净。
+**★ 无夹带逻辑改动**（`git diff` 复核：删掉的行**全是原 `.run()` 调用**；新增的 `return` 仅 3 处，
+均为把 `.run(...).changes > 0` 拆成 `r.changes > 0`；**无新增 `throw`、无新增分支**）。
+这条约束还由 `write-trace-wiring.test.ts` 的两条断言锁住：**0 行时不抛** + **真正改到时不打日志**。
+
+### ⏳ 下一步（**待运行数据**，不在本 change 内）
+
+```bash
+grep -o '\[WriteTrace\] [^ ]*' alysia-*.log | sort | uniq -c | sort -rn
+```
+
+按 tag 聚合出「0 行发生率」→ 逐点定性：**豁免**（幂等语义）/ **硬校验**（语义上必须有目标行）
+/ **暂不动**（零触发）。决策入口已立：📌 Backlog **`tune-zero-row-checks`**。
+
+> **判定铁律**：**没有跑出来的分布，不许改判断逻辑**——与 §4.1.2
+> 「没有观测就不许改预算数字」是同一条纪律。
+
+⚠️ 采集期提醒：`[WriteTrace]` 是**观测噪声不是故障**，别当告警；
+且**要按 tag 分开统计**，否则"某一点狂刷"会淹没"另一点偶尔真丢"。
+
+---
+
 ## 🗄️ 2026-10-02：存储写入留痕审计 + 第一刀（change: `fix-migration-and-logger-silent-failure`）
 
 **起因**：预算观测补齐后顺手问了一句「所有存储节点有日志吗」。答案是**接近 0**——

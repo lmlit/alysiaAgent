@@ -2,6 +2,7 @@
 import type Database from 'better-sqlite3';
 import type { MemoryEvent, SearchResult } from '../types.js';
 import type { IVectorStore } from '../interfaces/IVectorStore.js';
+import { traceZeroRows } from '../../utils/write-trace.js';
 
 export class EventStore {
   constructor(private db: Database.Database, private vectorStore: IVectorStore | null = null) {}
@@ -54,16 +55,18 @@ export class EventStore {
   }
 
   markProcessed(id: string, flag: number): void {
-    this.db.prepare(
+    const r = this.db.prepare(
       'UPDATE events SET processed = processed | ? WHERE id = ?'
     ).run(flag, id);
+    traceZeroRows('EventStore.markProcessed', r.changes);
   }
 
   /** ★ 9-25 wire-importance-signal：回填重要性（SessionEnd 的 LLM 顺带打分）。
    *  与 markProcessed 一样走 UPDATE，不重写整行（避免覆盖其他字段）。 */
   updateImportance(id: string, importance: number): void {
-    this.db.prepare('UPDATE events SET importance = ? WHERE id = ?')
+    const r = this.db.prepare('UPDATE events SET importance = ? WHERE id = ?')
       .run(Math.min(1, Math.max(0, importance)), id);
+    traceZeroRows('EventStore.updateImportance', r.changes);
   }
 
   /**
@@ -124,7 +127,8 @@ export class EventStore {
 
   /** ★ 8-15 会话归档(软删除):标记 archived=1——列表消失,数据保留可恢复 */
   archiveBySession(sessionId: string): void {
-    this.db.prepare('UPDATE events SET archived = 1 WHERE session_id = ?').run(sessionId);
+    const r = this.db.prepare('UPDATE events SET archived = 1 WHERE session_id = ?').run(sessionId);
+    traceZeroRows('EventStore.archiveBySession', r.changes);
   }
 
   /** ★ 8-15 WebUI 会话历史分页（webui-chat-endpoints）：created_at 游标向下翻页。
@@ -158,7 +162,8 @@ export class EventStore {
 
   /** ★ 8-15 WebUI 会话删除:清空该会话全部事件(消息/画像输入源) */
   deleteBySession(sessionId: string): void {
-    this.db.prepare('DELETE FROM events WHERE session_id = ?').run(sessionId);
+    const r = this.db.prepare('DELETE FROM events WHERE session_id = ?').run(sessionId);
+    traceZeroRows('EventStore.deleteBySession', r.changes);
   }
 
   /** 获取某个会话最近的消息（用于短期上下文） */

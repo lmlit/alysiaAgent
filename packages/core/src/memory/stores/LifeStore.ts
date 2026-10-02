@@ -2,6 +2,7 @@
 // AI 主动生活系统数据层：实时状态 + 事件流 + 每日摘要
 import type Database from 'better-sqlite3';
 import { logger } from '../../utils/logger.js';
+import { traceZeroRows } from '../../utils/write-trace.js';
 
 export interface LifeEvent {
   id: string;
@@ -76,8 +77,9 @@ export class LifeStore {
       reflection: partial.reflection ?? s.reflection,
       last_event_id: partial.lastEventId ?? s.lastEventId,
     };
-    this.db.prepare('UPDATE ai_life_state SET current_activity = ?, mood = ?, intimacy = ?, mood_value = ?, mood_note = ?, reflection = ?, last_event_id = ?, updated_at = ? WHERE id = 1')
+    const r = this.db.prepare('UPDATE ai_life_state SET current_activity = ?, mood = ?, intimacy = ?, mood_value = ?, mood_note = ?, reflection = ?, last_event_id = ?, updated_at = ? WHERE id = 1')
       .run(cur.current_activity, cur.mood, cur.intimacy, cur.mood_value, cur.mood_note, cur.reflection, cur.last_event_id, now);
+    traceZeroRows('LifeStore.updateState', r.changes);
   }
 
   addEvent(e: { id: string; createdAt: string; type: 'chat' | 'internal'; content: string; moodDelta?: string; referenceEventId?: string; wbEntryId?: string; delivered?: number; origin?: 'regular' | 'followup' }): void {
@@ -105,7 +107,8 @@ export class LifeStore {
   }
 
   markDelivered(id: string): void {
-    this.db.prepare('UPDATE ai_life_events SET delivered = 1 WHERE id = ?').run(id);
+    const r = this.db.prepare('UPDATE ai_life_events SET delivered = 1 WHERE id = ?').run(id);
+    traceZeroRows('LifeStore.markDelivered', r.changes);
   }
 
   upsertDailySummary(date: string, summary: string): void {
@@ -146,7 +149,9 @@ export class LifeStore {
   }
 
   deleteTemplate(id: string): boolean {
-    return this.db.prepare('DELETE FROM life_templates WHERE id = ?').run(id).changes > 0;
+    const r = this.db.prepare('DELETE FROM life_templates WHERE id = ?').run(id);
+    traceZeroRows('LifeStore.deleteTemplate', r.changes, `id=${id}`);
+    return r.changes > 0;
   }
 
   // ── ★ 8-27 配角在场（ScenePresence）──────────────────────────────────
@@ -236,13 +241,17 @@ export class LifeStore {
 
   /** ★ 8-28 延期（承诺闭环）：重排 trigger_at + defer_count+1（上限由调用方判断） */
   deferIntent(id: string, newTriggerAt: number): boolean {
-    return this.db.prepare('UPDATE ai_life_intents SET trigger_at = ?, defer_count = defer_count + 1 WHERE id = ? AND status = ?')
-      .run(newTriggerAt, id, 'pending').changes > 0;
+    const r = this.db.prepare('UPDATE ai_life_intents SET trigger_at = ?, defer_count = defer_count + 1 WHERE id = ? AND status = ?')
+      .run(newTriggerAt, id, 'pending');
+    traceZeroRows('LifeStore.deferIntent', r.changes);
+    return r.changes > 0;
   }
 
   /** 标记完成/取消 */
   markIntentStatus(id: string, status: 'completed' | 'cancelled'): boolean {
-    return this.db.prepare('UPDATE ai_life_intents SET status = ? WHERE id = ? AND status = ?')
-      .run(status, id, 'pending').changes > 0;
+    const r = this.db.prepare('UPDATE ai_life_intents SET status = ? WHERE id = ? AND status = ?')
+      .run(status, id, 'pending');
+    traceZeroRows('LifeStore.markIntentStatus', r.changes);
+    return r.changes > 0;
   }
 }

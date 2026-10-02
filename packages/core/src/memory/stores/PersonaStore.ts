@@ -1,6 +1,7 @@
 // src/memory/stores/PersonaStore.ts
 import type Database from 'better-sqlite3';
 import type { Persona, MemoryConfig } from '../types.js';
+import { traceZeroRows } from '../../utils/write-trace.js';
 
 export const DEFAULT_MEMORY_CONFIG_JSON = '{"retention_bias":0.2,"decay_rate":0.3,"importance_threshold":0.4,"recency_weight":0.3,"confirmation_bias":0.3}';
 export const DEFAULT_TONE_JSON = '{"formality":0,"warmth":0.2,"humor":0.1,"directness":0}';
@@ -9,6 +10,22 @@ export const DEFAULT_EMOTIONAL_RANGE_JSON = '{"expressiveness":0.1,"empathy":0.3
 
 export class PersonaStore {
   constructor(private db: Database.Database) {}
+
+  /**
+   * ★ 2026-10-02（change: observe-zero-row-writes）：8 个
+   * `UPDATE persona … WHERE is_active = 1` 写点的统一出口 —— **只观测，不改行为**。
+   *
+   * 为什么单独走一个包装：这类写点最微妙的失效是「**没有激活行**」——
+   * 此时 `get()` 会 fallback 到 id=1 内置行，**照样读到一个正常人格**，
+   * 而写回 0 行、**不报错、不抛异常**，调用方看到的是"改成功了"。
+   * 三件事同时成立，静态读代码看不出来；接上 changes 观测才能拿到分布。
+   *
+   * 行为与改动前完全一致：仍然只 `.run()`，仍然返回 void。
+   */
+  private updateActive(tag: string, sql: string, ...params: unknown[]): void {
+    const r = this.db.prepare(sql).run(...params);
+    traceZeroRows(tag, r.changes, 'WHERE is_active=1 未命中任何行');
+  }
 
   private ensureRow(): void {
     const now = new Date().toISOString();
@@ -122,32 +139,47 @@ export class PersonaStore {
     for (const k of Object.keys(updated) as (keyof MemoryConfig)[]) {
       updated[k] = Math.max(-1, Math.min(1, updated[k]));
     }
-    this.db.prepare('UPDATE persona SET memory_config = ?, updated_at = ? WHERE is_active = 1')
-      .run(JSON.stringify(updated), new Date().toISOString());
+    this.updateActive(
+      'PersonaStore.updateMemoryConfig',
+      'UPDATE persona SET memory_config = ?, updated_at = ? WHERE is_active = 1',
+      JSON.stringify(updated), new Date().toISOString(),
+    );
   }
 
   // ===== 原有方法（作用于激活角色）=====
 
   updateTone(tone: string): void {
-    this.db.prepare('UPDATE persona SET tone = ?, updated_at = ? WHERE is_active = 1')
-      .run(tone, new Date().toISOString());
+    this.updateActive(
+      'PersonaStore.updateTone',
+      'UPDATE persona SET tone = ?, updated_at = ? WHERE is_active = 1',
+      tone, new Date().toISOString(),
+    );
   }
 
   updateSpeechStyle(style: string): void {
-    this.db.prepare('UPDATE persona SET speech_style = ?, updated_at = ? WHERE is_active = 1')
-      .run(style, new Date().toISOString());
+    this.updateActive(
+      'PersonaStore.updateSpeechStyle',
+      'UPDATE persona SET speech_style = ?, updated_at = ? WHERE is_active = 1',
+      style, new Date().toISOString(),
+    );
   }
 
   updateEmotionalRange(range: string): void {
-    this.db.prepare('UPDATE persona SET emotional_range = ?, updated_at = ? WHERE is_active = 1')
-      .run(range, new Date().toISOString());
+    this.updateActive(
+      'PersonaStore.updateEmotionalRange',
+      'UPDATE persona SET emotional_range = ?, updated_at = ? WHERE is_active = 1',
+      range, new Date().toISOString(),
+    );
   }
 
   addAdaptationHint(hint: object): void {
     const current = this.getAdaptationHints();
     current.push(hint);
-    this.db.prepare('UPDATE persona SET adaptation_hints = ?, updated_at = ? WHERE is_active = 1')
-      .run(JSON.stringify(current), new Date().toISOString());
+    this.updateActive(
+      'PersonaStore.updateAdaptationHints',
+      'UPDATE persona SET adaptation_hints = ?, updated_at = ? WHERE is_active = 1',
+      JSON.stringify(current), new Date().toISOString(),
+    );
   }
 
   getAdaptationHints(): object[] {
@@ -167,8 +199,11 @@ export class PersonaStore {
     // 同维度覆盖旧备注（最新演化状态）
     const filtered = current.filter(n => n.dimension !== note.dimension);
     filtered.push(note);
-    this.db.prepare('UPDATE persona SET overlay_notes = ?, updated_at = ? WHERE is_active = 1')
-      .run(JSON.stringify(filtered.slice(-10)), new Date().toISOString());
+    this.updateActive(
+      'PersonaStore.appendOverlayNote',
+      'UPDATE persona SET overlay_notes = ?, updated_at = ? WHERE is_active = 1',
+      JSON.stringify(filtered.slice(-10)), new Date().toISOString(),
+    );
   }
 
   getOverlayNotes(): Array<{ dimension: string; change: string; evidence: string; appliedAt: string }> {
@@ -182,13 +217,19 @@ export class PersonaStore {
   }
 
   setName(name: string): void {
-    this.db.prepare('UPDATE persona SET name = ?, updated_at = ? WHERE is_active = 1')
-      .run(name, new Date().toISOString());
+    this.updateActive(
+      'PersonaStore.updateName',
+      'UPDATE persona SET name = ?, updated_at = ? WHERE is_active = 1',
+      name, new Date().toISOString(),
+    );
   }
 
   /** 更新激活角色的 system_prompt */
   updateSystemPrompt(prompt: string): void {
-    this.db.prepare('UPDATE persona SET system_prompt = ?, updated_at = ? WHERE is_active = 1')
-      .run(prompt, new Date().toISOString());
+    this.updateActive(
+      'PersonaStore.updateSystemPrompt',
+      'UPDATE persona SET system_prompt = ?, updated_at = ? WHERE is_active = 1',
+      prompt, new Date().toISOString(),
+    );
   }
 }
