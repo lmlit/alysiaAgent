@@ -4,7 +4,7 @@
 
 - **日期**: 2026-10-02
 - **类型**: MODIFY（删除废弃包）
-- **状态**: pending（**登记在案**——这个 change **从未建立过**，是 2026-10-02 整理时发现的真实缺口）
+- **状态**: archived（2026-10-02 完成并归档；apply 已合并回 `openspec/specs/`，实测验收见 tasks.md）
 - **影响 spec**: `webui-system`（状态 → 删除/归档）、`alysia-architecture`（目录树）、`alysia-console`（§8 三约束）
 
 ## 动机（为什么做）

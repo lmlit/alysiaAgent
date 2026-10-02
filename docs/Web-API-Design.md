@@ -2,7 +2,7 @@
 
 > 日期: 2026-07-31（2026-08-07 治理对账更新状态）
 > 状态: ✅ 已实现（WebUI 路由层在 packages/server/src/webui/server.ts，routes exercise all core methods）
-> 目标: 为 WebUI 管理面板（Fastify + Vue）提供完整的后端接口清单
+> 目标: 为 Web 管理面板（Fastify 路由层 + `packages/console`）提供完整的后端接口清单
 > ★ 约束: **后续开发服务端功能时，新增/修改 core 方法必须先对照本文档**，
 >   确保不破坏 Web 端接口契约，避免 Web 端开发时返工回归。
 > ★ 鉴权（2026-08-29, cr-p0-webui-auth）: 服务模式下所有 `/api/*` 需
@@ -10,10 +10,11 @@
 >   前端: `setWebuiToken(token)` 存 localStorage 后自动附加；401 → 登录遮罩。
 >   契约见 `openspec/specs/server-hardening/spec.md` §6。
 >
-> ★ 消费方（2026-09-24, adopt-nextjs-console）: 除 `packages/webui`（Vue，待废弃）外，
->   新增 `packages/console`（Next.js，spec `alysia-console`）消费同一批端点。
->   token 键名 `webui_token` 两个前端共用。**新增/修改端点必须同时考虑两个消费方**，
->   直到 webui 废弃 change 落地。
+> ★ 消费方（2026-09-24, adopt-nextjs-console；**2026-10-02 收敛**）:
+>   **唯一消费方 = `packages/console`**（Next.js，spec `alysia-console`）。
+>   `packages/webui`（Vue）已于 2026-10-02 删除（change: remove-packages-webui）——
+>   新增/修改端点**只需考虑 console 一个前端**。
+>   token 键名 `webui_token` 是**遗留契约、不得改名**（用户浏览器里已存的 token 认这个键）。
 >
 > ✅ 原缺口已补（2026-09-25, add-life-readonly-endpoints）:
 >   `GET /api/life/summaries`（每日摘要）、`GET /api/life/companions`（配角在场）已上线路由。
@@ -68,6 +69,7 @@
 | 角色 | `POST /api/roles/import` | 导入角色包 | 🟢 core 已封装 |
 | 角色 | `GET /api/roles/:id/export` | 导出角色包 | 🟢 core 已封装 |
 | 素材 | `GET /api/stickers` | 表情包列表（findSticker） | 🟢 core 已封装 |
+| 素材 | `GET /api/stickers/file/:name` | 表情包贴图文件（读文件返回，带 Content-Type/Cache-Control） | 🟢 路由在 `server.ts`（★ 10-02 从 `webui-system` §6 补登记——该 spec 是它此前的唯一书面记录） |
 | 隐私 | `POST /api/privacy` | 隐私模式切换 | 🟢 core 已封装 |
 | 生活 | `GET /api/life` | AI 生活状态快照 + 事件流 | 🟢 core 已封装 |
 | 生活 | `GET /api/life/summaries` | 近 7 天每日生活摘要 | 🟢 2026-09-25 上线路由 |

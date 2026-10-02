@@ -7,7 +7,7 @@
 | slug | 系统 | 状态 | 来源（旧文档） | 最后变更 |
 |------|------|------|----------------|----------|
 | memory-system | 记忆系统（7 store / 3 engine / 3 processor / 旋钮） | active | docs/superpowers/specs/2026-06-28-memory-system-design.md | 2026-10-02 **零行写入观测 §4.7 契约 3**（`observe-zero-row-writes`：`traceZeroRows` 只观测不拦截，采集 `changes===0` 分布，决策入口 `tune-zero-row-checks`）；**存储写入留痕契约 §4.7**（`fix-migration-and-logger-silent-failure`：迁移改探测式幂等、去掉 13 处裸 catch；日志子系统自身失败必须喊出来）；**推理预算观测契约 §4.1.2**（`add-llm-budget-observability`：provider 透出 `finish_reason`/`reasoning_tokens`，空响应单独可见，`role:'err'` 不再被压成空串）；10-01 **画像提取静默停摆修复**（采样槽契约 §4.1.1：max_tokens 共享预算 / json_object 按输出契约分类 / 第三参必须生效 / 禁裸 catch；4 个缺陷）；09-27 存量回填（52 条占位符摘要重生成 + 40 条垃圾向量替换 + 77 条缺失向量补齐；`getBySession` 加 `until`）；09-26 事件窗口截断修复；09-25 摘要静默失败修复与凭据外置；**09-25 召回管道三缺陷修复**（`optimize-recall-pipeline`：cosine 刻度退化 / `mergeWithQuota` 跨来源配额 / `RELATIVE_KEEP` 相对阈值去重）+ **`importance` 接线**（`wire-importance-signal`） |
-| alysia-architecture | 总体架构（monorepo / 双模式） | active | docs/superpowers/specs/2026-07-20-alysia-architecture-design.md | 2026-10-02 **编程模式由 dsh 承接**（record-dsh-as-coding-mode，修正「砍掉编程模式」）；10-01 模块化装配（module-kernel：core 13 模块 + server 10 模块）；**09-25 砍掉 Electron 桌面端**（drop-electron-desktop）；08-15 WebUI 聊天端点 + LLM 流式契约 |
+| alysia-architecture | 总体架构（monorepo / 双模式） | active | docs/superpowers/specs/2026-07-20-alysia-architecture-design.md | 2026-10-02 **删除 packages/webui**（remove-packages-webui：目录树去 webui 行、平台表改「console 唯一」）+ **编程模式由 dsh 承接**（record-dsh-as-coding-mode，修正「砍掉编程模式」）；10-01 模块化装配（module-kernel：core 13 模块 + server 10 模块）；**09-25 砍掉 Electron 桌面端**（drop-electron-desktop）；08-15 WebUI 聊天端点 + LLM 流式契约 |
 | pipeline-contract | Pipeline 契约 + 记忆修复 | frozen | docs/superpowers/specs/2026-07-30-pipeline-contract-and-memory-fix.md | 2026-08-07 迁移 |
 | server-desktop-separation | 服务端/桌面端分离 | frozen | docs/superpowers/specs/2026-07-30-server-desktop-separation.md | 2026-08-07 迁移 |
 | server-optimization | 服务端优化（流式/stop/WebUI 待做项） | frozen | docs/superpowers/specs/2026-07-30-server-optimization.md | 2026-08-07 迁移 |
@@ -24,10 +24,10 @@
 | tool-call-text-strip | 工具调用文本剥离 | frozen | docs/superpowers/specs/2026-08-02-tool-call-text-strip.md | 2026-08-07 迁移 |
 | ai-life-system | AI 主动生活系统（LifeService） | active | docs/superpowers/specs/2026-08-06-ai-life-system-design.md | 2026-10-02 **事件生成链路日志契约**（`add-llm-budget-observability`：槽位级 `finish/tokens/reasoning/content` 现场 + 调用失败不再伪装成"模型没输出"）；10-01 提示词资产搬到 `packages/server/src/prompts/`（externalize-life-prompts，含「为何不做 .md」判据 + 7 条守卫）；08-31 每日反思闭环（L3 自修改执行器） |
 | vision-bridge | 图片识别（GLM-4V-Flash 描述） | frozen | （无旧文档，2026-08-07 补） | 2026-08-07 新建 |
-| webui-system | WebUI 前端（Vue SPA/主题/管理面板/聊天视图） | active（**待废弃**） | （无旧文档，2026-08-15 补） | 2026-09-25 `console-local-serve` 后静态托管改为可切换 + `drop-electron-desktop` 删掉 `/desktop` 与 Electron 壳 + `migrate-live2d-to-console` 迁出 Live2D；⚠️ 2026-09-24 起由 `alysia-console` 取代，**整体删除尚未开 change**（有三个真实耦合点：`server.ts` 的 `defaultDist`、`bootstrap.ts` 的 `IS_DESKTOP` 分支、webui 侧 Live2D/模型残留）。`webui-visual-redesign`（8-15 布局大改）**已被取代、不再推进** |
+| webui-system | WebUI 前端（Vue SPA/主题/管理面板/聊天视图） | **frozen**（包已删除） | （无旧文档，2026-08-15 补） | 2026-10-02 **包整体删除**（`remove-packages-webui`：64 文件 git rm；`defaultDist` 回落与 `isDesktop` 前端门移除，缺产物改**显式 warn**；执行前审计推翻了"署名残留"与"死分支"两条立项说法；7 项管理能力降级 API-only，见该 change 遗留表）。历史：09-25 静态托管可切换（`console-local-serve`）+ 删 Electron 壳（`drop-electron-desktop`）+ 迁出 Live2D（`migrate-live2d-to-console`）；09-24 起由 `alysia-console` 取代。`webui-visual-redesign` 已标 `superseded` |
 | reminder-tool | 提醒工具（set/list/cancel + 推送） | active | （无旧文档，2026-08-07 补） | 2026-08-12 SQLite 持久化（重启恢复，过期补发） |
 | dsh-adapter | DSH 插件适配层（昔涟人格/记忆接入 DeepSeek Harness） | active | （无旧文档，2026-08-25 补） | 2026-10-01 bundle 化（`dsh.bundle.patch` + preset 声明，人设改走 `{{alysia_persona}}` 变量可切换；preset 派生自 standard 以保住工具集）+ **双进程通道落地**（`POST /api/ingest` / `GET /api/persona/prompt`，change: connect-dsh-alysia-bridge）；10-02 **读通道补齐**（`POST /api/memory/read` + 插件缓存/预热 + recall_memory 真工具，change: bridge-memory-read）；10-02 **子 agent 会话过滤**（`header.origin === 'subagent'` 一律不回传/不结算——修子 agent 内容污染人格与画像，change: exclude-subagent-sessions-from-bridge）；10-01 bundle 化 + 写通道；08-25 MVP 验证闭环 |
-| alysia-console | 昔涟控制台 · Next.js 新前端（设计系统/API 层/适配层/部署形态） | active | （无旧文档，2026-09-24 建） | 2026-09-25 集中落地：`adopt-nextjs-console`（收编 + 真数据）、`console-local-serve`（服务端同源托管 + 回环免 token）、`deploy-console-remote`（远端 Docker 部署已上线）、`wire-console-chat`（真会话 + 流式对话 `/api/chat/stream`）、`add-life-readonly-endpoints`（`/api/life/summaries` + `/companions`）、`migrate-live2d-to-console` + `live2d-persist-across-pages`（Live2D 迁入 + 跨页持久化，贴图 8192²→2048²）、`server-bind-host`（鉴权边界）、`drop-electron-desktop`（删 `/desktop`） |
+| alysia-console | 昔涟控制台 · Next.js 新前端（设计系统/API 层/适配层/部署形态） | active | （无旧文档，2026-09-24 建） | 2026-09-25 集中落地：`adopt-nextjs-console`（收编 + 真数据）、`console-local-serve`（服务端同源托管 + 回环免 token）、`deploy-console-remote`（远端 Docker 部署已上线）、`wire-console-chat`（真会话 + 流式对话 `/api/chat/stream`）、`add-life-readonly-endpoints`（`/api/life/summaries` + `/companions`）、`migrate-live2d-to-console` + `live2d-persist-across-pages`（Live2D 迁入 + 跨页持久化，贴图 8192²→2048²）、`server-bind-host`（鉴权边界）、`drop-electron-desktop`（删 `/desktop`）；**2026-10-02 成为唯一前端**（`remove-packages-webui`：webui 删除、静态托管收敛为单候选、缺产物显式 warn） |
 | module-kernel | 模块内核（Module 契约 / ModuleHost / 拓扑排序与逆序卸载） | active | （无旧文档，2026-10-01 建） | 2026-10-01：新建（add-module-kernel）→ 删掉依据错误的 `peer` 机制（drop-kernel-peer）→ **接入 `AlysiaCore.start()`**（modularize-core-assembly，13 个模块，公开面不变）。契约刻意做成 cordis 形状，为 dsh 迁移铺路；10-01 模块级单测 28 用例（add-module-tests）；**server 侧 bootstrap 拆成 10 个模块**（modularize-server-assembly，抽出 PushChannel） |
 
 ## 📌 Backlog（doc 已声明、impl 未接，记录在案不隐形）
@@ -43,15 +43,14 @@
 | [tune-zero-row-checks](../changes/tune-zero-row-checks/proposal.md) | **KI-11 的决策入口**：全 core 55 个写入点只有 3 处检查 `.run().changes` —— 「改到了」与「什么都没改」同形（`markDelivered` 会影响重复推送、`PersonaStore` 8 个 `WHERE is_active=1` 会报假成功）。**观测已上线**（`observe-zero-row-writes` 打 `[WriteTrace]`），**等运行数据再逐点定性**：豁免 / 硬校验 | 新增；**用户 2026-10-02「先打日志，后续运行一段时间后检查再决策」** |
 | [fix-store-write-trace](../changes/fix-store-write-trace/proposal.md) | **存储可观测性第二刀**：KI-12（`INSERT OR REPLACE` 列单缺 `archived` → 重投静默复活软删会话）/ KI-13（知识库半截文档 + hash 去重锁死）/ KI-14（`LanceDBStore.insert` 永不抛 → 上游 catch 成死代码，**2026-09-27 事故同形代码仍活着**）/ KI-15（`vectorStore` null 静默跳过 10 条路径）/ KI-16（`PersonaStore` 读时回写默认值）/ KI-17 + KI-5 剩余 9 处裸 catch | 新增；第一刀只修"地基"，本刀要**改判断语义**，各自需独立验证 |
 | [decide-life-event-max-tokens](../changes/decide-life-event-max-tokens/proposal.md) | **KI-1 的数据决策**：`life.generateEvent` 无 `max_tokens`，与已爆三次的槽同形。观测已上线（provider `[LLM]` 行 + `[Life] event LLM` 行），**等数据再定**；顺带闭环 KI-2（`proactive.personalize` / `vision.describe`） | 新增；**纪律：没有观测就不许改预算数字**；数据显示安全也得在 §4.1.2 记一句闭环 |
-| [remove-packages-webui](../changes/remove-packages-webui/proposal.md) | `packages/webui` **三个删除约束全解除但删除从未执行**（`IS_DESKTOP` 分流 / `defaultDist` 回落 / Live2D 残留）。**这个 change 此前从未建立过**——2026-10-02 整理时发现的真实缺口 | 新增；⚠️ **不是纯删**，删前先确认 5 个耦合点 |
 | [unify-core-shutdown](../changes/unify-core-shutdown/proposal.md) | **KI-6**：`core.stop()` 不关 SQLite / LanceDB 句柄 → Windows 上临时目录删不掉（EPERM）。行为变更，需单独验证 | 已定名未开 change（`modularize-core-assembly` proposal 决策 2 预留）；2026-10-02 补登记 |
 
 > 📦 **已销账**（2026-10-02 整理）：`backfill-failed-session-summaries` 已于 **2026-09-27 归档**
 > （`openspec/archive/2026-09-27-backfill-failed-session-summaries/`），本表原有的一行已移除
 > ——它此前是**死链**（`changes/` 下已无该目录）。
-> 🗑️ `webui-visual-redesign` 属**已被取代**（非 backlog）：其对象是 Vue 版 webui 的布局大改，
-> 而 webui 本身待废、由 `alysia-console` 接管；8-15 起的「方案待确认」就挂在那里、不再推进，
-> 且代码里查无其实施落点。**不再推进**，随 `remove-packages-webui` 一起收尾。
+> 🗑️ `webui-visual-redesign` 已标 `superseded`（非 backlog）：其对象是 Vue 版 webui 的布局大改，
+> 而 webui 已于 2026-10-02 整体删除（`remove-packages-webui`，已归档）；8-15 起的「方案待确认」
+> 不再推进，且代码里查无其实施落点。
 >
 > 📋 **仍在 `docs/KNOWN-ISSUES.md` 登记、尚未开 change 的缺陷**（该册是 triage 入口，修一条 = 开一个 change）：
 > **KI-3**（两个 `ILLMService` 实现无一致性契约测试）、**KI-4**（`PersonaAdapter` 裸 `JSON.parse`）、

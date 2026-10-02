@@ -4,7 +4,8 @@
 
 - **日期**: 2026-08-15
 - **类型**: MODIFY（改现有行为/视觉）
-- **状态**: proposed
+- **状态**: superseded（★ 2026-10-02：对象 `packages/webui` 已整体删除，见 `remove-packages-webui`。
+  本 change 不再推进；已完成的「补录」部分只作历史记录。本仓无 superseded 归档先例，沿用「文本登记」惯例留在 `changes/`）
 - **影响 spec**: `webui-system`（视觉体系 + 布局）
 
 ## 动机（为什么做）

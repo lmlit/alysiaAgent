@@ -49,9 +49,9 @@ export interface WebuiAuthOptions {
   webuiToken?: string;
   requireAuth?: boolean;
   /** ★ 9-24 console-local-serve：前端静态产物根目录（绝对路径）。
-   *  不传 = 默认 packages/webui/dist（Vue 旧前端）。
-   *  传 packages/console/out = 托管 Next.js 新前端（多页导出，路径映射不同）。
-   *  目录不存在时静默回退默认值，保证"没构建也能用"。 */
+   *  传 packages/console/out = 托管 Next.js 前端（多页导出）。
+   *  ★ 10-02 remove-packages-webui：旧前端包已删，不再有默认回落——
+   *  不传 / 产物缺失 = 只提供 /api/*（静态路由不注册，并显式 warn，不静默）。 */
   staticDist?: string;
 }
 
@@ -118,17 +118,16 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
     return { ok: true, url: `/api/portrait?v=${Date.now()}` };
   });
 
-  // ★ 8-15 WebUI 静态托管(生产形态:同源 serve 整个 dist——assets/模型/pet.html 全量;
-  //   未知路径回退 index.html(hash 路由);dev 用 vite dev server 5173 代理 /api)
-  // ★ 9-24 console-local-serve：支持托管 Next.js 新前端（多页静态导出）。
-  //   两者路径映射不同，用「候选链」统一处理：
-  //     webui(Vue hash SPA)：/anything → index.html
-  //     console(Next export)：/life → life.html；未命中 → 404.html
-  const defaultDist = resolve(dirname(fileURLToPath(import.meta.url)), '../../../webui/dist');
-  // 显式传入但产物不存在时回退默认值（"没构建也能用"，不 500）
-  const dist = staticDist && existsSync(join(staticDist, 'index.html')) ? staticDist : defaultDist;
-  if (staticDist && dist !== staticDist) {
-    logger.warn(`[WebUI] staticDist 不存在或缺少 index.html，回退默认前端：${defaultDist}`);
+  // ★ 8-15 WebUI 静态托管（生产形态：同源 serve 前端静态导出——assets/模型全量）
+  // ★ 9-24 console-local-serve：托管 Next.js console 静态导出（多页）。
+  //   路径映射见 resolveStatic：/life → life.html；未命中 → 404.html
+  // ★ 10-02 remove-packages-webui：删除「不传就回落 packages/webui/dist」的默认值——
+  //   旧前端包已删，回落只可能指向不存在的目录。现在：产物缺失 = 不注册静态路由，
+  //   且**必须显式 warn**——静默不注册的后果是「全站 404 且一行日志都没有」
+  //   （同类坑见 modules/webui.ts 文件头 / docs/dsh-migration-guide.md 坑 #2）。
+  const dist = staticDist && existsSync(join(staticDist, 'index.html')) ? staticDist : null;
+  if (staticDist && !dist) {
+    logger.warn(`[WebUI] staticDist 缺 index.html（${staticDist}）——静态托管未启用。构建: pnpm --filter @alysia/console build`);
   }
 
   const MIME: Record<string, string> = {
@@ -143,6 +142,7 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
 
   /** 依次尝试：原路径（文件）→ path.html → path/index.html；都不中返回 null */
   function resolveStatic(pathname: string): string | null {
+    if (!dist) return null;
     // 两端斜杠都要剥：Next 导出的是 `life.html`，用户手打 `/life/` 不该 404
     const clean = pathname.replace(/^\/+/, '').replace(/\/+$/, '');
     const candidates = clean
@@ -158,7 +158,9 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
   }
 
   // Fastify v5 无 '/*' 通配路由 → 用 setNotFoundHandler 兜底静态文件(排除 /api)
-  if (existsSync(join(dist, 'index.html'))) {
+  // ★ 10-02：没产物就整个不注册（上面已 warn）——不是白屏，是 /api 照常 + 页面 404
+  if (dist) {
+    const distRoot = dist; // 收窄进闭包（dist 在上面已判非 null）
     app.setNotFoundHandler(async (req: any, reply: any) => {
       const url = String(req?.url ?? '/').split('?')[0];
       if (url.startsWith('/api/')) {
@@ -176,13 +178,13 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
       let status = 200;
       let filePath = resolveStatic(pathname);
       if (!filePath) {
-        // 未命中：Next 有 404.html 就用它（真 404 语义）；webui 回退 index.html（hash 路由）
-        const fourOhFour = join(dist, '404.html');
+        // 未命中：有 404.html 就用它（真 404 语义）；无 404.html 的老式 SPA 回退 index.html
+        const fourOhFour = join(distRoot, '404.html');
         if (existsSync(fourOhFour)) {
           filePath = fourOhFour;
           status = 404;
         } else {
-          filePath = join(dist, 'index.html');
+          filePath = join(distRoot, 'index.html');
         }
       }
 

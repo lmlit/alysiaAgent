@@ -15,7 +15,8 @@ import type { Module } from '@alysia/core/kernel';
 
 export interface RuntimeConfig {
   config: ServerConfig;
-  /** `ALYSIA_DESKTOP=1`：跳过 IM 适配器与主动推送，只起 core + webui（纯 UI 本地调试用） */
+  /** `ALYSIA_DESKTOP=1`：跳过 IM 适配器与主动推送，只起 core + Web 面板（纯 UI 本地调试用）。
+   *  ★ 10-02 起不影响前端托管：静态页面一律托 console（webui 已删），见 modules/webui.ts */
   isDesktop: boolean;
 }
 

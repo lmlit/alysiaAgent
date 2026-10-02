@@ -1,5 +1,10 @@
 # Alysia → dsh 迁移参考文档
 
+> ★ **2026-10-02 现状更正**：源项目已不是"四包"——`webui/`（Vue 前端）与 `desktop/`（Electron 壳）
+> **均已删除**（change: `remove-packages-webui` / `drop-electron-desktop`）；现为 core / server /
+> console / dsh-adapter / dsh-console。文中涉及 Vue 版 webui 的路径与命令（如 `cd packages/webui && pnpm dev`）
+> **已失效**，仅作迁移历史的坑位参考。
+>
 > 日期:2026-08-19 | 用途:在 DeepSeek Harness(dsh)上复刻/迁移 alysia 开发的完整参考
 > 源项目:`E:\workSpace\alysiaAgent`(monorepo,四包:core/server/webui/desktop)
 > 本文档目的:让接手者不重复踩坑——列出架构、机制、**全部已知坑位**与修复,以及迁移对接建议。

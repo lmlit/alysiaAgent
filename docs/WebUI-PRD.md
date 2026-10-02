@@ -1,5 +1,9 @@
 # WebUI 产品需求文档（PRD）
 
+> ★ **2026-10-02：本文档描述的对象 `packages/webui`（Vue）已整体删除**（change: remove-packages-webui）。
+> 现行前端为 `packages/console`，契约见 `openspec/specs/alysia-console/spec.md`。
+> 本文档保留作**历史参考**（其中的产品需求多数已被 console 承接或不再适用）。
+>
 > 日期:2026-08-15 | 状态:初稿 | 维护:后续子需求逐项走 OpenSpec change
 > 参考:docs/Web-API-Design.md(服务端契约)、dsh web(deepseek-harness,传输/交互参考)
 

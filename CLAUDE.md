@@ -81,12 +81,14 @@ src/
 ### 服务端（server）主要模块
 - `bootstrap.ts` — ★ 2026-10-01（P3）起**只做装配**（建宿主 + 注册 10 个模块 + 跑）
 - `modules/` — 10 个装配模块（config/logging/core/vision/adapters/proactive/life/reminder/cron/webui）
+  （★ 这里的 `webui` 是**模块名**（`al:webui`，托管 console 的那个），不是已删的 `packages/webui`）
 - `push.ts` — `PushChannel` 接口（life/proactive 只用 `sendProactive`，不耦合具体适配器）
 - `prompts/` — life 提示词资产（**有意不做 `.md`**，判据见其 README）
 - `life.ts` — LifeService（AI 主动生活：事件生成/亲密度/每日摘要/剧情链）
 - `proactive.ts` — ProactiveService（时段问候/节日节气/关怀，stateFile 去重）
 - `adapters/qq-official.ts` — QQ 官方 Agent（WebSocket/图片识别/表情包/主动消息）
-- `webui/server.ts` — Fastify 路由层（routes exercise all core methods）
+- `webui/server.ts` — Fastify 路由层（routes exercise all core methods）+ console 静态托管。
+  ★ 与已删的 `packages/webui` **无关**（同名不同物）；★ 10-02 起 `webui:` 目录名保留、只托 console
 
 ### 记忆系统数据流
 ```
@@ -136,9 +138,11 @@ src/
 4. **文档卫生** `clean-spec-diff-residue` —— apply 残留的 `+ ` diff 标记。
    ★ 2026-10-02 实测范围比立项时记的大（`ai-life-system` 约 42 行，不止 `memory-system` 那 5 行）；
    ⚠️ **不能直接 `grep '^+'` 删**，里面混着 ASCII 树角字符和提示词模板正文
-5. **console 收尾**：表情包 `[表情包:名字]` 渲染（现按纯文本）、`play_live2d_action` 工具 +
-   输出驱动状态切换、**删 `packages/webui`**（三约束已解除，但**不是纯删**：
-   `server.ts` 的 `defaultDist`、`bootstrap.ts` 的 `IS_DESKTOP` 分支）
+5. **console 收尾**：表情包 `[表情包:名字]` 渲染（现按纯文本，★ 10-02 起已无任何前端渲染它）、
+   `play_live2d_action` 工具 + 输出驱动状态切换
+   ~~**删 `packages/webui`**~~ ★ **2026-10-02 已完成**（`remove-packages-webui`，已归档）：
+   包已删、`defaultDist` 回落移除（缺产物 → **显式 warn**，不再静默 404）、前端托管不再看 `isDesktop`。
+   遗留：7 项管理能力降级为 API-only（清单见该 change 遗留表）
 6. **隐患**（`docs/KNOWN-ISSUES.md`）：KI-1 `life.generateEvent` 槽**没有 `max_tokens`**
    —— 与已爆三次（会话摘要 22 天 / 每日反思 11 次 / 画像提取 6 个月）的槽**同形**。
    ★ **2026-10-02 起观测手段已就绪**（`add-llm-budget-observability`）：

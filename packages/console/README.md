@@ -1,6 +1,6 @@
 # @alysia/console — 昔涟控制台
 
-「昔涟」的前端（Next.js 16 + React 19 + Tailwind 4），取代 `packages/webui`（Vue，待废）。
+「昔涟」的前端（Next.js 16 + React 19 + Tailwind 4），**唯一前端** —— 旧前端 `packages/webui`（Vue）已于 2026-10-02 删除（change: remove-packages-webui）。
 
 契约见 `openspec/specs/alysia-console/spec.md`。
 

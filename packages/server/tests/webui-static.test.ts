@@ -1,6 +1,7 @@
-// ★ 9-24 console-local-serve：静态托管支持两种前端形态
-//   - webui（Vue hash SPA）：未知路径回退 index.html
+// ★ 9-24 console-local-serve：静态托管（console 多页导出）
 //   - console（Next.js 静态导出，多页）：/life → life.html；未命中 → 404.html
+//   - 无 404.html 的产物（老式 SPA 形态）：未知路径回退 index.html
+// ★ 10-02 remove-packages-webui：webui 默认回落已删——产物缺失 = 不注册静态路由（显式 warn）
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
@@ -53,7 +54,7 @@ beforeAll(() => {
       'dashboard/index.html': '<title>DASH-DIR</title>',
     }),
   );
-  // Vue SPA（hash 路由）：只有 index.html，没有 404.html
+  // 老式 SPA 形态：只有 index.html，没有 404.html
   spaDist = track(
     makeDist({
       'index.html': '<title>SPA-INDEX</title>',
@@ -124,8 +125,8 @@ describe('静态托管 — Next.js 多页导出', () => {
   });
 });
 
-describe('静态托管 — webui SPA（hash 路由）', () => {
-  it('未知路径回退 index.html 且 200（hash 路由行为不变）', async () => {
+describe('静态托管 — 无 404.html 的产物（老式 SPA 形态）', () => {
+  it('未知路径回退 index.html 且 200（无 404.html 时的既有行为）', async () => {
     const app = await buildApp(spaDist);
     const res = await app.inject({ method: 'GET', url: '/anything/deep' });
     expect(res.statusCode).toBe(200);
@@ -140,11 +141,21 @@ describe('静态托管 — webui SPA（hash 路由）', () => {
 });
 
 describe('静态托管 — 目录回退与安全', () => {
-  it('staticDist 不存在 → 回退默认前端，不崩', async () => {
+  it('staticDist 不存在 → 不注册静态路由（/ 404），/api 仍正常', async () => {
     const app = await buildApp(join(tmpdir(), 'definitely-not-here-' + Date.now()));
-    // 不管默认 dist 是否存在，都不应因路径参数而 5xx
+    // ★ 10-02：不再回退任何默认前端。页面 404 是显式行为（模块侧有 warn 日志），不是 5xx
     const res = await app.inject({ method: 'GET', url: '/' });
-    expect(res.statusCode).toBeLessThan(500);
+    expect(res.statusCode).toBe(404);
+    // 关键：没前端 ≠ 服务挂了——API 必须照常
+    const health = await app.inject({ method: 'GET', url: '/api/health' });
+    expect(health.statusCode).toBe(200);
+  });
+
+  it('完全不传 staticDist → 同样不注册静态路由，不崩', async () => {
+    const app = createWebuiApp(makeCore(), { requireAuth: false });
+    await app.ready();
+    const res = await app.inject({ method: 'GET', url: '/' });
+    expect(res.statusCode).toBe(404);
   });
 
   it('目录穿越被挡（不读出产物目录外的文件）', async () => {

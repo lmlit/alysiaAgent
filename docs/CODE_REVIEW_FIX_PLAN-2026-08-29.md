@@ -1,5 +1,8 @@
 # alysiaAgent 代码审查修复计划（2026-08-29）
 
+> ★ **2026-10-02 注**：文中 `packages/webui` 相关的条目（#27 悬空 import、#30 乱码表情名等）
+> 所述的**文件已随包删除**（change: `remove-packages-webui`）。当时均已修复；本记录保留作历史。
+>
 > 本次 CR：4 个方向并行精读（memory / pipeline+agent / server / webui+dsh+desktop），共约 25K 行。
 > 关键发现已抽验属实（群隔离 SQL、悬空 import、abort 未接线、QQ 错误码检查）。
 > 由业务负责人逐项确认并修复，修复时按 OpenSpec 流程开 change。
