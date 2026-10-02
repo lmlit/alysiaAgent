@@ -5,15 +5,24 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./persona-variable": "./dist/persona-variable.js"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
   "scripts": {
     "build": "tsc",
     "test": "vitest run"
   },
-  "dependencies": {
-    "@deepseek-ai/cordis": "^4.0.1"
-  },
+  "dependencies": {},
   "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
     "typescript": "^6.0.3",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "yaml": "^2.7.0"
   }
 }

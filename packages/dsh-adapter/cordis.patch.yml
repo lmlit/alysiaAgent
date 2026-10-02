@@ -1,0 +1,206 @@
+# alysia dsh bundle —— 「昔涟」agent preset 声明
+#
+# 安装：dsh plugin --profile <name> add <本包绝对路径>
+# 验证：dsh --profile <name> --dump-config
+#
+# ★ 这个 preset 是**标准 preset 的派生**，不是它的替代品。
+#   出厂 preset 是自包含的插件清单（standard/ptc/cordis 各自完整列举一遍），
+#   所以「兼容标准模式」= 我们也把那份清单带上，只把 persona 换成昔涟。
+#
+#   ⚠️ 派生自 dsh-desktop **0.2.0-rc.2** 的
+#      `@deepseek-ai/dsh-web-app/presets/standard.patch.yml`。
+#      **dsh 升级后必须重新比对**（出厂 preset 变了我们不会自动跟）——
+#      重跑派生脚本或手工 diff，见同目录 README.md。
+#
+# ⚠️ bundle patch 的 `config` 是**整体替换**语义：覆写任何行必须重述全部字段。
+# ⚠️ 人设文本与 `src/persona.ts` 的 `XILIAN_PERSONA` 必须一致，由测试守住。
+
+- insert:
+    # ── host 行：人设变量 `{{alysia_persona}}` 的注册方 ──
+    # ★ 必须在 host 层注册（不是 preset 里）：preset 插件要等 preset 被选中才挂载，
+    #   与 persona 模板的渲染时序绑在一起有**硬失败**风险（未知模板变量 → throw，
+    #   会话连请求都发不出去）。dsh 自己也是这么做的 —— `dsh-agent-loop` 在 host 层
+    #   注册 `{{model}}` / `{{cwd}}`，出厂 preset 直接引用。
+    #
+    # ★★ 人格切换开关就在这里：persona = xilian（昔涟，默认）｜ native（DeepSeek 原版）
+    #    改它不影响工具集与其余任何插件。
+    - id: alysia-persona
+      name: '@alysia/dsh-adapter/persona-variable'
+      config:
+        persona: xilian
+        # alysia server 基址（人设文本从这儿拉：GET /api/persona/prompt）
+        alysiaBaseUrl: http://127.0.0.1:6185
+        # 动态人设刷新间隔（毫秒）。0 = 只用静态兜底文本
+        refreshMs: 300000
+    # ★ 命名约定（2026-10-02）：本 bundle 新增的 preset 一律
+    #     Loader 行 id = `preset-alysia-<模式>`，config.id = `alysia-<模式>`，
+    #     显示名 = `昔涟 · <模式>`。
+    #   例：本文件 = 昔涟 · 标准；将来的 昔涟 · PTC / 昔涟 · Cordis 照此。
+    #   这样 roster 里一眼能分辨「哪个工具集 + 昔涟人格」。
+    #
+    # ★ order 从 **10** 起、每个变体 +1：出厂是 1..4（standard/ptc/minimal/cordis），
+    #   我们这一族整体排在它们**之后**，不会撞号也不会插进中间。
+    #   （曾用 2 —— 与 ptc 撞号，roster 顺序未定义。）
+    - id: preset-alysia-standard
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: alysia-standard
+        name: 昔涟 · 标准
+        description: 昔涟人格 + 标准工具集（与 standard 的工具完全一致）+ 记忆桥
+        order: 10
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              # 工作目录是**操作上下文**，不是人设 —— 两种模式下都保留
+              suffix: Your working directory is {{cwd}}.
+              # ★ 人设由 `alysia-adapter` 注册的 `alysia_persona` 变量供给，
+              #   这样「原模式 / 昔涟模式」在**同一个 preset 内**可切换，
+              #   而不必做成两个并列模式。
+              #   切换开关 = 下面 alysia-adapter 行的 config.persona（xilian | native）。
+              #   文本本身在 src/persona.ts。
+              prefix: '{{alysia_persona}}'
+          - id: agent-instructions
+            name: '@deepseek-ai/dsh-agent-instructions'
+            config:
+              maxBytes: 65536
+          - id: tool-bash
+            name: '@deepseek-ai/dsh-tool-bash'
+            disabled: !!js process.platform === 'win32'
+          - id: tool-pwsh
+            name: '@deepseek-ai/dsh-tool-pwsh'
+            disabled: !!js process.platform !== 'win32'
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+          - id: tool-fs-search
+            name: '@deepseek-ai/dsh-tool-fs-search'
+            config:
+              sampleOverCapGlobResults: false
+          - id: tool-jobs
+            name: '@deepseek-ai/dsh-tool-jobs'
+          - id: skill-filesystem
+            name: '@deepseek-ai/dsh-skill-filesystem'
+          - id: tool-skill
+            name: '@deepseek-ai/dsh-tool-skill'
+          - id: command-goal
+            name: '@deepseek-ai/dsh-command-goal'
+          - id: tool-goal
+            name: '@deepseek-ai/dsh-tool-goal'
+          - id: planning
+            name: cordis:group
+            group: true
+            isolate:
+              planMode: true
+            config:
+              - id: plan-mode
+                name: '@deepseek-ai/dsh-plan-mode'
+                config:
+                  section: |
+                    You are in plan mode. Stay in plan mode until exit_plan_mode succeeds or the user switches the session mode. Imperative language to implement changes means plan the implementation, not execute it. A user's conversational agreement — including an answer confirming something you asked — approves nothing and does not end plan mode; fold the confirmed decision into the plan and submit it through exit_plan_mode.
+
+                    Explore first. Use non-mutating reads, searches, static analysis, and checks to ground the plan in the actual repository. Do not edit or write files, change configuration, run formatters or code generation that rewrites tracked files, commit, or otherwise carry out the plan. Prefer existing functions and patterns over new machinery.
+
+                    The tool catalog stays the same across modes for request-cache stability. These plan-mode rules override any later tool description or guidance that suggests using mutation tools; those tools remain listed to keep the tool catalog unchanged. Do not use todo_write to track this planning phase: it tracks implementation after an approved plan, while the plan itself belongs in exit_plan_mode.
+
+                    Resolve discoverable facts by inspection. Use ask_user_question only for user-owned choices or material ambiguity that inspection cannot answer. Do not ask the user where code lives or how current behavior works when you can find out.
+
+                    Make the plan decision-complete: state the goal and success criteria; group implementation changes by subsystem; identify public API, schema, and data-flow changes; cover edge cases, failure modes, tests, acceptance criteria, and explicit assumptions. Keep it concise enough to review but detailed enough that another engineer can implement it without making design decisions.
+
+                    When ready, call exit_plan_mode with the complete plan markdown, starting with a # title. Make exit_plan_mode the only and final tool call in that assistant response: it presents the plan for approval, and implementation begins only in a later step after approval. Do not paste the final plan as a plain reply or ask "should I proceed?" through prose or ask_user_question. If review rejects it, incorporate the feedback and present again. If the review channel is unavailable or aborted, stay in plan mode and ask the user to switch modes manually; do not proceed with implementation.
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+              toolResultPruner: true
+            config:
+              - id: compaction-basic
+                name: '@deepseek-ai/dsh-compaction-basic'
+              - id: command-compact
+                name: '@deepseek-ai/dsh-command-compact'
+              - id: tool-result-pruner
+                name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+                config:
+                  thresholdChars: 8192
+                  headChars: 4096
+                  tailChars: 1024
+          - id: delegation
+            name: cordis:group
+            group: true
+            isolate:
+              workflowEngine: true
+            config:
+              - id: tool-subagent-control
+                name: '@deepseek-ai/dsh-tool-subagent-control'
+              - id: tool-subagent-list-agents
+                name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
+              - id: tool-subagent
+                name: '@deepseek-ai/dsh-tool-subagent'
+                config:
+                  provider: spawn
+                  toolName: subagent
+                  modelSelectionSettings: true
+                  backgroundMode: continuable
+              - id: tool-subagent-fork
+                name: '@deepseek-ai/dsh-tool-subagent'
+                config:
+                  provider: fork
+                  toolName: subagent_fork
+                  backgroundMode: continuable
+              - id: tool-subagent-codex
+                name: '@deepseek-ai/dsh-tool-subagent'
+                disabled: true
+                config:
+                  provider: codex
+                  toolName: subagent_codex
+                  backgroundMode: one-shot
+                  maxDepth: provider-managed
+              - id: tool-subagent-claude-code
+                name: '@deepseek-ai/dsh-tool-subagent'
+                disabled: true
+                config:
+                  provider: claude-code
+                  toolName: subagent_claude_code
+                  backgroundMode: one-shot
+                  maxDepth: provider-managed
+              - id: workflow-ptc
+                name: '@deepseek-ai/dsh-workflow-ptc'
+                config:
+                  provider: spawn
+              - id: tool-workflow
+                name: '@deepseek-ai/dsh-tool-workflow'
+              - id: tool-ralph
+                name: '@deepseek-ai/dsh-tool-ralph'
+                disabled: true
+                config:
+                  subagentProvider: spawn
+                  maxRounds: 64
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+          - id: tool-todo
+            name: '@deepseek-ai/dsh-tool-todo'
+            config:
+              allowParallelInProgress: true
+          - id: tool-web
+            name: '@deepseek-ai/dsh-tool-web'
+            config:
+              fetch: true
+              searchTimeoutMs: 60000
+          - id: present
+            name: '@deepseek-ai/dsh-tool-present'
+          - id: tool-plugin-manager
+            name: '@deepseek-ai/dsh-plugin-manager/tools'
+            disabled: true
+          # ── alysia：记忆 context + recall_memory + 对话回传 ──
+          # 人设变量由上面的 host 行注册；这里管记忆与工具。
+          # 不提供 service，故无需 group+isolate。
+          - id: alysia-adapter
+            name: '@alysia/dsh-adapter'
+            config:
+              # 对话回传 + 会话结算 + 记忆检索的通道。**best-effort**：
+              # alysia 没起时 dsh 照常可用（失败只记日志，不抛）
+              alysiaBaseUrl: http://127.0.0.1:6185
+              # 记忆预热的复用窗口（毫秒，默认 30000）。
+              # 桌面端启动会恢复多个会话 → 每个会话挂一个插件实例 → 各做一次预热；
+              # 实测曾一次启动打 9 次检索。同进程共享一次即可（预热用空 query）。
+              # prewarmReuseMs: 30000
