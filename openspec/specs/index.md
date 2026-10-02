@@ -41,13 +41,24 @@
 | [add-ops-health-report](../changes/add-ops-health-report/proposal.md) | 会话摘要 **22 天 100% 失败**期间，容器 healthcheck 与 `/api/health` **全程为绿**——缺的是正确性指标（摘要成功率/各模块 WARN 计数），不是存活指标 | 新增（可观测性）；**用户 9-25 决定先记档后做**；前置：日志系统先整理（96.6% 是 QQ 噪声） |
 | [clean-spec-diff-residue](../changes/clean-spec-diff-residue/proposal.md) | apply 未去 diff 标记的产物残留。★ **2026-10-02 复核：范围比立项时记的大** —— `memory-system/spec.md` 5 行（`persona-overlay-perspective`）、`ai-life-system/spec.md` **约 42 行**（`worldbook-digest-summary` / `life-interval-narrative` / `chat-life-continuity` / `mood-side-analysis` / `worldview-crossworld-window` / `life-event-message-split` / `worldview-base-field` 等多次 apply 层层累积）、`alysia-console/spec.md` 1 行 | 文档卫生；⚠️ **不能用 `grep '^\+'` 直接删** —— 得逐条判「是 diff 残留还是正文」：`ai-life-system` 里混着 ASCII 树角字符 `+│` 与提示词模板正文 |
 | [tune-zero-row-checks](../changes/tune-zero-row-checks/proposal.md) | **KI-11 的决策入口**：全 core 55 个写入点只有 3 处检查 `.run().changes` —— 「改到了」与「什么都没改」同形（`markDelivered` 会影响重复推送、`PersonaStore` 8 个 `WHERE is_active=1` 会报假成功）。**观测已上线**（`observe-zero-row-writes` 打 `[WriteTrace]`），**等运行数据再逐点定性**：豁免 / 硬校验 | 新增；**用户 2026-10-02「先打日志，后续运行一段时间后检查再决策」** |
+| [fix-store-write-trace](../changes/fix-store-write-trace/proposal.md) | **存储可观测性第二刀**：KI-12（`INSERT OR REPLACE` 列单缺 `archived` → 重投静默复活软删会话）/ KI-13（知识库半截文档 + hash 去重锁死）/ KI-14（`LanceDBStore.insert` 永不抛 → 上游 catch 成死代码，**2026-09-27 事故同形代码仍活着**）/ KI-15（`vectorStore` null 静默跳过 10 条路径）/ KI-16（`PersonaStore` 读时回写默认值）/ KI-17 + KI-5 剩余 9 处裸 catch | 新增；第一刀只修"地基"，本刀要**改判断语义**，各自需独立验证 |
+| [decide-life-event-max-tokens](../changes/decide-life-event-max-tokens/proposal.md) | **KI-1 的数据决策**：`life.generateEvent` 无 `max_tokens`，与已爆三次的槽同形。观测已上线（provider `[LLM]` 行 + `[Life] event LLM` 行），**等数据再定**；顺带闭环 KI-2（`proactive.personalize` / `vision.describe`） | 新增；**纪律：没有观测就不许改预算数字**；数据显示安全也得在 §4.1.2 记一句闭环 |
+| [remove-packages-webui](../changes/remove-packages-webui/proposal.md) | `packages/webui` **三个删除约束全解除但删除从未执行**（`IS_DESKTOP` 分流 / `defaultDist` 回落 / Live2D 残留）。**这个 change 此前从未建立过**——2026-10-02 整理时发现的真实缺口 | 新增；⚠️ **不是纯删**，删前先确认 5 个耦合点 |
+| [unify-core-shutdown](../changes/unify-core-shutdown/proposal.md) | **KI-6**：`core.stop()` 不关 SQLite / LanceDB 句柄 → Windows 上临时目录删不掉（EPERM）。行为变更，需单独验证 | 已定名未开 change（`modularize-core-assembly` proposal 决策 2 预留）；2026-10-02 补登记 |
 
 > 📦 **已销账**（2026-10-02 整理）：`backfill-failed-session-summaries` 已于 **2026-09-27 归档**
 > （`openspec/archive/2026-09-27-backfill-failed-session-summaries/`），本表原有的一行已移除
 > ——它此前是**死链**（`changes/` 下已无该目录）。
 > 🗑️ `webui-visual-redesign` 属**已被取代**（非 backlog）：其对象是 Vue 版 webui 的布局大改，
-> 而 webui 本身待废、由 `alysia-console` 接管；8-15 起的「方案待确认」一放就是一个多月，
-> 且代码里查无其实施落点。**不再推进**，随「删 `packages/webui`」的收尾 change 一起处理。
+> 而 webui 本身待废、由 `alysia-console` 接管；8-15 起的「方案待确认」就挂在那里、不再推进，
+> 且代码里查无其实施落点。**不再推进**，随 `remove-packages-webui` 一起收尾。
+>
+> 📋 **仍在 `docs/KNOWN-ISSUES.md` 登记、尚未开 change 的缺陷**（该册是 triage 入口，修一条 = 开一个 change）：
+> **KI-3**（两个 `ILLMService` 实现无一致性契约测试）、**KI-4**（`PersonaAdapter` 裸 `JSON.parse`）、
+> **KI-7**（`/stop` 只打日志不中断）、**KI-8**（根目录 `config.yml` 是死文件）、
+> **KI-9**（`memory/services/` 疑似半死代码）、**KI-10**（内核缺「只排序不依赖服务」的表达方式）、
+> 以及**历史画像回填**（线上 `basics`/`facts` 长期稀疏，修复只保证从此往后）。
+> —— **已开 change 的那几条**（KI-1 / KI-5 部分 / KI-6 / KI-11～KI-17）在上表有行，点进去即可。
 
 ## 相关活文档（非 spec，但同为 source of truth）
 
