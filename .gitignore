@@ -16,6 +16,16 @@ tmp-trigger-profile.ts
 docs/Docker-Deployment.md
 packages/server/server.log
 
+# ★ 2026-10-02 安全清理：运维类文档含服务器地址/账号/凭据路径，不进公开仓库
+#   （历史里的旧值另议；轮换过的密码不回收，见 HANDOFF「安全」段）
+docs/HANDOFF.md
+packages/server/scripts/sync-from-server.sh
+
+# ★ 2026-10-02：本地工作目录与资产库——此前是"未跟踪但未忽略"，
+#   `git add -A` 会直接把它们扫进仓库（8-09 事故正是 git add -A 把内部 SOP 带进公开仓库）
+.video-demo/
+cyrene-assets/
+
 # ★ 设计 hook（impeccable）的工具状态：config 是本机忽略规则，cache 还含绝对 Windows 路径
 #   两者都不该进仓库（2026-09-25）
 .impeccable/

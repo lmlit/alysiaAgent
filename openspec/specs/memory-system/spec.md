@@ -854,7 +854,7 @@ query → Worldbook 匹配 → embed API → LanceDB 向量检索
 
 ## ★ 8-28 运维工具：服务器数据同步（server-data-sync-script）
 
-`packages/server/scripts/sync-from-server.sh`——手动脚本，把服务器（121.41.111.120，云端 appid
+`packages/server/scripts/sync-from-server.sh`——手动脚本，把服务器（<SERVER_IP>，云端 appid
 24h 在线，权威数据）的 alysia.db 全量同步到本地开发机：
 
 1. 服务器容器内用 better-sqlite3 `backup()` **在线导出**（不停机，WAL 一致性安全）
