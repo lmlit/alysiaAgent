@@ -18,7 +18,15 @@ export interface LLMResponse {
     input: number;
     output: number;
     total: number;
+    /** ★ 2026-10-02（add-llm-budget-observability）：推理模型花在 reasoning 上的 output 份额。
+     *  与可见内容**共用同一个 max_tokens 预算** —— 是判定"预算被吃光"的关键数字。
+     *  非推理模型 / 老响应不返回该字段 → undefined。 */
+    reasoningTokens?: number;
   };
+  /** ★ 2026-10-02（add-llm-budget-observability）：`choices[0].finish_reason`。
+   *  `'length'` + content 为空 ⇒ max_tokens 预算被推理吃光（本项目已栽三次的机制）。
+   *  `'stop'` + content 为空 ⇒ 不是预算问题，另查。 */
+  finishReason?: string;
   isChunk?: boolean;
 }
 

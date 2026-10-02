@@ -454,6 +454,45 @@ TS 不报错（少形参可赋给多形参签名），但槽位会被静默丢�
 「正常但没提取到」在日志里长得一模一样，这是它停摆 6 个月无人察觉的直接原因。
 **提取类失败必须 `logger.error`**：一次失败 = 这一批事件的事实永久丢失。
 
+#### 4.1.2 ★ 推理预算的观测契约（2026-10-02，change: add-llm-budget-observability）
+
+> §4.1.1 规定了「预算要够大」，但**没规定「怎么知道它够不够」**。
+> 后果：`docs/KNOWN-ISSUES.md` 的 KI-1 / KI-2 长期**无法判定**——
+> 不是"没发生"，是**证据拿不到**。本条补上这一环。
+
+**契约 1：provider 必须透出 `finish_reason` 与 `reasoning_tokens`。**
+
+`LLMResponse` 携带 `finishReason`（`choices[0].finish_reason`）与
+`usage.reasoningTokens`（`usage.completion_tokens_details.reasoning_tokens`）。
+字段缺失（非推理模型 / 老响应）**降级为 `undefined`，不得报错**。
+
+**契约 2：每次 LLM 调用都要在日志里留下预算现场——写在 provider 层，不写在各槽位。**
+
+`OpenAIProvider.textChat` 的成功日志必须含 `finish=` 与 `reasoning=`；
+**空 content 时单独 `logger.warn`**，并直接区分「预算耗尽」与「不是预算问题」。
+
+> **为什么写在 provider 层**：所有槽位都流经同一处，**一处改即全局覆盖**；
+> 逐个槽位打点会在**新增槽位时漏掉**——KI-2 的 `proactive.personalize` /
+> `vision.describe` 正是这么漏掉观测的。
+
+**契约 3：`role: 'err'` 不得被压成空串。**
+
+调用方（如 `modules/life.ts` 的事件生成回调）拿到 `role === 'err'` 时
+**必须记日志并保留错误信息**。直接 `return ''` 会让上层只看到 `empty response`，
+把**网络故障伪装成「模型没输出」**，排查方向直接被带偏
+（违反「不静默吞错」与「降级必须可区分」两条既有约定）。
+
+**契约 4：判定口径（改预算数字的前置条件）。**
+
+| 观测 | 含义 | 动作 |
+|---|---|---|
+| `finish=length` + `content` 为空 | **预算被推理吃光** | 该槽要更大的 `max_tokens` |
+| `finish=stop` + `content` 为空 | 不是预算问题 | 另查（prompt / 模型行为） |
+| `finish=?` / `reasoning=?` | 字段缺失 | 非推理模型或响应格式变了 |
+
+**没有这两项观测就不许改预算数字**——凭感觉填正是本项目反复吃亏的地方
+（§4.1.1 那三次故障都是这么来的）。
+
 ### 4.2 人格自适应引擎
 
 触发源:

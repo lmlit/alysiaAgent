@@ -23,15 +23,32 @@
 
 ### KI-1 🟠 `life.generateEvent` 槽没有 `max_tokens`
 
+> ★ **2026-10-02 更新（change: `add-llm-budget-observability`）**：**观测手段已就绪，待采数据。**
+> 此前这条无法判定，根因是**证据拿不到**，不是"没发生"：
+> 1. `finish_reason` / `reasoning_tokens` **从未被解析**——provider 只取 message 与总 tokens；
+> 2. `role: 'err'`（网络/超时/HTTP 报错）在 `modules/life.ts` 回调里被压成空串，
+>    最终日志统一显示 `empty response` → **网络故障伪装成「模型没输出」**。
+>
+> 两处都已修好，判定入口：
+> - `[LLM] <model> → … tokens=… finish=<x> reasoning=<n|?> (…)` —— **所有槽位全局可见**
+> - 空响应会单独 warn，并直接指出「预算耗尽」还是「不是预算问题」
+> - `[Life] event LLM: finish=… tokens=… reasoning=… content=N字 (…)` —— 事件槽位级现场
+>
+> **判定口径**：`finish=length` + `content=0字` ⇒ 预算被推理吃光，该加 `max_tokens`；
+> `finish=stop` + `content=0字` ⇒ 另查。
+> **采数据入口**：让她正常跑一天，或跑一次真实 API 探针，从 `[Life] event LLM` 行读数字。
+
 - **现象**：事件生成依赖服务端默认预算（未知值），而它要输出一个**多字段 JSON**
   （content/type/message/mood_delta/agency/intent/next_in_hours/…），
   推理 + JSON 双重吃预算——**这是与已爆的三个槽最像的一个**。
 - **证据**：`packages/core/src/provider/sampling.ts` — `life.generateEvent: { temperature: 0.9 }`（无 max_tokens）；
-  消费方 `packages/server/src/bootstrap.ts` 的 `generateEvent` 回调传了 `responseFormat: 'json'`。
-- **影响**：若服务端默认偏小 → 生活事件生成静默失败 → 她"停止生活"。
-  但 HANDOFF 记录生活事件是**在产出的**，故暂判未爆（可能服务端默认够大）。
-- **建议方向**：先用真实 API 探针测一次实际 reasoning 占用（照 `scripts/verify-session-summary-fix.ts`
-  的方法论），再决定给不给显式 `max_tokens`。**先测再改**。
+  消费方 `packages/server/src/modules/life.ts` 的 `generateEvent` 回调传了 `responseFormat: 'json'`。
+  （★ 2026-10-02 更正：此前写的 `bootstrap.ts` 已随 P3 模块化搬走。）
+- **影响**：若服务端默认偏小 → 事件生成静默失败 → **回落模板** → 她"停止生活"、
+  剧情链断裂（`reference_event_id` / `continuation_of` 拿不到）、**模板句进向量库污染召回**
+  （与 9-27 清掉的那 40 条垃圾向量同形）。
+- **建议方向**：**先采数据**（现在采得到了）→ 再决定给不给显式 `max_tokens` / 给多少。
+  **先测再改**——凭感觉填数字正是本项目反复吃亏的地方。
 
 ### KI-2 🟠 两个小预算槽未校准：`proactive.personalize: 256` / `vision.describe: 200`
 
@@ -40,6 +57,9 @@
 - **证据**：`packages/core/src/provider/sampling.ts`。
 - **影响**：问候/图片描述偶发空响应。**纯文本任务的 reasoning 短**，所以风险低于 KI-1。
 - **建议方向**：同 KI-1，先探针实测；若无问题，在 spec §4.1.1 记一句「已实测安全」闭环。
+  ★ **2026-10-02（`add-llm-budget-observability`）**：这两个槽现在**顺带可观测**了——
+  provider 层的 `[LLM]` 日志对**所有槽位**统一输出 `finish=` / `reasoning=`，
+  不必单独打点。做 KI-1 的采数据时，顺手看这两行的数字即可闭环本项。
 
 ### KI-3 🟡 两个 `ILLMService` 实现无一致性契约测试
 

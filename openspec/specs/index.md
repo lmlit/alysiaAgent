@@ -6,7 +6,7 @@
 
 | slug | 系统 | 状态 | 来源（旧文档） | 最后变更 |
 |------|------|------|----------------|----------|
-| memory-system | 记忆系统（7 store / 3 engine / 3 processor / 旋钮） | active | docs/superpowers/specs/2026-06-28-memory-system-design.md | 2026-10-01 **画像提取静默停摆修复**（采样槽契约 §4.1.1：max_tokens 共享预算 / json_object 按输出契约分类 / 第三参必须生效 / 禁裸 catch；4 个缺陷）；09-27 存量回填（52 条占位符摘要重生成 + 40 条垃圾向量替换 + 77 条缺失向量补齐；`getBySession` 加 `until`）；09-26 事件窗口截断修复；09-25 摘要静默失败修复与凭据外置；**09-25 召回管道三缺陷修复**（`optimize-recall-pipeline`：cosine 刻度退化 / `mergeWithQuota` 跨来源配额 / `RELATIVE_KEEP` 相对阈值去重）+ **`importance` 接线**（`wire-importance-signal`） |
+| memory-system | 记忆系统（7 store / 3 engine / 3 processor / 旋钮） | active | docs/superpowers/specs/2026-06-28-memory-system-design.md | 2026-10-02 **推理预算观测契约 §4.1.2**（`add-llm-budget-observability`：provider 透出 `finish_reason`/`reasoning_tokens`，空响应单独可见，`role:'err'` 不再被压成空串）；10-01 **画像提取静默停摆修复**（采样槽契约 §4.1.1：max_tokens 共享预算 / json_object 按输出契约分类 / 第三参必须生效 / 禁裸 catch；4 个缺陷）；09-27 存量回填（52 条占位符摘要重生成 + 40 条垃圾向量替换 + 77 条缺失向量补齐；`getBySession` 加 `until`）；09-26 事件窗口截断修复；09-25 摘要静默失败修复与凭据外置；**09-25 召回管道三缺陷修复**（`optimize-recall-pipeline`：cosine 刻度退化 / `mergeWithQuota` 跨来源配额 / `RELATIVE_KEEP` 相对阈值去重）+ **`importance` 接线**（`wire-importance-signal`） |
 | alysia-architecture | 总体架构（monorepo / 双模式） | active | docs/superpowers/specs/2026-07-20-alysia-architecture-design.md | 2026-10-02 **编程模式由 dsh 承接**（record-dsh-as-coding-mode，修正「砍掉编程模式」）；10-01 模块化装配（module-kernel：core 13 模块 + server 10 模块）；**09-25 砍掉 Electron 桌面端**（drop-electron-desktop）；08-15 WebUI 聊天端点 + LLM 流式契约 |
 | pipeline-contract | Pipeline 契约 + 记忆修复 | frozen | docs/superpowers/specs/2026-07-30-pipeline-contract-and-memory-fix.md | 2026-08-07 迁移 |
 | server-desktop-separation | 服务端/桌面端分离 | frozen | docs/superpowers/specs/2026-07-30-server-desktop-separation.md | 2026-08-07 迁移 |
@@ -22,7 +22,7 @@
 | server-hardening | 服务端加固 | active | docs/superpowers/specs/2026-08-02-server-hardening.md | 2026-09-25 鉴权触发条件改为跟随绑定地址（`server-bind-host`，回环免鉴权）+ 9-24 钩子范围修复（只守 /api/*） |
 | sticker-protocol | 表情包协议 | frozen | docs/superpowers/specs/2026-08-02-sticker-protocol.md | 2026-08-07 迁移 |
 | tool-call-text-strip | 工具调用文本剥离 | frozen | docs/superpowers/specs/2026-08-02-tool-call-text-strip.md | 2026-08-07 迁移 |
-| ai-life-system | AI 主动生活系统（LifeService） | active | docs/superpowers/specs/2026-08-06-ai-life-system-design.md | 2026-10-01 提示词资产搬到 `packages/server/src/prompts/`（externalize-life-prompts，含「为何不做 .md」判据 + 7 条守卫）；08-31 每日反思闭环（L3 自修改执行器） |
+| ai-life-system | AI 主动生活系统（LifeService） | active | docs/superpowers/specs/2026-08-06-ai-life-system-design.md | 2026-10-02 **事件生成链路日志契约**（`add-llm-budget-observability`：槽位级 `finish/tokens/reasoning/content` 现场 + 调用失败不再伪装成"模型没输出"）；10-01 提示词资产搬到 `packages/server/src/prompts/`（externalize-life-prompts，含「为何不做 .md」判据 + 7 条守卫）；08-31 每日反思闭环（L3 自修改执行器） |
 | vision-bridge | 图片识别（GLM-4V-Flash 描述） | frozen | （无旧文档，2026-08-07 补） | 2026-08-07 新建 |
 | webui-system | WebUI 前端（Vue SPA/主题/管理面板/聊天视图） | active（**待废弃**） | （无旧文档，2026-08-15 补） | 2026-09-25 `console-local-serve` 后静态托管改为可切换 + `drop-electron-desktop` 删掉 `/desktop` 与 Electron 壳 + `migrate-live2d-to-console` 迁出 Live2D；⚠️ 2026-09-24 起由 `alysia-console` 取代，**整体删除尚未开 change**（有三个真实耦合点：`server.ts` 的 `defaultDist`、`bootstrap.ts` 的 `IS_DESKTOP` 分支、webui 侧 Live2D/模型残留）。`webui-visual-redesign`（8-15 布局大改）**已被取代、不再推进** |
 | reminder-tool | 提醒工具（set/list/cancel + 推送） | active | （无旧文档，2026-08-07 补） | 2026-08-12 SQLite 持久化（重启恢复，过期补发） |

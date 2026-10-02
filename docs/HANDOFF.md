@@ -104,6 +104,46 @@ E2E（真 API）**5/5 全过**。
 
 ---
 
+## 🔭 2026-10-02：LLM 预算可观测化（change: `add-llm-budget-observability`）
+
+**起因**：`docs/KNOWN-ISSUES.md` 的 **KI-1**（`life.generateEvent` 没有 `max_tokens`）**无法判定**。
+排查后发现**根因不是"没发生"，是"证据拿不到"**：
+
+1. `finish_reason` / `reasoning_tokens` **从未被解析**——provider 只取了 message 与总 tokens，
+   而这正是「预算被推理吃光」的**唯一可靠判据**；
+2. `role: 'err'`（网络故障 / 60s 超时 / HTTP 报错）在 `modules/life.ts` 回调里被压成空串，
+   上层只看到 `empty response` → **网络故障伪装成「模型没输出」**，排查方向直接被带偏。
+
+两处都修了（**只加观测，一个预算数字都没改**）：
+
+| 位置 | 改动 |
+|---|---|
+| `core/src/provider/types.ts` | `LLMResponse` 加 `finishReason`；`usage` 加 `reasoningTokens`（只加字段，不动签名） |
+| `core/src/provider/openai.ts` | 解析两者；`[LLM]` 成功日志追加 `finish=` / `reasoning=`；**空响应单独 warn** 并直接判「预算耗尽」还是「不是预算问题」 |
+| `server/src/modules/life.ts` | `role==='err'` **不再静默 `return ''`**；每次事件生成打一行槽位级现场 |
+
+**★ 关键设计：观测点放 provider 层。** 所有槽位都流经同一处，**一处改即全局覆盖**；
+逐个槽位打点会在**新增槽位时漏掉**——KI-2 的 `proactive.personalize` / `vision.describe`
+就是这么漏掉观测的。现在它们**顺带可观测**了。
+
+**验收**：core **612 passed**、server **223 passed**（含 60+ 处 mock `generateEvent` 回调
+→ **证明签名未变**）、两个包 `tsc` 干净、core 已 build 且**核过 dist 产物含新代码**。
+
+**★ 下一步（本 change 只保证"采得到"）**：**采数据 → 再决策**
+- 让她正常跑一天，或照 `scripts/verify-session-summary-fix.ts` 的方法论写探针打一次事件生成
+- 读 `[Life] event LLM: finish=… tokens=… reasoning=… content=N字`：
+  - `finish=length` + `content=0字` → **给该槽显式 `max_tokens`**（另开 change，附实测数据）
+  - `finish=stop` 且数字宽裕 → 在 §4.1.2 记一句「已实测安全」闭环 KI-1
+- 顺带看 KI-2 那两个槽的行 → 一并闭环
+
+**契约落在**：`memory-system` spec **§4.1.2 推理预算观测契约**（4 条）+ `ai-life-system`
+事件生成链路日志契约。**没有观测就不许改预算数字**——这一条已成文。
+
+> ⚠️ 老坑仍在（见下方「环境速查」与治理债一节）：**沙箱内 shell 写不了工作区**、
+> **跑 vitest 会 spawn EPERM**——两者都需要放宽一次权限。
+
+---
+
 ## 🔧 2026-10-01 起：模块化拆解（进行中）
 
 **背景**：dsh 出了桌面端并换代了插件机制，alysia 现有的两处 dsh 集成**全部失效**
@@ -333,10 +373,13 @@ export PATH="/e/nodejs24:$PATH" && npx vitest run --exclude='tests/memory/e2e/*'
 | `soul.md` 的「Live2D 桌面空间」 | Electron 已砍，表述与实际不符。**用户决定另开 change 改** |
 | 删 `packages/webui` | 三个删除约束全解除，但**不是纯删**（`server.ts` 的 `defaultDist`、`bootstrap.ts` 的 `IS_DESKTOP` 分支） |
 
-### 5. 一个没查完的线索
+### 5. 一个没查完的线索 → **现在查得动了**
 
 `proactive.personalize` 槽 `max_tokens: 256` —— 按推理模型的账**比 512 更可疑**，
 但日志里 proactive 看着是正常的，**没证据**。要么查，要么放着。
+
+★ **2026-10-02 起**：provider 层 `[LLM]` 日志对**所有槽位**统一输出
+`finish=` / `reasoning=`，这个槽**顺带可观测**了——采 KI-1 的数据时顺手看一眼就能闭环。
 
 ---
 

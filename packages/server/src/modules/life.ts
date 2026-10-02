@@ -10,7 +10,7 @@
  * ⚠️ 不注册停机 effect：原实现也没停 LifeService（见 `proactive.ts` 同款说明）。
  */
 
-import { DEFAULT_SAMPLING } from '@alysia/core';
+import { DEFAULT_SAMPLING, logger } from '@alysia/core';
 import { LifeService } from '../life.js';
 // ★ 提示词资产在 ../prompts/life.ts（从本文件搬出，内容逐字未改）
 import {
@@ -61,6 +61,7 @@ export const lifeModule: Module = {
       generateEvent: async (context: string) => {
         // ★ 8-09：事件生成也吃最近对话上下文（贴合最近聊了什么）
         const dialogue = dialogueBlock();
+        const started = Date.now();
         const resp = await core.providerManager.textChatWithFallback({
           prompt: dialogue ? `${context}\n\n${dialogue}` : context,
           sessionId: 'life-event',
@@ -69,7 +70,27 @@ export const lifeModule: Module = {
           // ★ 8-10 采样槽：DEFAULT(0.9 偏高/活) + config.sampling.life.generateEvent 覆盖
           sampling: { ...DEFAULT_SAMPLING.life.generateEvent, ...(config.sampling?.life?.generateEvent ?? {}) },
         });
-        return resp.role === 'assistant' ? resp.completionText : '';
+
+        // ★ 2026-10-02（add-llm-budget-observability）
+        //   ① role==='err' 以前直接 `return ''` —— 网络故障/超时/HTTP 报错被压成空串，
+        //      上层只看到 "empty response"，**把排查方向指向"模型没输出"**。不再静默吞错。
+        if (resp.role !== 'assistant') {
+          logger.warn(
+            `[Life] event LLM call failed (${Date.now() - started}ms): ${resp.completionText || '(无错误文本)'}` +
+            ' → 会走模板回落，但根因是调用失败，不是模型没输出'
+          );
+          return '';
+        }
+
+        //   ② 每次调用留下一行预算现场：finish=length + content=0字 ⇒ 预算被推理吃光（KI-1 判据）
+        const u = resp.usage;
+        const text = resp.completionText ?? '';
+        logger.info(
+          `[Life] event LLM: finish=${resp.finishReason ?? '?'}` +
+          ` tokens=${u ? `${u.input}+${u.output}` : '?'} reasoning=${u?.reasoningTokens ?? '?'}` +
+          ` content=${text.length}字 (${Date.now() - started}ms)`
+        );
+        return text;
       },
 
       // ★ LLM 每日摘要：独立纯文本回调（不复用 generateEvent——其 systemPrompt 强制 JSON，

@@ -319,6 +319,31 @@ JSON 解析失败但文本非空 → 直接作为事件 content，type 与 JSON 
 systemPrompt 必须含 "json" 字样；json mode 与 funcTool 互斥；仅非流式调用生效。
 应用层容错（fence 剥离 + 裸文本兜底）保留作双保险。
 
+### ★ 事件生成链路日志契约（2026-10-02，change: add-llm-budget-observability）
+
+**背景**：`life.generateEvent` 槽**没有 `max_tokens`**（走服务端默认值，未知量），
+而 `CHAT_MODEL` 是推理模型——reasoning 与可见内容**共用同一预算**，这套机制
+已造成三次线上事故。要判定本槽是否也踩中，必须有观测；而此前**证据拿不到**：
+`finish_reason` / `reasoning_tokens` 没被解析，且 `role: 'err'` 被压成空串。
+
+**每次事件生成必须留下可区分的一行：**
+
+```
+[Life] event LLM: finish=<stop|length|…> tokens=<in>+<out> reasoning=<n|?> content=<N>字 (<Xms)
+```
+
+- `role === 'err'`（网络 / 60s 超时 / HTTP 非 2xx）→ **先 `logger.warn` 记下错误文本再返回空串**。
+  直接 `return ''` 会让上层只看到 `empty response`，把**网络故障伪装成「模型没输出」**。
+- `content=0字` + `finish=length` ⇒ **预算被推理吃光**（与 §6 已修的三个同源槽同形）。
+- `content=0字` + `finish=stop` ⇒ 不是预算问题，另查。
+- **回落模板的既有 warn 保留**（`[Life] LLM event generation failed, fallback to template: …`）——
+  上一行现在能解释它的原因，它不再有误导性。
+
+> **为什么必须成对**：本项目已三次栽在「失败与成功在日志里长得一样」
+> （占位符伪装成摘要 / 存活伪装成健康 / 空转伪装成归档）。
+> 这一次的变体是「**网络故障伪装成模型没输出**」。
+> 预算判定口径与观测契约见 `memory-system` spec §4.1.2。
+
 ---
 
 ## 7. 世界书关联（人设背景约束）

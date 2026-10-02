@@ -80,22 +80,46 @@ export class OpenAIProvider {
       const data = await response.json() as any;
       const choice = data.choices?.[0];
       const message = choice?.message;
+      // ★ 2026-10-02（add-llm-budget-observability）：finish_reason 与 reasoning_tokens。
+      //   CHAT_MODEL 是推理模型，reasoning 与可见内容**共用同一个 max_tokens 预算** ——
+      //   这个机制已造成三次线上事故（会话摘要 22 天 / 每日反思 11 次 / 画像提取 6 个月）。
+      //   `finish=length` + content 为空 = 预算被吃光，是唯一可靠的判定依据。
+      //   非推理模型 / 老响应不返回 completion_tokens_details → 降级 undefined，不报错。
+      const finishReason: string | undefined = choice?.finish_reason ?? undefined;
+      const reasoningTokens: number | undefined =
+        data.usage?.completion_tokens_details?.reasoning_tokens ?? undefined;
       const usage = data.usage ? {
         input: data.usage.prompt_tokens,
         output: data.usage.completion_tokens,
         total: data.usage.total_tokens,
+        ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
       } : undefined;
 
       // ★ 成功调用日志：耗时 + tokens + 回复/工具调用摘要
       const toolNames = message?.tool_calls?.map((tc: any) => tc.function?.name).filter(Boolean) ?? [];
+      const content = message?.content || '';
       logger.info(
-        `[LLM] ${model} → ${toolNames.length ? `tool_call: ${toolNames.join(',')}` : (message?.content || '').slice(0, 80).replace(/\n/g, ' ')}` +
-        ` tokens=${usage ? `${usage.input}+${usage.output}=${usage.total}` : '?'} (${Date.now() - start}ms)`
+        `[LLM] ${model} → ${toolNames.length ? `tool_call: ${toolNames.join(',')}` : content.slice(0, 80).replace(/\n/g, ' ')}` +
+        ` tokens=${usage ? `${usage.input}+${usage.output}=${usage.total}` : '?'}` +
+        ` finish=${finishReason ?? '?'} reasoning=${reasoningTokens ?? '?'} (${Date.now() - start}ms)`
       );
+
+      // ★ 空响应要单独可见（add-llm-budget-observability 契约 2）：
+      //   "没内容"和"预算被吃光"以前在日志里长得一样，而后者有完全不同的处置方式。
+      if (!toolNames.length && !content) {
+        logger.warn(
+          `[LLM] ${model} returned EMPTY content — finish=${finishReason ?? '?'}` +
+          ` tokens=${usage ? `${usage.input}+${usage.output}` : '?'} reasoning=${reasoningTokens ?? '?'}` +
+          (finishReason === 'length'
+            ? ' → max_tokens 预算耗尽（推理吃光），该槽位需要更大的 max_tokens'
+            : ' → 不是预算问题（finish≠length），需另查')
+        );
+      }
 
       return {
         role: 'assistant',
-        completionText: message?.content || '',
+        completionText: content,
+        finishReason,
         toolsCallName: toolNames,
         toolsCallArgs: message?.tool_calls?.map((tc: any) => {
           try { return JSON.parse(tc.function?.arguments || '{}'); } catch { return {}; }

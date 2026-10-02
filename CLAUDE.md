@@ -141,7 +141,10 @@ src/
    `server.ts` 的 `defaultDist`、`bootstrap.ts` 的 `IS_DESKTOP` 分支）
 6. **隐患**（`docs/KNOWN-ISSUES.md`）：KI-1 `life.generateEvent` 槽**没有 `max_tokens`**
    —— 与已爆三次（会话摘要 22 天 / 每日反思 11 次 / 画像提取 6 个月）的槽**同形**。
-   按项目方法论：**先写真 API 探针实测，再决定加不加**，别凭感觉填数字
+   ★ **2026-10-02 起观测手段已就绪**（`add-llm-budget-observability`）：
+   provider 的 `[LLM]` 行与 `[Life] event LLM` 行会打出 `finish=` / `reasoning=` / `content=N字`。
+   **下一步是采数据再决策**（`finish=length` + 空内容 ⇒ 加 `max_tokens`），
+   **不要再凭感觉填数字**
 7. **dsh 侧** `build-alysia-console-plugin` **进行中且上游已变**——原方案踩在已废弃的
    `.agent-presets` / `tapIndex` 上（dsh 桌面端换代了插件机制），需重新判断范围
 
