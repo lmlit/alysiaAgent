@@ -599,3 +599,27 @@ await memoryManager.ingest({
 +   聊天经 PERSONA_FILES 自动注入 system prompt;事件生成经 MemoryManager.getWorldviewBlock()
 +   取同一数据源（缓存读取）
 + - identity.md 跨世界段移入 worldview.md（去重）——改一处,聊天与事件生成同时生效
+
+---
+
+## 提示词资产位置（2026-10-01，change: externalize-life-prompts）
+
+`al:life` 的 5 段 systemPrompt 位于 **`packages/server/src/prompts/life.ts`**：
+
+| 常量 | 用途 | 输出 |
+|---|---|---|
+| `LIFE_EVENT_PROMPT` | 生活事件生成 | JSON（`responseFormat: 'json'`） |
+| `LIFE_SUMMARY_PROMPT` | 每日摘要 | 纯文本 |
+| `LIFE_INTENT_PROMPT` | 承诺裁决（fulfill/defer/cancel） | JSON |
+| `LIFE_MOOD_NOTE_PROMPT` | 情绪侧端氛围 | 纯文本 |
+| `LIFE_REFLECTION_PROMPT` | 每日反思（L3 自修改执行器） | JSON |
+
+**为什么不是 `.md` 资源文件**：多行提示词在原码里是无分隔符拼接（运行时 `：①`），
+放进 `.md` 会引入换行 → 内容变更，与「逐字搬运」冲突；且本项目无热改场景
+（改完仍要重新构建 + 部署 Docker），而外置会新增构建拷贝与运行时路径解析两类故障面
+（后者正是 `docs/dsh-migration-guide.md` 坑 #2 的同类坑）。
+完整判据见 `packages/server/src/prompts/README.md`。
+
+**守卫**：`packages/server/tests/prompts.test.ts` 锁住每段的关键约定
+（含「要 JSON 的槽位 prompt 必须含 json 字样」这条 API 硬约束）——
+提示词被静默清空或截断时不会有别的报错。

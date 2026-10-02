@@ -5,6 +5,8 @@
 AI Agent 桌面应用：聊天模式 + 编程模式，搭载"昔涟"人格和记忆系统。
 - 聊天模式：Live2D 角色 + 对话，AI 自行调整人格
 - 编程模式：类似 Claude Code，携带聊天模式积累的人格/记忆
+  - ★ 2026-10-02：**由 DeepSeek Harness（dsh）承接**（自建 Electron 壳 9-25 已砍）。
+    集成代码在 `packages/dsh-adapter`；定位与通道见 `openspec/specs/dsh-adapter/spec.md`。
 
 ## ★ 开发流程：OpenSpec（必读，最高优先）
 

@@ -169,6 +169,83 @@ getPersonaSnapshot(): {
 
 **Web 用途**: 人格可视化面板（雷达图/滑块）。数值范围 [-1, 1]。
 
+### 2.4.1 `GET /api/persona/prompt` — 人设文本（2026-10-01 新增）
+
+**Core 方法**: `MemoryManager.getCompactPersonaPrompt(sections = 4)` → `{ prompt: string }`
+
+「紧凑人设」= `getActiveSystemPrompt()` 的前 N 节（丢掉 worldbook 类的大段设定，
+实测 66 节全量约 15k 字符，只取 4 节约 6.4k）。
+
+**用途**: **dsh 侧动态人设的读通道**（change: connect-dsh-alysia-bridge）。
+
+★ 与聊天管线取**同一份文本**（同一方法）——各写各的会让她在 dsh 里和 QQ 里变成两个人。
+原先是 `llm-agent.ts` 的一句内联表达式，本次提取成 `MemoryManager` 公开方法。
+
+### 2.4.2 `POST /api/ingest` — 喂入外部会话事件（2026-10-01 新增）
+
+**Core 方法**: `MemoryManager.ingest(event)`
+
+```
+请求  { events: MemoryEvent[] }             单批 ≤ 200，超出 413
+响应  { ok: true, accepted: number, rejected: string[] }
+```
+
+**用途**: **dsh 记忆回传的写通道**（双进程模型：alysia server 是记忆的唯一写入者，
+dsh 插件只回传原始事件；提取 / 5 道护栏 / 事实去重 / supersede 冲突解决全在这边）。
+
+★ **只接受 `dsh:` 前缀的会话**——写接口不该能往 QQ / WebUI 会话里注入消息。
+前缀同时是**来源标记**（与 `webui:` / `qq-official-1:` 同一约定，
+故**未给 `EventSource` 加枚举值**，免得所有 switch 它的下游出现未覆盖分支）。
+
+★ `rejected` 里的原因是**具体到字段**的人话（如 `payload.role 必须是 user/assistant`）——
+静默丢弃会让回传方以为成功了。
+
+校验与归一化在 `packages/server/src/ingest.ts`（纯函数，可独立单测）。
+
+---
+
+### 2.4.3 角色导入的字段合并语义（2026-10-01 修正）
+
+**Core 方法**: `MemoryManager.importRole(pkg)` —— 对应 `POST /api/roles/import`
+
+★ **包未提供的字段不再被空默认值覆盖**（change: fix-role-import-wipes-persona）。
+
+原语义是「包没给就填空」——于是**只带 worldbook 的角色包**（线上那两个表情包包，
+`role` 同为 `'alysia'`）在每次启动把昔涟的整行 persona 冲掉，**包括人格核心 `system_prompt`**。
+`PersonaStore.get()` 会给空的 `tone`/`speech_style`/`emotional_range` 填回结构默认值，
+所以只有 `system_prompt` 露出「空」的表象，**实际整行都在被冲**。
+
+现语义：**包提供了就用包的；否则保留已有；都没有才落默认**。
+
+| 包字段 | 行为 |
+|---|---|
+| `system_prompt` 给了（含空串） | 覆盖 |
+| `system_prompt` 未给 | **保留原值** |
+| `persona.tone/speech_style/emotional_range/memory_config` 给了 | 覆盖 |
+| 同上未给 | **保留原值** |
+| 目标是新 role（无既有行） | 落默认值（原行为不变） |
+
+### 2.4.4 `POST /api/memory/read` — 记忆检索（2026-10-02 新增）
+
+**Core 方法**: `MemoryManager.read()` + `assembleWithWorldbook()`
+
+```
+请求  { query: string, mode?: 'chat'|'code', limit?: 1..20, sessionId?: string }
+响应  { context: string, retrieved: SearchResult[] }
+```
+
+**用途**: **dsh 记忆的读通道**（change: bridge-memory-read）——
+写通道（`/api/ingest`）负责把 dsh 的对话存进来，本接口负责让她**读得到**。
+
+★ `context` 由 server 端**与聊天管线同一套**组装（同函数），
+避免「dsh 里记起的」和「QQ 里记起的」不一致（同 `getCompactPersonaPrompt` 的教训）。
+
+★ **空 `query` 也照常返回**：`[关于你]` / `[你的偏好]` / `[关于你的事实]` 等块
+**不依赖 query**（直接读 store）。dsh 侧挂载预热正靠这一点——否则第一轮会一片空白
+（dsh 的 prompt provider 是**同步**的，等不到异步检索）。
+
+★ 用 POST 而非 GET：`query` 是用户原话，可能很长，且不该进 URL/日志历史。
+
 ---
 
 ## 2.5 角色系统（2026-08-02 已封装）

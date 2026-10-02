@@ -43,6 +43,12 @@
 
 - 插件在 preset 内挂载 → scoped 监听天然只收本 agent 事件
 - 二期:写操作走 server `POST /api/ingest` 代写(WAL 一写多读,避免双写 SQLITE_BUSY)
+  - ✅ **2026-10-01：server 端通道已落地**（change: connect-dsh-alysia-bridge）——
+    `POST /api/ingest`（**只接受 `dsh:` 前缀的会话**，前缀同时是来源标记）、
+    读通道 `GET /api/persona/prompt`；会话结算复用现成的
+    `POST /api/sessions/:id/extract`（= `sessionEndProcessor.process()`）。
+    ⚠️ **dsh 插件侧的接入尚未做**——目前只有通道，没有回传方，
+    本表描述的三个钩子仍只打日志。
 
 ### 2.6 Agent preset(聊天/编程双模式)
 

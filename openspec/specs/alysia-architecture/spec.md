@@ -16,7 +16,24 @@ migrated: 2026-08-07
 
 ### 1.1 定位
 
-Alysia 从"桌面 AI Agent"重新定位为**有记忆、有人格的 AI 伴侣**。砍掉 Coding/编程模式，聚焦聊天体验。
+Alysia 从"桌面 AI Agent"重新定位为**有记忆、有人格的 AI 伴侣**。砍掉**自建**的 Coding/编程模式，聚焦聊天体验。
+
+> ★ 2026-10-02（change: record-dsh-as-coding-mode）：**编程模式以另一个载体回来了** ——
+> **DeepSeek Harness（dsh）**。
+>
+> 当时的决定（不做自己的 Electron 壳）仍然成立；变的是承接方：
+> dsh 提供 agent 循环/工具/沙箱，我们的 bundle 提供**人格与记忆**，
+> 于是「编程模式携带聊天积累的人格/记忆」这条原始设计真正兑现：
+>
+> | 原设计 | 由谁提供 |
+> |---|---|
+> | 携带人格 | `GET /api/persona/prompt`（动态人设，QQ 那边的人格演化会反映过来） |
+> | 携带记忆 | `POST /api/memory/read`（能召回 QQ 历史 + 画像） |
+> | 新积累回流 | `POST /api/ingest`（dsh 对话进**同一个**记忆库）+ 会话结算 |
+>
+> 回传事件的 `source` 用**已有的** `'code'`（不是 `'chat'`）——
+> `RealtimeProcessor` 会按它分流世界书的 scope，标错会让 chat-scope 条目误触发。
+> 语义上 `'code'` 指**来源环境**（dsh 是编程环境），不是话题分类。
 
 架构上借鉴 AstrBot 的 Platform 抽象 + Pipeline 洋葱模型 + EventBus，用 TypeScript monorepo 实现一套核心逻辑驱动多个端（服务端 IM 适配器、Web 前端、dsh 插件）。
 （原文为"服务端、桌面端"——★ 9-25 Electron 桌面端已砍，见 `webui-system` §8）
@@ -136,6 +153,15 @@ alysia/
 - Pipeline Stage 作为薄包装层调用 MemoryManager
 - 130 个现有测试全部保留，新增 Pipeline/Agent 测试
 - Stage 接口设计时预留细粒度拆分扩展点
+  - ★ 2026-10-01：「细粒度拆分扩展点」落在 **`module-kernel`**（见 `specs/module-kernel/spec.md`）。
+    内核只做拓扑排序/安装/逆序卸载。
+  - ✅ 2026-10-01：`AlysiaCore.start()` 已改成「注册 13 个模块 + 跑 `ModuleHost`」
+    （change: modularize-core-assembly），**公开面逐字不变**。
+    模块定义在 `packages/core/src/modules/`（P2 会拆到 `modules/<name>/`）。
+    新增两个入口文件：`src/kernel/`（装载内核）、`src/options.ts`（构造选项，
+    从 `index.ts` 抽出以解 `modules/` 的循环依赖）。
+  - server 侧的 `bootstrap.ts` 仍是总装脚本 → P3 范围。
+    背景与 dsh 迁移路径见 `docs/dsh-plugin-architecture.md`。
 
 ---
 

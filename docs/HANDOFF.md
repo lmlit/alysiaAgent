@@ -2,6 +2,7 @@
 
 > 给下一个会话：**先读本文件**恢复上下文，再读 `openspec/specs/index.md` 看 spec 全貌。
 > 治理流程见 `openspec/project.md`；部署凭据见 `docs/Docker-Deployment.md`（永不提交）。
+> 已知但暂未修的缺陷见 `docs/KNOWN-ISSUES.md`（triage 入口，非 spec）。
 >
 > 本文件只写「现在什么状态 + 下一步做什么 + 别踩什么」。
 > 每个改动的**实现细节在对应的 `openspec/changes/<name>/`**（已提交，可查）。
@@ -23,7 +24,175 @@
 
 **新前端 `packages/console` 已上线**（真数据 / 聊天流式 / Live2D / 同源托管）。
 
-工作区干净，`master` @ `9af6de3`。**715 测试全过**（core 523 + server 192）。
+**模块化拆解已开工**（2026-10-01）：P1 完成（内核 + `AlysiaCore` 模块化），详见下一节。
+另修掉一个**静默停摆 6 个月**的画像提取故障。
+`master` @ `7278204`。**常规 820 全过**（不含 E2E）；E2E（真 API）**5/5 全过**。
+
+---
+
+## 🔧 2026-10-01 起：模块化拆解（进行中）
+
+**背景**：dsh 出了桌面端并换代了插件机制，alysia 现有的两处 dsh 集成**全部失效**
+（`.agent-presets/` 已废弃、persona section 改名 `deployment:persona-prefix`、
+桌面端 `tapIndex` 不执行、desktop profile 根本不加载 web profile 的插件）。
+用户拍板：**先在 alysia 内部把主 agent 拆成可插拔模块（a），再包装成 dsh 插件（b）**。
+
+- **设计文档**：`docs/dsh-plugin-architecture.md`（dsh 插件原理 + 硬约束 + 拆解设计 + 模块清单）
+- **回滚点**：tag `pre-modularize`（已打）
+- **spec**：`openspec/specs/module-kernel/spec.md`
+- **测试基线**：**818**（core 566 + server 192 + 其它包）
+
+| 期 | 内容 | 状态 |
+|---|---|---|
+| P0 | 建 `core/src/kernel/`（Module 契约 + ModuleHost） | ✅ 完成（`add-module-kernel`） |
+| — | 删掉依据错误的 `peer` 机制 | ✅ 完成（`drop-kernel-peer`） |
+| P1 | `AlysiaCore.start()` 改成「注册 13 个模块 + 跑 host」，公开面逐字不变 | ✅ 完成（`modularize-core-assembly`） |
+| — | 修画像提取静默停摆（4 个缺陷，见上节） | ✅ 完成（`fix-profile-extract-empty-response`） |
+| P2 | 13 个模块各补单测（28 用例） | ✅ 完成（`add-module-tests`） |
+| P3 | server 侧 `bootstrap.ts` 拆成 **10 个模块**（config/logging/core/vision/adapters/proactive/life/reminder/cron/webui）+ 抽 `PushChannel` | ✅ 完成（`modularize-server-assembly`） |
+| P4 | 提示词资产搬到 `src/prompts/`（**有意不做 `.md`**，判据见 `prompts/README.md`）+ 7 条守卫 | ✅ 完成（`externalize-life-prompts`） |
+| 二期-a | dsh bundle 化：`dsh.bundle.patch` + 昔涟 preset 声明（**派生自 standard**，保住工具集）+ 人设走 `{{alysia_persona}}` 变量可切换 | ✅ 完成 |
+| 二期-b | 双进程通道（alysia server 侧）：`POST /api/ingest`（写）+ `GET /api/persona/prompt`（读） | ✅ 完成（`connect-dsh-alysia-bridge`） |
+| 二期-c | dsh 插件侧接入：人格缓存刷新 + 对话回传 + 会话结束触发结算 | ✅ 完成 |
+| — | 修 `importRole` 清空人设（见下节，线上 bug） | ✅ 完成（`fix-role-import-wipes-persona`） |
+| — | **记忆读通道**（用户报「记忆没继承」，查出读通道从来没接） | ✅ 完成（`bridge-memory-read`） |
+
+### ★ 2026-10-02：记忆读通道补齐 + 一个测试配置遗漏
+
+**用户报「记忆没有继承」**。排查结论：**不是坏了，是读通道从来没接**——
+`alysia:memory` context provider 和 `recall_memory` 工具**两条都还是 2026-08-25 的 MVP stub**。
+写通道反倒是好的（`dsh:session-*` 19 + 7 条已入库）。
+
+补齐：server 端 `POST /api/memory/read`（与聊天管线**同一套组装**）+
+插件端「缓存 + **挂载预热**」+ `recall_memory` 真工具。
+
+⚠️ **dsh 的 prompt provider 是同步的**（`assemble()` 虽 async 但 provider 调用点无 await），
+所以记忆只能给缓存——**预热**让第一轮就有 `[关于你]` 那份画像，
+查询相关的 `[相关记忆]` 慢一拍（要即时的让她调 `recall_memory`）。
+
+### ★ 2026-10-02：**编程模式回来了，由 dsh 承接**
+
+`CLAUDE.md` 的原始定位是「聊天 + 编程双模式，编程模式携带聊天积累的人格/记忆」；
+但 `alysia-architecture` 记的是「砍掉编程模式」——因为自建 Electron 壳 9-25 砍了，
+**编程模式一直空着**。
+
+现在四项都对上了（人格 / 记忆 / 新积累回流 / 对标 Claude Code 的工具集），
+**只是载体换成了 dsh**。已写进 `alysia-architecture` §1.1 与 `CLAUDE.md`
+（change: record-dsh-as-coding-mode）。
+
+**顺带修了一个真实缺陷**：dsh 回传的 `source` 标成了 `'chat'`，
+而 `EventSource` **本来就有 `'code'`**，且 `RealtimeProcessor:41` 已按它分流：
+
+```ts
+const mode = event.source === 'code' ? 'code' : 'chat';
+await this.worldbookMatcher.match(text, mode);
+```
+
+→ 在 dsh 里干活的对话**按闲聊的 scope 匹配世界书**（`chat` 条目误触发、`code` 条目匹配不到）。
+已改为 `'code'`。语义上 `'code'` 指**来源环境**（dsh 是编程环境），不是话题分类。
+
+**2026-10-02 preset 改名**：我们的 preset 从「昔涟」改为**「昔涟 · 标准」**
+（id `alysia` → `alysia-standard`，Loader 行 `preset-alysia` → `preset-alysia-standard`），
+并成文命名约定 `preset-alysia-<模式>` / `alysia-<模式>` / `昔涟 · <模式>`——
+为了后续能加「昔涟 · PTC」「昔涟 · Cordis」而不混淆（用户拍板方案 a：与出厂模式并存）。
+
+⚠️ **改 id 的副作用**：此前用 `alysia` 开的会话会引用一个已不存在的 preset。
+都是测试会话，重启桌面端后重新选一次即可。
+
+**顺带发现一个测试配置遗漏**：根 `vitest.config.ts` 的 `projects` 只有 core/server/console，
+**`dsh-adapter` / `dsh-console` 从来不跑**——本会话此前报的所有「全仓 N 全绿」
+都**不含**它们。已补上，**真正全仓 = 958**（不是 889）。
+
+### ★★ 2026-10-01 修复：她的**人格核心从未进入 system prompt**
+
+排查 dsh 读通道为什么返回 0 字时挖出来的——**读通道没坏，是数据本来就是空的**。
+
+```
+启动顺序：seedPersona()（写入 soul.md 36KB 人设）
+       → loadRolePackages()（导入 stickers*.json，role 都是 'alysia'）
+       → upsertRole 整行 UPDATE，包没提供的字段填空默认 → system_prompt 被清成 ''
+```
+
+`PersonaStore.get()` 会给空的 `tone`/`speech_style`/`emotional_range` 自动填回**结构默认值**
+（所以它们看着是好的，其实是默认参数）；`system_prompt` 没有兜底，**只有它露馅**。
+
+**与迁移指南坑 #7 同族**：那次修的是「`DELETE WHERE role=?` 误删世界书」，persona 这半没修。
+
+修复后实测：`system_prompt` 0 → **36351 字**；`GET /api/persona/prompt` 0 → **6375 字**。
+
+⚠️ **注意行为变化**：人设核心（紧凑形式 ~6.4KB）**第一次真正进入 system prompt**。
+她此前靠世界书（101 条背景设定）撑角色感，现在人设也在场——**回复风格可能有可见变化**，
+且每轮多 ~6.4KB context。观察几天再决定要不要调 `getCompactPersonaPrompt(n)` 的节数。
+
+### ★ 二期-b 的关键发现（省下重做）
+
+- **会话结算不用新建**：`POST /api/sessions/:id/extract` **就是**
+  `sessionEndProcessor.process()`（摘要 + 画像 + 人格确认 + 固化）。
+- **来源标记用 session 前缀**（`dsh:…`），**不给 `EventSource` 加枚举值**——
+  加了会让所有 switch 它的下游出现未覆盖分支。
+- **`/api/ingest` 只收 `dsh:` 前缀**：写接口不该能往 QQ/WebUI 会话注入消息。
+- 通道已用**隔离 dataDir** 真启动验证过（**没写进生产库**）：
+  读通道 4 节/6375 字，写通道事件真的落库（`dsh:sess-smoke` 3 条）。
+
+### ✅ 已修复：画像提取长期静默停摆（2026-10-01，change: fix-profile-extract-empty-response）
+
+`cron.test.ts` 曾是既有失败（`expected '{}' not to be '{}'`）。系统排查后挖出 **4 个独立缺陷**：
+
+| # | 缺陷 |
+|---|---|
+| A | `profile.extract.max_tokens: 1024` 对推理模型太小 —— 9-25 修 `session.summary`（512→2048）时**漏掉的同源槽位** |
+| B | `ProfileExtractor` 裸 `catch {}`（该文件连 logger 都没 import） |
+| C | `CronProcessor.deepProfile` 裸 `catch {}` |
+| D | `OpenAILLMService.complete` **只声明两个形参**，静默丢弃 `ILLMService` 约定的第三参 `sampling` —— 整套分槽机制对该实现失效 |
+| E | `MemoryManager.sampling` 缺省 `undefined` → 所有场景塌成同一个槽 |
+
+**后果**：用户说过的所有事实（城市/职业/技术栈/习惯）从未进入画像，
+`PromptAssembler` 的 `[关于你]` 段永远为空——**她其实不认识你**。
+
+修复后 `basics` 产出真实画像，`facts` 0 → 7，E2E **5/5 全过**。
+契约已固化进 `openspec/specs/memory-system/spec.md` §4.1.1（4 条），并有测试守卫。
+
+⚠️ **历史数据未回填**：线上 `basics`/`facts` 仍是长期空/稀疏的，
+本修复只保证从此往后正常。要不要回填需单独评估（重跑历史 `onSessionEnd`）。
+
+**跑 E2E**（要真 API，花真钱）：
+
+```bash
+cd packages/core
+set -a && source <(tr -d '\r' < ../../.env) && set +a
+export PATH="/e/nodejs24:$PATH"
+npx vitest run tests/memory/e2e          # 现在 5 passed / 4 files
+```
+
+### ⚠️ 已知取舍：`stop()` 不关 SQLite / LanceDB
+
+`core.stop()` 只停 EventBus，不关 DB 句柄——所以 Windows 上临时目录删不掉（EPERM）。
+这是**重构前后一致**的现有行为（P1 刻意没改，见 change proposal 决策 2）。
+修复归独立 change `unify-core-shutdown`。
+
+### ★ P0/P1 的核心教训（别重蹈）
+
+1. **「全绿」不等于「有覆盖」**——`AlysiaCore` 此前**没有任何测试**，`start()` 是测试盲区。
+   动手前先补了冒烟测试并在**未改动的代码**上验证它绿，才是真安全网。
+2. **「我觉得有环」必须先读代码验证**——`peer` 机制的整个依据（Coalescer ↔ EventBus 双向依赖）
+   是我推断的，实际 `EventBus.ts` 全文不引用 Coalescer。已删，见 `drop-kernel-peer`。
+3. **最危险的重构破坏是不报错的那些**——`al:pipeline` 里 Coalescer 必须是**同一个实例**
+   （既在 `PipelineContext` 又在 stage 列表）。拆成两个后管线照跑，只是打断永久失效。
+   已加断言守住（`tests/index.smoke.test.ts`）。
+
+⚠️ **跑测试必须换 node**：PATH 里的 node 是 v20，better-sqlite3 ABI 不匹配会满屏失败
+（看起来像代码坏了，实际不是）。用 `/e/nodejs24/node`（v24.19.0）：
+
+```bash
+export PATH="/e/nodejs24:$PATH" && npx vitest run --exclude='tests/memory/e2e/*'
+```
+
+⚠️ **P1 是风险点**：改 `AlysiaCore.start()` 时行为必须逐位一致。验收基线见
+`openspec/specs/module-kernel/spec.md` §5——尤其 **`bootstrap.ts:246` 覆盖 `index.ts:305`
+的 reminder 工具**这个隐性行为（`ToolRegistry` 的 Map 同名覆盖），迁移时不能丢。
+
+⚠️ **peer 的代价**：互相 peer 的模块同期安装，**单元内 inject 不校验**，
+必须延迟接线（`ctx.on/emit` 握手或使用时再 `ctx.get`）。Coalescer ↔ EventBus 就是这个形状。
 
 ---
 
