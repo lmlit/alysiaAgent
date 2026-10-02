@@ -116,6 +116,10 @@ src/
   git config --global --unset http.proxy
   git config --global --unset https.proxy
   ```
+- **★ 提交前敏感扫描（pre-commit hook，2026-10-03 立）**：本仓 **PUBLIC**，同类泄露事故
+  已发生两次（8-09 `git add -A` 带进内部 SOP、8-28 密码明文进脚本暴露 28 天），两次都是人工审查漏的。
+  安装（每 clone 一次，本地配置不随仓库走）：`git config core.hooksPath scripts/git-hooks`；
+  详见 `scripts/git-hooks/README.md`。本地敏感词表在 `.git/alysia-secret-patterns`（不公开）。
 
 ### Skills 仓库
 - `https://github.com/lmlit/my-claude-skills` (公开)

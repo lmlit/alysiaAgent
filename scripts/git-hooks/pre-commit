@@ -1,0 +1,83 @@
+#!/bin/sh
+# alysiaAgent pre-commit —— 敏感信息扫描（2026-10-03 立）
+#
+# 为什么有它：本仓是 **PUBLIC** 仓库，同类事故已发生两次——
+#   8-09 `git add -A` 把内部 SOP（含服务器密码明文）带进公开仓库；
+#   8-28 又把密码明文写进 sync-from-server.sh，暴露 28 天。
+#   两次都是"提交前人工审查"漏掉的 ⇒ 交给机器。
+#
+# 扫什么（只扫**新增行**，含新增文件全文；不回头扫存量内容）：
+#   ① 内置通用模式（本文件）——公开可见，因此**不含任何真实值**
+#   ② 本地模式文件 `<repo>/.git/alysia-secret-patterns`
+#      一行一条 ERE。服务器地址/账号/appid 这类"不该写进公开脚本"的词写在那里；
+#      它在 .git 内，**永远不会被 git 跟踪**。
+#
+# 误报处理：`git commit --no-verify` 可跳过——跳过前请真的看一眼那行。
+# 安装：`git config core.hooksPath scripts/git-hooks`（每个 clone 需各做一次）。
+set -u
+
+REPO="$(git rev-parse --show-toplevel 2>/dev/null || echo .)"
+LOCAL_PATTERNS="$REPO/.git/alysia-secret-patterns"
+TMP="$(mktemp)"
+trap 'rm -f "$TMP"' EXIT
+
+# 收集新增行 → file:line:content（排除本目录自身：扫描器源码含模式文本，必然自伤）
+git diff --cached --no-color --text -U0 --diff-filter=ACM -- ':(exclude)scripts/git-hooks' | awk '
+  /^\+\+\+ b\// { file = substr($0, 7); next }
+  /^@@/ {
+    if (match($0, /\+[0-9]+/)) { ln = substr($0, RSTART+1, RLENGTH-1) + 0 }
+    next
+  }
+  /^\+/ && !/^\+\+\+/ { print file ":" ln ":" substr($0, 2); ln++; next }
+' > "$TMP"
+
+[ -s "$TMP" ] || exit 0
+
+# ── ① 内置通用模式 ────────────────────────────────────────────
+# 私钥头拆开拼：整体字面量会让本文件自己被扫出来
+BEGIN_MARK='-----BEGIN'
+GENERIC="$BEGIN_MARK [A-Z ]*PRIVATE KEY-----"
+GENERIC="$GENERIC|sk-[A-Za-z0-9]{20,}"
+GENERIC="$GENERIC|ghp_[A-Za-z0-9]{20,}"
+GENERIC="$GENERIC|github_pat_[A-Za-z0-9_]{20,}"
+GENERIC="$GENERIC|xox[baprs]-[A-Za-z0-9-]{12,}"
+GENERIC="$GENERIC|AKIA[0-9A-Z]{16}"
+# 赋值型：值必须是"像密钥的东西"——12+ 个 [A-Za-z0-9+/=_-]，
+# 不含点/美元/引号 ⇒ 天然放过 config.server.x / process.env.X / "${VAR}"
+GENERIC="$GENERIC|(password|passwd|passphrase|SUDO_PASS|secret|appsecret|api[_-]?key|access[_-]?token)[[:space:]]*[:=][[:space:]]*[\"']?[A-Za-z0-9+/=_-]{12,}"
+
+# ── ② 本地模式 ────────────────────────────────────────────────
+LOCAL=''
+if [ -f "$LOCAL_PATTERNS" ]; then
+  LOCAL="$(grep -vE '^[[:space:]]*(#|$)' "$LOCAL_PATTERNS" | paste -sd'|' -)"
+fi
+PAT="$GENERIC"
+[ -n "$LOCAL" ] && PAT="$GENERIC|$LOCAL"
+
+# -e：模式以 `-----BEGIN` 开头，不加 -e 会被 grep 当成选项（自测抓到过一次）
+HITS="$(grep -E -e "$PAT" "$TMP" || true)"
+if [ -n "$HITS" ]; then
+  # 过滤引用/占位/空值：${VAR}  $VAR  process.env  import.meta  <占位符>  ''  null
+  HITS="$(printf '%s\n' "$HITS" | grep -vE -e '\$\{?[A-Za-z_]|process\.env|import\.meta|<[^>]*>|["'"'"']{2}|:[[:space:]]*(null|undefined|true|false)[[:space:]]*[,}]?[[:space:]]*$' || true)"
+fi
+
+if [ -n "$HITS" ]; then
+  {
+    echo ""
+    echo "✗ pre-commit 拦截：暂存内容疑似含敏感信息（值已打码）"
+    echo ""
+    printf '%s\n' "$HITS" | awk -F: '{
+      c = ""; for (i = 3; i <= NF; i++) c = c (i > 3 ? ":" : "") $i
+      gsub(/[A-Za-z0-9+\/=_-]{12,}/, "***MASKED***", c)
+      print "  " $1 ":" $2 ": " c
+    }' | head -20
+    echo ""
+    echo "  处理：① 改成占位符，或从环境变量 / 凭据文件读（推荐）"
+    echo "        ② 确属误报 → git commit --no-verify（跳过前再看一眼那行）"
+    echo "  本地模式文件（写「不该公开的词」）：$LOCAL_PATTERNS"
+    echo ""
+  } >&2
+  exit 1
+fi
+
+exit 0
