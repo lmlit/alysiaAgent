@@ -9,6 +9,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { dirname } from 'path';
 import { logger, parseLLMJson } from '@alysia/core';
 import { formatLocalTime, localDateKey, localDateKeyFromISO } from '@alysia/core/memory';
+import type { PushChannel } from './push.js';
 
 export interface LifeOpts {
   ownerOpenid: string;
@@ -71,7 +72,7 @@ export class LifeService {
 
   constructor(
     private memoryManager: any,
-    private qqOff: any,
+    private qqOff: PushChannel,
     private opts: LifeOpts,
   ) {
     this.loadState();

@@ -8,7 +8,7 @@
  */
 import { readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { dirname } from 'path';
-import type { QQOfficialAgentAdapter } from './adapters/qq-official.js';
+import type { PushChannel } from './push.js';
 import type { MemoryManager } from '@alysia/core/memory';
 import { localDateKey, localDateKeyFromISO } from '@alysia/core/memory';
 import { logger } from '@alysia/core';
@@ -132,7 +132,7 @@ export class ProactiveService {
   private greetingInFlight = new Set<string>();
 
   constructor(
-    private qqOff: QQOfficialAgentAdapter,
+    private qqOff: PushChannel,
     private memoryManager: MemoryManager,
     private opts: ProactiveOptions,
   ) {

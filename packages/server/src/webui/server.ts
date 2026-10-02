@@ -9,6 +9,8 @@
  *   GET  /api/sessions            — 会话列表
  *   GET  /api/profile             — 画像快照
  *   GET  /api/persona             — 人格状态
+ *   GET  /api/persona/prompt      — 人设文本（紧凑形式；dsh 动态人设的读通道）
+ *   POST /api/ingest              — 喂入外部会话事件（仅 dsh: 前缀；dsh 记忆回传的写通道）
  *   GET  /api/stats               — Token 用量（全局 + 分会话）
  *   GET  /api/roles               — 角色列表
  *   GET  /api/roles/active        — 当前激活角色摘要
@@ -32,6 +34,8 @@ import Fastify from 'fastify';
 import type { AlysiaCore } from '@alysia/core';
 import { logger } from '@alysia/core';
 import { registerChatRoutes } from './chat.js';
+import { MAX_INGEST_BATCH, validateIngestEvent, normalizeIngestEvent } from '../ingest.js';
+import type { MemoryEvent } from '@alysia/core/memory';
 import { existsSync, readFileSync, statSync, writeFileSync, unlinkSync } from 'fs';
 import { basename, dirname, join, resolve, sep } from 'path';
 import { fileURLToPath } from 'url';
@@ -222,11 +226,110 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
     return result;
   });
 
+  /**
+   * 喂入外部会话事件 —— dsh 记忆回传的**写通道**。
+   *
+   * ★ 双进程模型（`openspec/specs/dsh-adapter/spec.md` §2）：alysia server 是记忆的
+   *   **唯一写入者**；dsh 插件只回传原始事件，提取 / 5 道护栏 / 事实归一化去重 /
+   *   supersede 冲突解决**全在这边**做。dsh 侧直接写库会触发 SQLITE_BUSY。
+   *
+   * ★ 只接受 `dsh:` 前缀的会话：写接口不该能往 QQ / WebUI 会话里注入消息。
+   *   前缀同时是**来源标记**（与 `webui:` / `qq-official-1:` 同一约定）。
+   *   change: connect-dsh-alysia-bridge
+   */
+  app.post('/api/ingest', async (req, reply) => {
+    const body = req.body as { events?: unknown } | undefined;
+    const events = body?.events;
+    if (!Array.isArray(events) || events.length === 0) {
+      return reply.code(400).send({ ok: false, error: 'events 必须是非空数组' });
+    }
+    if (events.length > MAX_INGEST_BATCH) {
+      return reply.code(413).send({ ok: false, error: `单批最多 ${MAX_INGEST_BATCH} 条` });
+    }
+
+    let accepted = 0;
+    const rejected: string[] = [];
+    for (const raw of events) {
+      const problem = validateIngestEvent(raw);
+      if (problem) {
+        rejected.push(problem);
+        continue;
+      }
+      try {
+        await core.memoryManager.ingest(normalizeIngestEvent(raw as MemoryEvent));
+        accepted++;
+      } catch (err: any) {
+        // 单条失败不拖垮整批（重复 id / 落库异常都归这里）
+        rejected.push(`${(raw as MemoryEvent).id}: ${err?.message ?? err}`);
+      }
+    }
+
+    // ★ **成功也要记**：这条链路跨进程，只在失败时吭声的话，
+    //   「dsh 根本没调用」和「调用了但全被拒」在日志里长得一模一样
+    //   （本项目反复栽的那类「静默掩盖」）。记来源会话，便于定位是哪次会话。
+    const from = (events[0] as MemoryEvent | undefined)?.session_id ?? '?';
+    if (rejected.length > 0) {
+      logger.warn(`[ingest] ${accepted} 条入库，${rejected.length} 条拒收（${from}）：${rejected.slice(0, 3).join(' | ')}`);
+    } else {
+      logger.info(`[ingest] ${accepted} 条入库（${from}）`);
+    }
+    return { ok: true, accepted, rejected };
+  });
+
+  /**
+   * 记忆检索 —— dsh 记忆回传的**读通道**（change: bridge-memory-read）。
+   *
+   * ★ 与聊天管线**同一套组装**（`read()` + `assembleWithWorldbook()`）：
+   *   各写各的会让她在 dsh 里和 QQ 里记起不同的东西
+   *   （同 `getCompactPersonaPrompt` 的教训——「人设/记忆文本长什么样」只能有一处定义）。
+   *
+   * 用 POST 而非 GET：query 是用户原话，可能很长，且不该进 URL/日志历史。
+   */
+  app.post('/api/memory/read', async (req) => {
+    const body = req.body as
+      | { query?: unknown; mode?: unknown; limit?: unknown; sessionId?: unknown }
+      | undefined;
+
+    const query = typeof body?.query === 'string' ? body.query : '';
+    const mode = body?.mode === 'code' ? 'code' : 'chat';
+    const rawLimit = typeof body?.limit === 'number' && Number.isFinite(body.limit) ? body.limit : 5;
+    const limit = Math.min(Math.max(1, Math.trunc(rawLimit)), 20);
+    const sessionId = typeof body?.sessionId === 'string' && body.sessionId ? body.sessionId : undefined;
+
+    // ★ 空 query 也照常返回：`[关于你]`/`[你的偏好]`/`[关于你的事实]` 等块
+    //   **不依赖 query**（直接读 store）。dsh 侧挂载预热正是靠这一点，
+    //   否则第一轮会是一片空白（provider 同步，等不到异步检索）。
+    const read = await core.memoryManager.read({ query, mode, limit });
+    const context = await core.memoryManager.assembleWithWorldbook(
+      mode, read.worldbook_triggers, read.retrieved, sessionId,
+    );
+
+    logger.info(
+      `[memory/read] query=${JSON.stringify(query.slice(0, 24))} → 召回 ${read.retrieved.length} 条 / worldbook ${read.worldbook_triggers.length} 条 / context ${context.length} 字`,
+    );
+    return { context, retrieved: read.retrieved };
+  });
+
   // ── 画像 ──────────────────────────────────────────
   app.get('/api/profile', async () => core.memoryManager.getProfileSnapshot());
 
   // ── 人格 ──────────────────────────────────────────
   app.get('/api/persona', async () => core.memoryManager.getPersonaSnapshot());
+
+  /**
+   * 人设文本（紧凑形式）—— dsh 侧动态人设的读通道。
+   *
+   * ★ 与聊天管线**同一份文本**（`MemoryManager.getCompactPersonaPrompt()`）：
+   *   各写各的会让她在 dsh 里和 QQ 里变成两个人。
+   *   change: connect-dsh-alysia-bridge
+   */
+  app.get('/api/persona/prompt', async () => {
+    const prompt = core.memoryManager.getCompactPersonaPrompt();
+    // ★ 记一行：这条链路是跨进程的（dsh 插件 → 这里），出问题时
+    //   「没人调用」和「调用了但返回不对」必须能分开——否则只能干瞪眼。
+    logger.info(`[persona/prompt] 提供人设 ${prompt.length} 字`);
+    return { prompt };
+  });
 
   app.post('/api/persona/adjust', async (req) => {
     const { param, delta, reason } = req.body as { param: string; delta: number; reason?: string };
