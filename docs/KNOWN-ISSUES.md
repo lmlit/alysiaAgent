@@ -423,6 +423,118 @@
 
 ---
 
+## 🟠 2026-10-11 第二轮 CR（dsh 桥接 + PersonaStore）
+
+> 来源：业务负责人逐条点出的 5 项。**已逐条对代码核验**，结论见每条开头。
+> 4 条成立（其中 1 条当前不可达、1 条触发未证实），1 条是 8-29 CR 的同一条。
+
+### KI-22 🟡 `PersonaStore.upsertRole` 激活新角色时**不清旧主动行**（写侧会同步改两行）
+
+> **核验结论：代码属实，但当前「不可达持久双激活」** —— 见下面的「为什么现在没爆」。
+
+- **现象（代码属实）**：`upsertRole` 用
+  `is_active = CASE WHEN ? = 1 THEN 1 ELSE is_active END`（`PersonaStore.ts:108`，
+  INSERT 分支 `:119` 同理）——**只置位不清别人**。而同文件 `setActive`（`:73-82`）
+  写对了：事务内先 `SET is_active = 0 WHERE is_active = 1` 再置位。
+- **★ 写侧放大（本轮新增观察，8-29 CR #19 没写这一面）**：8 个写点
+  （`:144/154/162/170/180/204/222/231`）是 `UPDATE persona … WHERE is_active = 1`
+  **无 `LIMIT 1`** → 双激活时**两行一起被改**；而 `get()`（`:61`）是
+  `SELECT * FROM persona WHERE is_active = 1 LIMIT 1` **且无 `ORDER BY`** → 只读其中
+  **不确定哪一行**。所以不是「读旧了」，而是**读与写分叉且不可预测**：
+  人格演化（tone/hints/overlay/memory_config）会同时写进两个角色，读却只认一个。
+- **为什么现在没爆**：`upsertRole` 全仓**只有一个调用方**——`MemoryManager.importRole`
+  （`:1533`），而它在**同一个函数里、约 50 行后**（`:1587`）紧跟
+  `if (pkg.activate) setActive(pkg.role)`，且**中间全是同步代码**（worldbook 的
+  digest 读 / delete / insert，无 `await`）→ 双激活窗口**在同一 tick 内被修好，外部观测不到**。
+  ⚠️ 这个「修好」靠的是**调用顺序**，不是任何不变量——`PersonaStore` 本身不保证它。
+- **影响**：属**潜伏的 API 契约缺陷**（该方法本身的契约不安全），
+  不是正在发生的 bug。风险来源是**下一个调用方**：任何新增的 `upsertRole(...is_active:true)`
+  调用点都会真的留下双激活行，而那时症状是「人格改了没生效 / 随机漂移」，很难查。
+- **建议方向**：把 `upsertRole` 的激活走 `setActive` 的语义（同事务先清后置），
+  并给 `get()` 加 `ORDER BY id`（消掉不确定性）。**顺带**核一遍 8 个写点要不要 `LIMIT 1`
+  ——更稳的做法是双激活在写入侧就不可能产生，读侧加 `ORDER BY` 只是兜底。
+- **登记重复说明**：本项与 `docs/CODE_REVIEW_FIX_PLAN-2026-08-29.md` **#19** 是同一条
+  （同位置、同描述）。#19 的状态表记 ☐，但**该表整体已过期**（P0-1/P0-2 早已修复归档）。
+
+### KI-23 🟠 dsh 拿不到 `session.id` 时退化成 `dsh:unknown`，**多个真实会话挤进同一个桶**
+
+> **核验结论：成立，无任何守卫。**
+
+- **现象**：`session-id.ts:29` 的 `sessionIdOf()` 在取不到 id 时返回字面量 `'unknown'`
+  （注释自陈「宁可退化到 unknown 也不要抛」）。调用方**照常继续**：
+  `index.ts:220` 取 sid → `:225` 刷缓存、`:245` `session_id: 'dsh:unknown'`、
+  `:273` `extractSession('dsh:unknown')`。
+- **影响**：多个不同真实会话的事件、画像、摘要**全部落进 `dsh:unknown` 一个会话**：
+  ① 跨会话内容混进同一份摘要与画像（等价于上一次修的「子 agent 污染」，但更难发现）；
+  ② `summaryAnchor()` 会拿 `dsh:unknown` 的**最新摘要**当锚点 → 窗口跨会话错乱；
+  ③ 子 agent 去重集 `notedSubagents`（`:175`）也按 sid 去重 → 全塌成一条日志。
+- **为什么危险**：与「子 agent 会话」的处理**不一致**——那一类**跳过**
+  （fail closed，`skipSubagentSession`），这一类却**照常写**（fail open）。
+  dsh 已经换过一次插件机制（见 CLAUDE.md「dsh 侧上游已变」），
+  `Session` 形状一旦变化，退化路径就会静默开启。
+- **证据**：`packages/dsh-adapter/src/session-id.ts:26-30`；`types.ts:87`
+  对第一个参数的静态类型就是 `unknown`（**没有编译期保证**）。
+- **建议方向**：把 `unknown` 当**失败**处理（记 warn + **不回传、不结算**），
+  与子 agent 同一条纪律；或至少在 `installBridge` 入口 `throw`（响亮失败优于静默混桶）。
+
+### KI-24 🔴 dsh `turn/end` 的 flush 还在飞，`session/disposed` 的 flush+结算就抢跑 —— 会话末条**永久不进摘要**
+
+> **核验结论：成立，且后果是永久性的（本轮最严重的一条）。**
+
+- **现象**：两条**互不相干**的异步链，没有任何互斥：
+  - `index.ts:232-233` `turn/end` → `void flush()`（**不 await**）
+  - `index.ts:267-275` `session/disposed` → `void (async () => { await flush(); await client.extractSession(...) })()`
+  `flush()` 开头就 `const batch = pending; pending = []`（`:195-196`）——
+  所以上一批**在飞**时，`disposed` 的 `flush()` 看到的是空队列，**立刻返回**，
+  紧接着 `extractSession` 就开跑。
+- **为什么后果是永久的**（这条是本轮补出来的，原描述只说「可能没入库就被结算」）：
+  服务端结算 `process()` 的窗口是 `created_at >= anchor`，
+  `anchor = 该会话最新摘要的 ended_at`（`summaryAnchor`），
+  而新落库的摘要行 `ended_at = 服务端当时时间`。
+  迟到的那些事件 `created_at` 取自 **dsh 的事件时间**（`index.ts:257`
+  `new Date(event.time || Date.now())`）——**早于**那条摘要的 `ended_at`
+  ⇒ 它们**落在下一次窗口之外，永远不会被摘要**。
+  且摘要行是 `summary_status='ok'`（不是 failed），`retryFailedSummaries()` **不会补**。
+  ⇒ **不是「晚一点摘到」，是「永久摘不到」。**
+- **影响范围**：所有 dsh 会话的**最后一轮对话**都可能缺席摘要
+  （画像提取同窗口，因此那批也缺席）。事件本身仍在事件表里，
+  所以 `read()` / 向量召回**仍能捞到**——丢的是**摘要与画像这一层**，更难察觉。
+- **加重场景**：alysia 不可达时 `flush()` 会把批次**放回 `pending`**（`:198-207`），
+  而 `disposed` 的 `flush()` 可能已经跑过 → 该批要等**下一个会话**的 `turn/end`
+  才可能被送走（`pending` 是跨会话共享的单数组）。
+- **证据**：`packages/dsh-adapter/src/index.ts:195-196, 232-233, 267-275`；
+  服务端锚点见 `MemoryManager.summaryAnchor()` 与 spec §5.4.1。
+- **建议方向**：给 `flush()` 加**串行化**（复用一个在飞 promise 链），
+  `disposed` 必须 `await` **队列真正清空**（含在飞那批）再 `extractSession`；
+  或让结算走「先 flush → 确认 accepted 数 → 再 extract」的两段确认。
+
+### KI-25 🟡 dsh 事件去重键取 `event.seq`，撞上 `INSERT OR REPLACE` —— **触发条件未证实**
+
+> **核验结论：机制成立（KI-12 已登记），但「seq 会重数」这一**前提尚无证据**。**
+
+- **现象**：`index.ts:244` 用 `id: \`dsh-${sid}-${event.seq}\`` 做去重键。
+  注释自陈意图是「同一事件重传不会在记忆里产生两条」——即**假设同一 session 内
+  `seq` 跨重传/重启稳定**。若 dsh 重启或 resume 后 `seq` 从头重数，
+  新事件会与历史事件**撞同一个 id**。
+- **撞上之后会怎样**：`/api/ingest` → `MemoryManager.ingest`（`:765`）
+  → `EventStore.insert` 用的是
+  `INSERT OR REPLACE INTO events (id, session_id, source, type, payload, importance, created_at, processed, perspective)`
+  （`EventStore.ts:29`）——**列单不含 `archived`** ⇒ 冲突时该列**回落默认 0**，
+  于是一条软删除（`archived=1`）的事件会被**复活**，且内容被新事件覆盖。
+  这正是已登记的 **KI-12**，本项是它的**dsh 侧触发路径**。
+- **未证实的关键点**：`seq` 的语义（是否跨 restart/resume 单调）。
+  ⚠️ 本仓**没有任何地方记录它**——`openspec/specs/dsh-adapter/spec.md` 里
+  `seq` **零命中**，测试只硬编码 `seq: 1 / 7`。dsh 实现打包在 `app.asar` 里，
+  本次未能核验。**先取证再改**（同 KI-1 纪律）。
+- **★ 顺带发现**：`SessionEvent` **同时**有 `id: number` 与 `seq: number`
+  （`types.ts:67-68`）。若 `id` 是会话事件日志自身的条目主键（更常见的语义），
+  它比 `seq` 更适合做去重键——**建议核实后改用它**。
+- **建议方向**：① 先确认 `seq` 是否跨 restart 单调；② 更稳的是**别让去重键依赖 dsh 的序号**，
+  改用 `sid + created_at + 内容哈希`（幂等性与 dsh 内部实现解耦）；
+  ③ 无论选哪种，KI-12（`INSERT OR REPLACE` 补上 `archived`）都该一并修。
+
+---
+
 ## 📌 已定名但未开 change
 
 | 名字 | 内容 | 出处 |

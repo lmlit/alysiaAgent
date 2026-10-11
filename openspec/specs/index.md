@@ -56,6 +56,14 @@
 > **KI-3**（两个 `ILLMService` 实现无一致性契约测试）、**KI-4**（`PersonaAdapter` 裸 `JSON.parse`）、
 > **KI-7**（`/stop` 只打日志不中断）、**KI-8**（根目录 `config.yml` 是死文件）、
 > **KI-9**（`memory/services/` 疑似半死代码）、**KI-10**（内核缺「只排序不依赖服务」的表达方式）、
+> **KI-22**（`upsertRole` 激活不清旧行 + 8 个写点无 `LIMIT 1`；★ 当前被 `importRole` 的
+> `setActive` 同步修好，属**潜伏**契约缺陷 —— 同 8-29 CR #19）、
+> **KI-23**（dsh 取不到 `session.id` 时退化 `dsh:unknown`，多会话挤一个桶；与「子 agent 跳过」的
+> fail-closed 纪律不一致，此处是 fail-open）、
+> **KI-24**（★ 🔴 dsh `turn/end` 的 flush 在飞时 `session/disposed` 抢跑结算 ——
+> 迟到事件的时间戳早于新摘要的 `ended_at`，**永久落不进任何窗口**）、
+> **KI-25**（dsh 去重键用 `event.seq`，撞 `INSERT OR REPLACE`（KI-12）可复活软删行；
+> ⚠️ **`seq` 跨重启是否重数未证实**，且 `SessionEvent.id` 可能是更稳的键）、
 > 以及**历史画像回填**（线上 `basics`/`facts` 长期稀疏，修复只保证从此往后）。
 > —— **已开 change 的那几条**（KI-1 / KI-5 部分 / KI-6 / KI-11～KI-17）在上表有行，点进去即可。
 
