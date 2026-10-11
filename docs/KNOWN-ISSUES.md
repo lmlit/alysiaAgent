@@ -57,6 +57,20 @@
   （与 9-27 清掉的那 40 条垃圾向量同形）。
 - **建议方向**：**先采数据**（现在采得到了）→ 再决定给不给显式 `max_tokens` / 给多少。
   **先测再改**——凭感觉填数字正是本项目反复吃亏的地方。
+- ★ **2026-10-11 首批数据（部署当天，来自 `[LLM:memory]`）**：
+  会话摘要槽 `session.summary`（`max_tokens=2048`）两次采样：
+
+  | 时刻 | output | reasoning | reasoning 占比 | 可见内容 |
+  |---|---|---|---|---|
+  | 10:11:46 | 1081 | **882** | 82% | ~199 |
+  | 13:40:43 | 1852 | **1763** | **95%** | **~89** |
+
+  第二条只剩 **~196 tokens 余量**——**再膨胀一次就是 `finish=length` 截断**，
+  与线上那 4 次 `truncated=true` 完全同形。
+  ⇒ **`decide-life-event-max-tokens` 应把 `session.summary` 一并纳入**：
+  它和 KI-1 是同一个「reasoning 与 content 抢同一个 `max_tokens`」问题的两个槽。
+  另一条路是**把 reasoning 与 content 的预算解耦**（若 provider 支持），
+  那属于更根本的改动，值得与本次决策一起评估。
 
 ### KI-2 🟠 两个小预算槽未校准：`proactive.personalize: 256` / `vision.describe: 200`
 
@@ -331,6 +345,13 @@
   ⚠️ 先确认这段文本是 dsh 合成注入还是真实用户输入（前者才该滤）。
 
 ### KI-21 🔴 记忆链路 LLM 客户端**没有超时** → 一次网络中断把请求挂了 117 分钟
+
+> ★ **2026-10-11 已修**（change: `add-memory-llm-timeout`，同日部署）。
+> 给 `al:memory-llm` 补了 **120s 超时**（`AbortController` + `Promise.race`，
+> 与聊天链路同款机制；超时值取 120s 而非 60s 是因为记忆链路是批处理、
+> 输出契约更长）。**超时抛错而非返回空串**——避免把网络故障伪装成「模型没输出」。
+> 契约见 `openspec/specs/memory-system/spec.md` §4.1.3 契约 6。
+> 下面保留原始记录作为依据。
 
 - **现象**（2026-10-11 线上实测）：`POST /api/sessions/<qq>/extract`
   （= 控制台「提取画像」按钮）的日志为

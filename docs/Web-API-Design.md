@@ -138,6 +138,11 @@ extractProfile(sessionId: string): Promise<{
 「全历史最近 1000 条事件」，即点一次按钮就重摘数十天历史
 （线上实测窗口跨度 46~61 天）。契约见 `openspec/specs/memory-system/spec.md` §5.4.1。
 
+**超时语义**（2026-10-11 `add-memory-llm-timeout`）：本接口内部调用记忆链路
+LLM 客户端，该客户端有 **120s 超时**。超时会让本请求以错误结束（而非无限挂起）——
+修复前线上实测该接口曾**挂住 117 分钟**（KI-21）。
+签名与返回结构不变；超时可重试，失败窗口由 cron 的补处理机制兜底。
+
 ---
 
 ### 2.3 `GET /api/profile` — 画像快照

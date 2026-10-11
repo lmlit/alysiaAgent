@@ -254,4 +254,64 @@ describe('al:memory-llm', () => {
     await expect(r.get<any>('al:memory-llm').complete('s', 'u')).rejects.toThrow(/bad json/);
     await r.stop();
   });
+
+  // ── 超时（change: add-memory-llm-timeout，spec §4.1.3 契约 6）────────────
+  //
+  // 守的是线上那次 117 分钟挂起（KI-21）：记忆链路原先**没有超时**，
+  // 断网时请求不会失败、只会挂住——不报错、不降级、不留痕。
+
+  it('★ 请求永不返回 → 在超时点抛错（不再是无限等待）', async () => {
+    const r = await runModule(memoryLlmModule, cfg);
+    globalThis.fetch = (() => new Promise(() => {})) as any;   // 永不 settle
+
+    vi.useFakeTimers();
+    try {
+      const p = r.get<any>('al:memory-llm').complete('s', 'u');
+      // 必须先挂上断言再推进定时器，否则 rejection 会变成 unhandled
+      const assertion = expect(p).rejects.toThrow(/超时/);
+      await vi.advanceTimersByTimeAsync(120_000);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+      await r.stop();
+    }
+  });
+
+  it('★ 超时会 abort 底层 fetch（只抛不 abort 会泄漏连接/socket）', async () => {
+    const r = await runModule(memoryLlmModule, cfg);
+    let captured: any = null;
+    globalThis.fetch = ((_u: any, init: any) => {
+      captured = init.signal;
+      return new Promise(() => {});
+    }) as any;
+
+    vi.useFakeTimers();
+    try {
+      const p = r.get<any>('al:memory-llm').complete('s', 'u');
+      const assertion = expect(p).rejects.toThrow();
+      expect(captured, 'fetch 必须拿到 AbortSignal').toBeInstanceOf(AbortSignal);
+      expect(captured.aborted, '超时之前不应已 abort').toBe(false);
+
+      await vi.advanceTimersByTimeAsync(120_000);
+      await assertion;
+      expect(captured.aborted, '超时后底层 fetch 必须被 abort').toBe(true);
+    } finally {
+      vi.useRealTimers();
+      await r.stop();
+    }
+  });
+
+  it('正常路径也把 AbortSignal 接线到 fetch（机制确实生效，不是摆设）', async () => {
+    let sig: any = null;
+    globalThis.fetch = (async (_u: any, init: any) => {
+      sig = init.signal;
+      return { ok: true, json: async () => ({ choices: [{ message: { content: 'ok' } }] }) } as any;
+    }) as any;
+
+    const r = await runModule(memoryLlmModule, cfg);
+    expect(await r.get<any>('al:memory-llm').complete('s', 'u')).toBe('ok');
+    expect(sig).toBeInstanceOf(AbortSignal);
+    expect(sig.aborted).toBe(false);
+    await r.stop();
+  });
 });

@@ -1,72 +1,70 @@
-﻿# OpenSpec 鈥?Spec 绱㈠紩
+﻿# OpenSpec — Spec 索引
 
-> 娲荤殑 spec 鎬荤储寮曘€?*鏂板姛鑳藉疄鐜板墠鍏堟煡杩欓噷**锛涗换浣曞彉鏇村厛鐪嬪搴?spec 鏄惁宸茶鐩栥€?
-> 鐘舵€侊細`active` = 浠嶅湪婕旇繘锛屾敼鍔ㄩ渶璧?change锛沗frozen` = 宸插疄鐜颁笖涓嶆紨杩涳紝鍙鍙傝€冦€?
-> 绱㈠紩鐘舵€佷笌 `openspec/archive/`銆乣openspec/changes/` 鑱斿姩锛屾瘡娆?archive 蹇呴』鏇存柊鏈〃銆?
+> 活的 spec 总索引。**新功能实现前先查这里**；任何变更先看对应 spec 是否已覆盖。
+> 状态：`active` = 仍在演进，改动需走 change；`frozen` = 已实现且不演进，只读参考。
+> 索引状态与 `openspec/archive/`、`openspec/changes/` 联动，每次 archive 必须更新本表。
 
-| slug | 绯荤粺 | 鐘舵€?| 鏉ユ簮锛堟棫鏂囨。锛?| 鏈€鍚庡彉鏇?|
+| slug | 系统 | 状态 | 来源（旧文档） | 最后变更 |
 |------|------|------|----------------|----------|
-| memory-system | 璁板繂绯荤粺锛? store / 3 engine / 3 processor / 鏃嬮挳锛?| active | docs/superpowers/specs/2026-06-28-memory-system-design.md | 2026-10-11 **SessionEnd 绐楀彛閿氱偣濂戠害 搂5.4.1**锛坄fix-session-end-window`锛歚onSessionEnd` / `extractProfile` 婕忎紶 `since` 鈫?钀藉埌銆屽叏鍘嗗彶鏈€杩?1000 鏉°€嶏紝绾夸笂瀹炴祴 76% 绐楀彛璺ㄥ害 > 24h銆?9 鏉℃伆濂?1000 鏉℃秷鎭法搴?**46~61 澶?*銆?5 绉掑唴杩炴憳涓夋潯锛涗笁鍏ュ彛鏀舵暃鍒板敮涓€閿氱偣 helper锛夛紱**璁板繂閾捐矾瑙傛祴濂戠害 搂4.1.3**锛坄instrument-memory-llm`锛歚al:memory-llm` 鏄嫭绔嬩簬 provider 鐨勭浜屼釜 LLM 瀹㈡埛绔€佹鍓?*闆舵棩蹇?*锛屾憳瑕佹Ы鐨勫け璐ュ洜姝や笉鍙娴?鈫?琛?`[LLM:memory]` 鐨?`tokens=`/`finish=`/`reasoning=` + 绌哄搷搴?warn锛涘悓鏃朵慨姝?搂4.1.2銆屾墍鏈夋Ы浣嶉兘娴佺粡 provider銆嶇殑閿欒鍓嶆彁锛夛紱2026-10-02 **闆惰鍐欏叆瑙傛祴 搂4.7 濂戠害 3**锛坄observe-zero-row-writes`锛歚traceZeroRows` 鍙娴嬩笉鎷︽埅锛岄噰闆?`changes===0` 鍒嗗竷锛屽喅绛栧叆鍙?`tune-zero-row-checks`锛夛紱**瀛樺偍鍐欏叆鐣欑棔濂戠害 搂4.7**锛坄fix-migration-and-logger-silent-failure`锛氳縼绉绘敼鎺㈡祴寮忓箓绛夈€佸幓鎺?13 澶勮８ catch锛涙棩蹇楀瓙绯荤粺鑷韩澶辫触蹇呴』鍠婂嚭鏉ワ級锛?*鎺ㄧ悊棰勭畻瑙傛祴濂戠害 搂4.1.2**锛坄add-llm-budget-observability`锛歱rovider 閫忓嚭 `finish_reason`/`reasoning_tokens`锛岀┖鍝嶅簲鍗曠嫭鍙锛宍role:'err'` 涓嶅啀琚帇鎴愮┖涓诧級锛?0-01 **鐢诲儚鎻愬彇闈欓粯鍋滄憜淇**锛堥噰鏍锋Ы濂戠害 搂4.1.1锛歮ax_tokens 鍏变韩棰勭畻 / json_object 鎸夎緭鍑哄绾﹀垎绫?/ 绗笁鍙傚繀椤荤敓鏁?/ 绂佽８ catch锛? 涓己闄凤級锛?9-27 瀛橀噺鍥炲～锛?2 鏉″崰浣嶇鎽樿閲嶇敓鎴?+ 40 鏉″瀮鍦惧悜閲忔浛鎹?+ 77 鏉＄己澶卞悜閲忚ˉ榻愶紱`getBySession` 鍔?`until`锛夛紱09-26 浜嬩欢绐楀彛鎴柇淇锛?9-25 鎽樿闈欓粯澶辫触淇涓庡嚟鎹缃紱**09-25 鍙洖绠￠亾涓夌己闄蜂慨澶?*锛坄optimize-recall-pipeline`锛歝osine 鍒诲害閫€鍖?/ `mergeWithQuota` 璺ㄦ潵婧愰厤棰?/ `RELATIVE_KEEP` 鐩稿闃堝€煎幓閲嶏級+ **`importance` 鎺ョ嚎**锛坄wire-importance-signal`锛?|
-| alysia-architecture | 鎬讳綋鏋舵瀯锛坢onorepo / 鍙屾ā寮忥級 | active | docs/superpowers/specs/2026-07-20-alysia-architecture-design.md | 2026-10-02 **鍒犻櫎 packages/webui**锛坮emove-packages-webui锛氱洰褰曟爲鍘?webui 琛屻€佸钩鍙拌〃鏀广€宑onsole 鍞竴銆嶏級+ **缂栫▼妯″紡鐢?dsh 鎵挎帴**锛坮ecord-dsh-as-coding-mode锛屼慨姝ｃ€岀爫鎺夌紪绋嬫ā寮忋€嶏級锛?0-01 妯″潡鍖栬閰嶏紙module-kernel锛歝ore 13 妯″潡 + server 10 妯″潡锛夛紱**09-25 鐮嶆帀 Electron 妗岄潰绔?*锛坉rop-electron-desktop锛夛紱08-15 WebUI 鑱婂ぉ绔偣 + LLM 娴佸紡濂戠害 |
-| pipeline-contract | Pipeline 濂戠害 + 璁板繂淇 | frozen | docs/superpowers/specs/2026-07-30-pipeline-contract-and-memory-fix.md | 2026-08-07 杩佺Щ |
-| server-desktop-separation | 鏈嶅姟绔?妗岄潰绔垎绂?| frozen | docs/superpowers/specs/2026-07-30-server-desktop-separation.md | 2026-08-07 杩佺Щ |
-| server-optimization | 鏈嶅姟绔紭鍖栵紙娴佸紡/stop/WebUI 寰呭仛椤癸級 | frozen | docs/superpowers/specs/2026-07-30-server-optimization.md | 2026-08-07 杩佺Щ |
-| knowledge-base-import | 鐭ヨ瘑搴撳鍏?| frozen | docs/superpowers/specs/2026-07-31-knowledge-base-import.md | 2026-08-07 杩佺Щ |
-| role-system | v3 瑙掕壊绯荤粺锛坕mport/export/active锛?| active | docs/superpowers/specs/2026-07-31-role-system.md | 2026-10-01 **淇 importRole 娓呯┖浜鸿**锛堟敼鎸夊瓧娈靛悎骞讹紱琛ㄦ儏鍖呰鑹插寘鏇炬瘡娆″惎鍔ㄥ啿鎺夋様娑熺殑 system_prompt锛宑hange: fix-role-import-wipes-persona锛夛紱08-07 杩佺Щ |
-| domestic-search-weather | 鍥藉唴鎼滅储 + 澶╂皵 | frozen | docs/superpowers/specs/2026-08-02-domestic-search-weather.md | 2026-08-07 杩佺Щ |
-| logging-system | 鏃ュ織绯荤粺锛堟湰鍦版椂闂?鏂囦欢鎸佷箙鍖栵級 | frozen | docs/superpowers/specs/2026-08-02-logging-system.md | 2026-08-07 杩佺Щ |
-| proactive-messages | 涓诲姩娑堟伅锛堟椂娈甸棶鍊?鑺傛棩/鍏虫€€锛?| active | docs/superpowers/specs/2026-08-02-proactive-messages.md | 2026-08-09 鍥炲啓+瀵硅瘽涓婁笅鏂囷紙璁板繂闂幆锛?|
-| profile-fact-sourcing | 鐢诲儚浜嬪疄婧簮 | frozen | docs/superpowers/specs/2026-08-02-profile-fact-sourcing.md | 2026-08-07 杩佺Щ |
-| qq-reconnect-backoff | QQ 閲嶈繛閫€閬?| frozen | docs/superpowers/specs/2026-08-02-qq-reconnect-backoff.md | 2026-08-07 杩佺Щ |
-| role-memory-isolation | 瑙掕壊璁板繂闅旂 | 鎼佺疆 | docs/superpowers/specs/2026-08-02-role-memory-isolation.md | 2026-08-07 杩佺Щ |
-| server-hardening | 鏈嶅姟绔姞鍥?| active | docs/superpowers/specs/2026-08-02-server-hardening.md | 2026-09-25 閴存潈瑙﹀彂鏉′欢鏀逛负璺熼殢缁戝畾鍦板潃锛坄server-bind-host`锛屽洖鐜厤閴存潈锛? 9-24 閽╁瓙鑼冨洿淇锛堝彧瀹?/api/*锛?|
-| sticker-protocol | 琛ㄦ儏鍖呭崗璁?| frozen | docs/superpowers/specs/2026-08-02-sticker-protocol.md | 2026-08-07 杩佺Щ |
-| tool-call-text-strip | 宸ュ叿璋冪敤鏂囨湰鍓ョ | frozen | docs/superpowers/specs/2026-08-02-tool-call-text-strip.md | 2026-08-07 杩佺Щ |
-| ai-life-system | AI 涓诲姩鐢熸椿绯荤粺锛圠ifeService锛?| active | docs/superpowers/specs/2026-08-06-ai-life-system-design.md | 2026-10-02 **浜嬩欢鐢熸垚閾捐矾鏃ュ織濂戠害**锛坄add-llm-budget-observability`锛氭Ы浣嶇骇 `finish/tokens/reasoning/content` 鐜板満 + 璋冪敤澶辫触涓嶅啀浼鎴?妯″瀷娌¤緭鍑?锛夛紱10-01 鎻愮ず璇嶈祫浜ф惉鍒?`packages/server/src/prompts/`锛坋xternalize-life-prompts锛屽惈銆屼负浣曚笉鍋?.md銆嶅垽鎹?+ 7 鏉″畧鍗級锛?8-31 姣忔棩鍙嶆€濋棴鐜紙L3 鑷慨鏀规墽琛屽櫒锛?|
-| vision-bridge | 鍥剧墖璇嗗埆锛圙LM-4V-Flash 鎻忚堪锛?| frozen | 锛堟棤鏃ф枃妗ｏ紝2026-08-07 琛ワ級 | 2026-08-07 鏂板缓 |
-| webui-system | WebUI 鍓嶇锛圴ue SPA/涓婚/绠＄悊闈㈡澘/鑱婂ぉ瑙嗗浘锛?| **frozen**锛堝寘宸插垹闄わ級 | 锛堟棤鏃ф枃妗ｏ紝2026-08-15 琛ワ級 | 2026-10-02 **鍖呮暣浣撳垹闄?*锛坄remove-packages-webui`锛?4 鏂囦欢 git rm锛沗defaultDist` 鍥炶惤涓?`isDesktop` 鍓嶇闂ㄧЩ闄わ紝缂轰骇鐗╂敼**鏄惧紡 warn**锛涙墽琛屽墠瀹¤鎺ㄧ炕浜?缃插悕娈嬬暀"涓?姝诲垎鏀?涓ゆ潯绔嬮」璇存硶锛? 椤圭鐞嗚兘鍔涢檷绾?API-only锛岃璇?change 閬楃暀琛級銆傚巻鍙诧細09-25 闈欐€佹墭绠″彲鍒囨崲锛坄console-local-serve`锛? 鍒?Electron 澹筹紙`drop-electron-desktop`锛? 杩佸嚭 Live2D锛坄migrate-live2d-to-console`锛夛紱09-24 璧风敱 `alysia-console` 鍙栦唬銆俙webui-visual-redesign` 宸叉爣 `superseded` |
-| reminder-tool | 鎻愰啋宸ュ叿锛坰et/list/cancel + 鎺ㄩ€侊級 | active | 锛堟棤鏃ф枃妗ｏ紝2026-08-07 琛ワ級 | 2026-08-12 SQLite 鎸佷箙鍖栵紙閲嶅惎鎭㈠锛岃繃鏈熻ˉ鍙戯級 |
-| dsh-adapter | DSH 鎻掍欢閫傞厤灞傦紙鏄旀稛浜烘牸/璁板繂鎺ュ叆 DeepSeek Harness锛?| active | 锛堟棤鏃ф枃妗ｏ紝2026-08-25 琛ワ級 | 2026-10-01 bundle 鍖栵紙`dsh.bundle.patch` + preset 澹版槑锛屼汉璁炬敼璧?`{{alysia_persona}}` 鍙橀噺鍙垏鎹紱preset 娲剧敓鑷?standard 浠ヤ繚浣忓伐鍏烽泦锛? **鍙岃繘绋嬮€氶亾钀藉湴**锛坄POST /api/ingest` / `GET /api/persona/prompt`锛宑hange: connect-dsh-alysia-bridge锛夛紱10-02 **璇婚€氶亾琛ラ綈**锛坄POST /api/memory/read` + 鎻掍欢缂撳瓨/棰勭儹 + recall_memory 鐪熷伐鍏凤紝change: bridge-memory-read锛夛紱10-02 **瀛?agent 浼氳瘽杩囨护**锛坄header.origin === 'subagent'` 涓€寰嬩笉鍥炰紶/涓嶇粨绠椻€斺€斾慨瀛?agent 鍐呭姹℃煋浜烘牸涓庣敾鍍忥紝change: exclude-subagent-sessions-from-bridge锛夛紱10-01 bundle 鍖?+ 鍐欓€氶亾锛?8-25 MVP 楠岃瘉闂幆 |
-| alysia-console | 鏄旀稛鎺у埗鍙?路 Next.js 鏂板墠绔紙璁捐绯荤粺/API 灞?閫傞厤灞?閮ㄧ讲褰㈡€侊級 | active | 锛堟棤鏃ф枃妗ｏ紝2026-09-24 寤猴級 | 2026-09-25 闆嗕腑钀藉湴锛歚adopt-nextjs-console`锛堟敹缂?+ 鐪熸暟鎹級銆乣console-local-serve`锛堟湇鍔＄鍚屾簮鎵樼 + 鍥炵幆鍏?token锛夈€乣deploy-console-remote`锛堣繙绔?Docker 閮ㄧ讲宸蹭笂绾匡級銆乣wire-console-chat`锛堢湡浼氳瘽 + 娴佸紡瀵硅瘽 `/api/chat/stream`锛夈€乣add-life-readonly-endpoints`锛坄/api/life/summaries` + `/companions`锛夈€乣migrate-live2d-to-console` + `live2d-persist-across-pages`锛圠ive2D 杩佸叆 + 璺ㄩ〉鎸佷箙鍖栵紝璐村浘 8192虏鈫?048虏锛夈€乣server-bind-host`锛堥壌鏉冭竟鐣岋級銆乣drop-electron-desktop`锛堝垹 `/desktop`锛夛紱**2026-10-02 鎴愪负鍞竴鍓嶇**锛坄remove-packages-webui`锛歸ebui 鍒犻櫎銆侀潤鎬佹墭绠℃敹鏁涗负鍗曞€欓€夈€佺己浜х墿鏄惧紡 warn锛?|
-| module-kernel | 妯″潡鍐呮牳锛圡odule 濂戠害 / ModuleHost / 鎷撴墤鎺掑簭涓庨€嗗簭鍗歌浇锛?| active | 锛堟棤鏃ф枃妗ｏ紝2026-10-01 寤猴級 | 2026-10-01锛氭柊寤猴紙add-module-kernel锛夆啋 鍒犳帀渚濇嵁閿欒鐨?`peer` 鏈哄埗锛坉rop-kernel-peer锛夆啋 **鎺ュ叆 `AlysiaCore.start()`**锛坢odularize-core-assembly锛?3 涓ā鍧楋紝鍏紑闈笉鍙橈級銆傚绾﹀埢鎰忓仛鎴?cordis 褰㈢姸锛屼负 dsh 杩佺Щ閾鸿矾锛?0-01 妯″潡绾у崟娴?28 鐢ㄤ緥锛坅dd-module-tests锛夛紱**server 渚?bootstrap 鎷嗘垚 10 涓ā鍧?*锛坢odularize-server-assembly锛屾娊鍑?PushChannel锛?|
+| memory-system | 记忆系统（7 store / 3 engine / 3 processor / 旋钮） | active | docs/superpowers/specs/2026-06-28-memory-system-design.md | 2026-10-11 **记忆链路超时契约 §4.1.3 契约 6**（`add-memory-llm-timeout`：给 `al:memory-llm` 补 **120s 超时**（`AbortController` + `Promise.race`；超时**抛错**而非返回空串，避免把网络故障伪装成「模型没输出」）—— 修一次断网把 `extractProfile` **挂死 117 分钟**的 KI-21；观测一上线就推翻了同日上午刚记下的「没有超时是刻意边界」）；**SessionEnd 窗口锚点契约 §5.4.1**（`fix-session-end-window`：`onSessionEnd` / `extractProfile` 漏传 `since` → 落到「全历史最近 1000 条」，线上实测 76% 窗口跨度 > 24h、29 条恰好 1000 条消息跨度 **46~61 天**、45 秒内连摘三条；三入口收敛到唯一锚点 helper）；**记忆链路观测契约 §4.1.3**（`instrument-memory-llm`：`al:memory-llm` 是独立于 provider 的第二个 LLM 客户端、此前**零日志**，摘要槽的失败因此不可观测 → 补 `[LLM:memory]` 的 `tokens=`/`finish=`/`reasoning=` + 空响应 warn；同时修正 §4.1.2「所有槽位都流经 provider」的错误前提）；2026-10-02 **零行写入观测 §4.7 契约 3**（`observe-zero-row-writes`：`traceZeroRows` 只观测不拦截，采集 `changes===0` 分布，决策入口 `tune-zero-row-checks`）；**存储写入留痕契约 §4.7**（`fix-migration-and-logger-silent-failure`：迁移改探测式幂等、去掉 13 处裸 catch；日志子系统自身失败必须喊出来）；**推理预算观测契约 §4.1.2**（`add-llm-budget-observability`：provider 透出 `finish_reason`/`reasoning_tokens`，空响应单独可见，`role:'err'` 不再被压成空串）；10-01 **画像提取静默停摆修复**（采样槽契约 §4.1.1：max_tokens 共享预算 / json_object 按输出契约分类 / 第三参必须生效 / 禁裸 catch；4 个缺陷）；09-27 存量回填（52 条占位符摘要重生成 + 40 条垃圾向量替换 + 77 条缺失向量补齐；`getBySession` 加 `until`）；09-26 事件窗口截断修复；09-25 摘要静默失败修复与凭据外置；**09-25 召回管道三缺陷修复**（`optimize-recall-pipeline`：cosine 刻度退化 / `mergeWithQuota` 跨来源配额 / `RELATIVE_KEEP` 相对阈值去重）+ **`importance` 接线**（`wire-importance-signal`） |
+| alysia-architecture | 总体架构（monorepo / 双模式） | active | docs/superpowers/specs/2026-07-20-alysia-architecture-design.md | 2026-10-02 **删除 packages/webui**（remove-packages-webui：目录树去 webui 行、平台表改「console 唯一」）+ **编程模式由 dsh 承接**（record-dsh-as-coding-mode，修正「砍掉编程模式」）；10-01 模块化装配（module-kernel：core 13 模块 + server 10 模块）；**09-25 砍掉 Electron 桌面端**（drop-electron-desktop）；08-15 WebUI 聊天端点 + LLM 流式契约 |
+| pipeline-contract | Pipeline 契约 + 记忆修复 | frozen | docs/superpowers/specs/2026-07-30-pipeline-contract-and-memory-fix.md | 2026-08-07 迁移 |
+| server-desktop-separation | 服务端/桌面端分离 | frozen | docs/superpowers/specs/2026-07-30-server-desktop-separation.md | 2026-08-07 迁移 |
+| server-optimization | 服务端优化（流式/stop/WebUI 待做项） | frozen | docs/superpowers/specs/2026-07-30-server-optimization.md | 2026-08-07 迁移 |
+| knowledge-base-import | 知识库导入 | frozen | docs/superpowers/specs/2026-07-31-knowledge-base-import.md | 2026-08-07 迁移 |
+| role-system | v3 角色系统（import/export/active） | active | docs/superpowers/specs/2026-07-31-role-system.md | 2026-10-01 **修复 importRole 清空人设**（改按字段合并；表情包角色包曾每次启动冲掉昔涟的 system_prompt，change: fix-role-import-wipes-persona）；08-07 迁移 |
+| domestic-search-weather | 国内搜索 + 天气 | frozen | docs/superpowers/specs/2026-08-02-domestic-search-weather.md | 2026-08-07 迁移 |
+| logging-system | 日志系统（本地时间/文件持久化） | frozen | docs/superpowers/specs/2026-08-02-logging-system.md | 2026-08-07 迁移 |
+| proactive-messages | 主动消息（时段问候/节日/关怀） | active | docs/superpowers/specs/2026-08-02-proactive-messages.md | 2026-08-09 回写+对话上下文（记忆闭环） |
+| profile-fact-sourcing | 画像事实溯源 | frozen | docs/superpowers/specs/2026-08-02-profile-fact-sourcing.md | 2026-08-07 迁移 |
+| qq-reconnect-backoff | QQ 重连退避 | frozen | docs/superpowers/specs/2026-08-02-qq-reconnect-backoff.md | 2026-08-07 迁移 |
+| role-memory-isolation | 角色记忆隔离 | 搁置 | docs/superpowers/specs/2026-08-02-role-memory-isolation.md | 2026-08-07 迁移 |
+| server-hardening | 服务端加固 | active | docs/superpowers/specs/2026-08-02-server-hardening.md | 2026-09-25 鉴权触发条件改为跟随绑定地址（`server-bind-host`，回环免鉴权）+ 9-24 钩子范围修复（只守 /api/*） |
+| sticker-protocol | 表情包协议 | frozen | docs/superpowers/specs/2026-08-02-sticker-protocol.md | 2026-08-07 迁移 |
+| tool-call-text-strip | 工具调用文本剥离 | frozen | docs/superpowers/specs/2026-08-02-tool-call-text-strip.md | 2026-08-07 迁移 |
+| ai-life-system | AI 主动生活系统（LifeService） | active | docs/superpowers/specs/2026-08-06-ai-life-system-design.md | 2026-10-02 **事件生成链路日志契约**（`add-llm-budget-observability`：槽位级 `finish/tokens/reasoning/content` 现场 + 调用失败不再伪装成"模型没输出"）；10-01 提示词资产搬到 `packages/server/src/prompts/`（externalize-life-prompts，含「为何不做 .md」判据 + 7 条守卫）；08-31 每日反思闭环（L3 自修改执行器） |
+| vision-bridge | 图片识别（GLM-4V-Flash 描述） | frozen | （无旧文档，2026-08-07 补） | 2026-08-07 新建 |
+| webui-system | WebUI 前端（Vue SPA/主题/管理面板/聊天视图） | **frozen**（包已删除） | （无旧文档，2026-08-15 补） | 2026-10-02 **包整体删除**（`remove-packages-webui`：64 文件 git rm；`defaultDist` 回落与 `isDesktop` 前端门移除，缺产物改**显式 warn**；执行前审计推翻了"署名残留"与"死分支"两条立项说法；7 项管理能力降级 API-only，见该 change 遗留表）。历史：09-25 静态托管可切换（`console-local-serve`）+ 删 Electron 壳（`drop-electron-desktop`）+ 迁出 Live2D（`migrate-live2d-to-console`）；09-24 起由 `alysia-console` 取代。`webui-visual-redesign` 已标 `superseded` |
+| reminder-tool | 提醒工具（set/list/cancel + 推送） | active | （无旧文档，2026-08-07 补） | 2026-08-12 SQLite 持久化（重启恢复，过期补发） |
+| dsh-adapter | DSH 插件适配层（昔涟人格/记忆接入 DeepSeek Harness） | active | （无旧文档，2026-08-25 补） | 2026-10-01 bundle 化（`dsh.bundle.patch` + preset 声明，人设改走 `{{alysia_persona}}` 变量可切换；preset 派生自 standard 以保住工具集）+ **双进程通道落地**（`POST /api/ingest` / `GET /api/persona/prompt`，change: connect-dsh-alysia-bridge）；10-02 **读通道补齐**（`POST /api/memory/read` + 插件缓存/预热 + recall_memory 真工具，change: bridge-memory-read）；10-02 **子 agent 会话过滤**（`header.origin === 'subagent'` 一律不回传/不结算——修子 agent 内容污染人格与画像，change: exclude-subagent-sessions-from-bridge）；10-01 bundle 化 + 写通道；08-25 MVP 验证闭环 |
+| alysia-console | 昔涟控制台 · Next.js 新前端（设计系统/API 层/适配层/部署形态） | active | （无旧文档，2026-09-24 建） | 2026-09-25 集中落地：`adopt-nextjs-console`（收编 + 真数据）、`console-local-serve`（服务端同源托管 + 回环免 token）、`deploy-console-remote`（远端 Docker 部署已上线）、`wire-console-chat`（真会话 + 流式对话 `/api/chat/stream`）、`add-life-readonly-endpoints`（`/api/life/summaries` + `/companions`）、`migrate-live2d-to-console` + `live2d-persist-across-pages`（Live2D 迁入 + 跨页持久化，贴图 8192²→2048²）、`server-bind-host`（鉴权边界）、`drop-electron-desktop`（删 `/desktop`）；**2026-10-02 成为唯一前端**（`remove-packages-webui`：webui 删除、静态托管收敛为单候选、缺产物显式 warn） |
+| module-kernel | 模块内核（Module 契约 / ModuleHost / 拓扑排序与逆序卸载） | active | （无旧文档，2026-10-01 建） | 2026-10-01：新建（add-module-kernel）→ 删掉依据错误的 `peer` 机制（drop-kernel-peer）→ **接入 `AlysiaCore.start()`**（modularize-core-assembly，13 个模块，公开面不变）。契约刻意做成 cordis 形状，为 dsh 迁移铺路；10-01 模块级单测 28 用例（add-module-tests）；**server 侧 bootstrap 拆成 10 个模块**（modularize-server-assembly，抽出 PushChannel） |
 
-## 馃搶 Backlog锛坉oc 宸插０鏄庛€乮mpl 鏈帴锛岃褰曞湪妗堜笉闅愬舰锛?
+## 📌 Backlog（doc 已声明、impl 未接，记录在案不隐形）
 
-| change | 璇存槑 | 鏂瑰悜 |
+| change | 说明 | 方向 |
 |--------|------|------|
-| [worldbook-sampling-cooldown](../changes/worldbook-sampling-cooldown/proposal.md) | ai-life 搂6/7 涓栫晫涔﹂噰鏍风己 cooldown 杩囨护锛堝彧鍋氫簡 priority 鎺掑簭 + hit_count锛?| docs 鈫?impl锛堣ˉ瀹炵幇锛宻pec 涓嶆敼锛?|
-| [add-platforms-endpoint](../changes/add-platforms-endpoint/proposal.md) | Web-API 搂3.4 `GET /api/platforms` 鍏ㄤ粨搴撴棤瀹炵幇鈥斺€斿敮涓€鏂囨。浜嗕絾瀹屽叏娌″缓鐨勬帴鍙?| docs 鈫?impl锛堣ˉ瀹炵幇锛屽绾︿笉鏀癸級 |
-| [console-a11y-motion](../changes/console-a11y-motion/proposal.md) | console 17 澶勬寔缁姩鐢绘棤 `prefers-reduced-motion` 瀹堝崼锛沨ero 娓愬彉鏍囬鍦?`forced-colors` 涓嬪彲鑳戒笉鍙 | 鏂板锛堥潪 doc/impl gap锛?-24 鏍告煡鍙戠幇锛夛紱鐢ㄦ埛鎸囩ず銆屽厛璁颁笅鏉ャ€嶆殏涓嶅疄鐜?|
-| [tune-recall-with-runtime-data](../changes/tune-recall-with-runtime-data/proposal.md) | 鍙洖绠￠亾鐨勭郴鏁帮紙`LIFE_BASE`/`RELATIVE_KEEP`/鎯呯华璇嶈〃鈥︼級鍏ㄦ槸鍚彂寮忔媿鐨勶紝璇ョ敱杩愯鏁版嵁瀹氾紱**涓旈儴鍒嗘寚鏍囩幇鍦ㄦ棤鏃ュ織锛岃鍏堣ˉ瑙傛祴** | 鏂板锛涚敤鎴?9-25銆岃繍琛屼竴娈垫椂闂翠笂鏈嶅姟鍣ㄦ崬鏁版嵁鐪嬬湅銆?|
-| [add-ops-health-report](../changes/add-ops-health-report/proposal.md) | 浼氳瘽鎽樿 **22 澶?100% 澶辫触**鏈熼棿锛屽鍣?healthcheck 涓?`/api/health` **鍏ㄧ▼涓虹豢**鈥斺€旂己鐨勬槸姝ｇ‘鎬ф寚鏍囷紙鎽樿鎴愬姛鐜?鍚勬ā鍧?WARN 璁℃暟锛夛紝涓嶆槸瀛樻椿鎸囨爣 | 鏂板锛堝彲瑙傛祴鎬э級锛?*鐢ㄦ埛 9-25 鍐冲畾鍏堣妗ｅ悗鍋?*锛涘墠缃細鏃ュ織绯荤粺鍏堟暣鐞嗭紙96.6% 鏄?QQ 鍣０锛?|
-| [clean-spec-diff-residue](../changes/clean-spec-diff-residue/proposal.md) | apply 鏈幓 diff 鏍囪鐨勪骇鐗╂畫鐣欍€傗槄 **2026-10-02 澶嶆牳锛氳寖鍥存瘮绔嬮」鏃惰鐨勫ぇ** 鈥斺€?`memory-system/spec.md` 5 琛岋紙`persona-overlay-perspective`锛夈€乣ai-life-system/spec.md` **绾?42 琛?*锛坄worldbook-digest-summary` / `life-interval-narrative` / `chat-life-continuity` / `mood-side-analysis` / `worldview-crossworld-window` / `life-event-message-split` / `worldview-base-field` 绛夊娆?apply 灞傚眰绱Н锛夈€乣alysia-console/spec.md` 1 琛?| 鏂囨。鍗敓锛涒殸锔?**涓嶈兘鐢?`grep '^\+'` 鐩存帴鍒?* 鈥斺€?寰楅€愭潯鍒ゃ€屾槸 diff 娈嬬暀杩樻槸姝ｆ枃銆嶏細`ai-life-system` 閲屾贩鐫€ ASCII 鏍戣瀛楃 `+鈹俙 涓庢彁绀鸿瘝妯℃澘姝ｆ枃 |
-| [tune-zero-row-checks](../changes/tune-zero-row-checks/proposal.md) | **KI-11 鐨勫喅绛栧叆鍙?*锛氬叏 core 55 涓啓鍏ョ偣鍙湁 3 澶勬鏌?`.run().changes` 鈥斺€?銆屾敼鍒颁簡銆嶄笌銆屼粈涔堥兘娌℃敼銆嶅悓褰紙`markDelivered` 浼氬奖鍝嶉噸澶嶆帹閫併€乣PersonaStore` 8 涓?`WHERE is_active=1` 浼氭姤鍋囨垚鍔燂級銆?*瑙傛祴宸蹭笂绾?*锛坄observe-zero-row-writes` 鎵?`[WriteTrace]`锛夛紝**绛夎繍琛屾暟鎹啀閫愮偣瀹氭€?*锛氳眮鍏?/ 纭牎楠?| 鏂板锛?*鐢ㄦ埛 2026-10-02銆屽厛鎵撴棩蹇楋紝鍚庣画杩愯涓€娈垫椂闂村悗妫€鏌ュ啀鍐崇瓥銆?* |
-| [fix-store-write-trace](../changes/fix-store-write-trace/proposal.md) | **瀛樺偍鍙娴嬫€х浜屽垁**锛欿I-12锛坄INSERT OR REPLACE` 鍒楀崟缂?`archived` 鈫?閲嶆姇闈欓粯澶嶆椿杞垹浼氳瘽锛? KI-13锛堢煡璇嗗簱鍗婃埅鏂囨。 + hash 鍘婚噸閿佹锛? KI-14锛坄LanceDBStore.insert` 姘镐笉鎶?鈫?涓婃父 catch 鎴愭浠ｇ爜锛?*2026-09-27 浜嬫晠鍚屽舰浠ｇ爜浠嶆椿鐫€**锛? KI-15锛坄vectorStore` null 闈欓粯璺宠繃 10 鏉¤矾寰勶級/ KI-16锛坄PersonaStore` 璇绘椂鍥炲啓榛樿鍊硷級/ KI-17 + KI-5 鍓╀綑 9 澶勮８ catch | 鏂板锛涚涓€鍒€鍙慨"鍦板熀"锛屾湰鍒€瑕?*鏀瑰垽鏂涔?*锛屽悇鑷渶鐙珛楠岃瘉 |
-| [decide-life-event-max-tokens](../changes/decide-life-event-max-tokens/proposal.md) | **KI-1 鐨勬暟鎹喅绛?*锛歚life.generateEvent` 鏃?`max_tokens`锛屼笌宸茬垎涓夋鐨勬Ы鍚屽舰銆傝娴嬪凡涓婄嚎锛坧rovider `[LLM]` 琛?+ `[Life] event LLM` 琛岋級锛?*绛夋暟鎹啀瀹?*锛涢『甯﹂棴鐜?KI-2锛坄proactive.personalize` / `vision.describe`锛?| 鏂板锛?*绾緥锛氭病鏈夎娴嬪氨涓嶈鏀归绠楁暟瀛?*锛涙暟鎹樉绀哄畨鍏ㄤ篃寰楀湪 搂4.1.2 璁颁竴鍙ラ棴鐜?|
-| [unify-core-shutdown](../changes/unify-core-shutdown/proposal.md) | **KI-6**锛歚core.stop()` 涓嶅叧 SQLite / LanceDB 鍙ユ焺 鈫?Windows 涓婁复鏃剁洰褰曞垹涓嶆帀锛圗PERM锛夈€傝涓哄彉鏇达紝闇€鍗曠嫭楠岃瘉 | 宸插畾鍚嶆湭寮€ change锛坄modularize-core-assembly` proposal 鍐崇瓥 2 棰勭暀锛夛紱2026-10-02 琛ョ櫥璁?|
+| [worldbook-sampling-cooldown](../changes/worldbook-sampling-cooldown/proposal.md) | ai-life §6/7 世界书采样缺 cooldown 过滤（只做了 priority 排序 + hit_count） | docs → impl（补实现，spec 不改） |
+| [add-platforms-endpoint](../changes/add-platforms-endpoint/proposal.md) | Web-API §3.4 `GET /api/platforms` 全仓库无实现——唯一文档了但完全没建的接口 | docs → impl（补实现，契约不改） |
+| [console-a11y-motion](../changes/console-a11y-motion/proposal.md) | console 17 处持续动画无 `prefers-reduced-motion` 守卫；hero 渐变标题在 `forced-colors` 下可能不可见 | 新增（非 doc/impl gap，9-24 核查发现）；用户指示「先记下来」暂不实现 |
+| [tune-recall-with-runtime-data](../changes/tune-recall-with-runtime-data/proposal.md) | 召回管道的系数（`LIFE_BASE`/`RELATIVE_KEEP`/情绪词表…）全是启发式拍的，该由运行数据定；**且部分指标现在无日志，要先补观测** | 新增；用户 9-25「运行一段时间上服务器捞数据看看」 |
+| [add-ops-health-report](../changes/add-ops-health-report/proposal.md) | 会话摘要 **22 天 100% 失败**期间，容器 healthcheck 与 `/api/health` **全程为绿**——缺的是正确性指标（摘要成功率/各模块 WARN 计数），不是存活指标 | 新增（可观测性）；**用户 9-25 决定先记档后做**；前置：日志系统先整理（96.6% 是 QQ 噪声） |
+| [clean-spec-diff-residue](../changes/clean-spec-diff-residue/proposal.md) | apply 未去 diff 标记的产物残留。★ **2026-10-02 复核：范围比立项时记的大** —— `memory-system/spec.md` 5 行（`persona-overlay-perspective`）、`ai-life-system/spec.md` **约 42 行**（`worldbook-digest-summary` / `life-interval-narrative` / `chat-life-continuity` / `mood-side-analysis` / `worldview-crossworld-window` / `life-event-message-split` / `worldview-base-field` 等多次 apply 层层累积）、`alysia-console/spec.md` 1 行 | 文档卫生；⚠️ **不能用 `grep '^\+'` 直接删** —— 得逐条判「是 diff 残留还是正文」：`ai-life-system` 里混着 ASCII 树角字符 `+│` 与提示词模板正文 |
+| [tune-zero-row-checks](../changes/tune-zero-row-checks/proposal.md) | **KI-11 的决策入口**：全 core 55 个写入点只有 3 处检查 `.run().changes` —— 「改到了」与「什么都没改」同形（`markDelivered` 会影响重复推送、`PersonaStore` 8 个 `WHERE is_active=1` 会报假成功）。**观测已上线**（`observe-zero-row-writes` 打 `[WriteTrace]`），**等运行数据再逐点定性**：豁免 / 硬校验 | 新增；**用户 2026-10-02「先打日志，后续运行一段时间后检查再决策」** |
+| [fix-store-write-trace](../changes/fix-store-write-trace/proposal.md) | **存储可观测性第二刀**：KI-12（`INSERT OR REPLACE` 列单缺 `archived` → 重投静默复活软删会话）/ KI-13（知识库半截文档 + hash 去重锁死）/ KI-14（`LanceDBStore.insert` 永不抛 → 上游 catch 成死代码，**2026-09-27 事故同形代码仍活着**）/ KI-15（`vectorStore` null 静默跳过 10 条路径）/ KI-16（`PersonaStore` 读时回写默认值）/ KI-17 + KI-5 剩余 9 处裸 catch | 新增；第一刀只修"地基"，本刀要**改判断语义**，各自需独立验证 |
+| [decide-life-event-max-tokens](../changes/decide-life-event-max-tokens/proposal.md) | **KI-1 的数据决策**：`life.generateEvent` 无 `max_tokens`，与已爆三次的槽同形。观测已上线（provider `[LLM]` 行 + `[Life] event LLM` 行 + **`[LLM:memory]` 行**），**等数据再定**；顺带闭环 KI-2（`proactive.personalize` / `vision.describe`）。★ **2026-10-11 已到首批数据**：`session.summary` 槽两次采样 `reasoning/output` = **882/1081（82%）** 与 **1763/1852（95%）** —— 该槽 `max_tokens=2048`，第二条只剩 **~196 tokens 余量**，**再膨胀一次就 `finish=length` 截断**（线上那 4 次 `truncated=true` 就是这么来的）。**摘要槽也要一起纳入本次决策** | 新增；**纪律：没有观测就不许改预算数字**；数据显示安全也得在 §4.1.2 记一句闭环 |
+| [unify-core-shutdown](../changes/unify-core-shutdown/proposal.md) | **KI-6**：`core.stop()` 不关 SQLite / LanceDB 句柄 → Windows 上临时目录删不掉（EPERM）。行为变更，需单独验证 | 已定名未开 change（`modularize-core-assembly` proposal 决策 2 预留）；2026-10-02 补登记 |
 
-> 馃摝 **宸查攢璐?*锛?026-10-02 鏁寸悊锛夛細`backfill-failed-session-summaries` 宸蹭簬 **2026-09-27 褰掓。**
-> 锛坄openspec/archive/2026-09-27-backfill-failed-session-summaries/`锛夛紝鏈〃鍘熸湁鐨勪竴琛屽凡绉婚櫎
-> 鈥斺€斿畠姝ゅ墠鏄?*姝婚摼**锛坄changes/` 涓嬪凡鏃犺鐩綍锛夈€?
-> 馃棏锔?`webui-visual-redesign` 宸叉爣 `superseded`锛堥潪 backlog锛夛細鍏跺璞℃槸 Vue 鐗?webui 鐨勫竷灞€澶ф敼锛?
-> 鑰?webui 宸蹭簬 2026-10-02 鏁翠綋鍒犻櫎锛坄remove-packages-webui`锛屽凡褰掓。锛夛紱8-15 璧风殑銆屾柟妗堝緟纭銆?
-> 涓嶅啀鎺ㄨ繘锛屼笖浠ｇ爜閲屾煡鏃犲叾瀹炴柦钀界偣銆?
+> 📦 **已销账**（2026-10-02 整理）：`backfill-failed-session-summaries` 已于 **2026-09-27 归档**
+> （`openspec/archive/2026-09-27-backfill-failed-session-summaries/`），本表原有的一行已移除
+> ——它此前是**死链**（`changes/` 下已无该目录）。
+> 🗑️ `webui-visual-redesign` 已标 `superseded`（非 backlog）：其对象是 Vue 版 webui 的布局大改，
+> 而 webui 已于 2026-10-02 整体删除（`remove-packages-webui`，已归档）；8-15 起的「方案待确认」
+> 不再推进，且代码里查无其实施落点。
 >
-> 馃搵 **浠嶅湪 `docs/KNOWN-ISSUES.md` 鐧昏銆佸皻鏈紑 change 鐨勭己闄?*锛堣鍐屾槸 triage 鍏ュ彛锛屼慨涓€鏉?= 寮€涓€涓?change锛夛細
-> **KI-3**锛堜袱涓?`ILLMService` 瀹炵幇鏃犱竴鑷存€у绾︽祴璇曪級銆?*KI-4**锛坄PersonaAdapter` 瑁?`JSON.parse`锛夈€?
-> **KI-7**锛坄/stop` 鍙墦鏃ュ織涓嶄腑鏂級銆?*KI-8**锛堟牴鐩綍 `config.yml` 鏄鏂囦欢锛夈€?
-> **KI-9**锛坄memory/services/` 鐤戜技鍗婃浠ｇ爜锛夈€?*KI-10**锛堝唴鏍哥己銆屽彧鎺掑簭涓嶄緷璧栨湇鍔°€嶇殑琛ㄨ揪鏂瑰紡锛夈€?
-> **KI-21**锛堚槄 2026-10-11 鏂板锛歚al:memory-llm` **鏃犺秴鏃?* 鈥斺€?鏂綉鏃惰姹傛寕 117 鍒嗛挓涓嶆姤閿欙紱
-> 鑱婂ぉ閾捐矾鏈?60s 瓒呮椂锛岃蹇嗛摼璺病鏈夛紱绾夸笂瀹炴祴 `extractProfile (7039529ms)`锛夈€?
-> 浠ュ強**鍘嗗彶鐢诲儚鍥炲～**锛堢嚎涓?`basics`/`facts` 闀挎湡绋€鐤忥紝淇鍙繚璇佷粠姝ゅ線鍚庯級銆?
-> 鈥斺€?**宸插紑 change 鐨勯偅鍑犳潯**锛圞I-1 / KI-5 閮ㄥ垎 / KI-6 / KI-11锝濳I-17锛夊湪涓婅〃鏈夎锛岀偣杩涘幓鍗冲彲銆?
+> 📋 **仍在 `docs/KNOWN-ISSUES.md` 登记、尚未开 change 的缺陷**（该册是 triage 入口，修一条 = 开一个 change）：
+> **KI-3**（两个 `ILLMService` 实现无一致性契约测试）、**KI-4**（`PersonaAdapter` 裸 `JSON.parse`）、
+> **KI-7**（`/stop` 只打日志不中断）、**KI-8**（根目录 `config.yml` 是死文件）、
+> **KI-9**（`memory/services/` 疑似半死代码）、**KI-10**（内核缺「只排序不依赖服务」的表达方式）、
+> 以及**历史画像回填**（线上 `basics`/`facts` 长期稀疏，修复只保证从此往后）。
+> —— **已开 change 的那几条**（KI-1 / KI-5 部分 / KI-6 / KI-11～KI-17）在上表有行，点进去即可。
 
-## 鐩稿叧娲绘枃妗ｏ紙闈?spec锛屼絾鍚屼负 source of truth锛?
+## 相关活文档（非 spec，但同为 source of truth）
 
-| 鏂囨。 | 璇存槑 |
+| 文档 | 说明 |
 |------|------|
-| docs/Web-API-Design.md | Web 绔?API 濂戠害锛堚槄 寮€鍙戠害鏉燂細鏂板/淇敼 core 鏂规硶蹇呴』鍏堝鐓э級 |
-| docs/Docker-Deployment.md | 鏈嶅姟绔増鏈洿鏂?SOP锛堥儴缃叉祦绋嬶級 |
-| docs/README.md | 鍏ㄦ枃妗ｆ€荤储寮曪紙鏈枃浠朵负 spec 绱㈠紩锛孯EADME 涓烘墍鏈夋枃妗ｅ叆鍙ｏ級 |
-| openspec/archive/ | 褰掓。锛氬凡瀹屾垚 change + 鏃?spec 鐗堟湰 + legacy 杩佺Щ鏂囨。 |
-| openspec/changes/ | 杩涜涓?鎸傝捣鐨?change |
+| docs/Web-API-Design.md | Web 端 API 契约（★ 开发约束：新增/修改 core 方法必须先对照） |
+| docs/Docker-Deployment.md | 服务端版本更新 SOP（部署流程） |
+| docs/README.md | 全文档总索引（本文件为 spec 索引，README 为所有文档入口） |
+| openspec/archive/ | 归档：已完成 change + 旧 spec 版本 + legacy 迁移文档 |
+| openspec/changes/ | 进行中/挂起的 change |
