@@ -475,6 +475,14 @@ TS 不报错（少形参可赋给多形参签名），但槽位会被静默丢�
 > 逐个槽位打点会在**新增槽位时漏掉**——KI-2 的 `proactive.personalize` /
 > `vision.describe` 正是这么漏掉观测的。
 
+> ⚠️ **「所有槽位都流经同一处」只对聊天链路成立。** 记忆系统（会话摘要 /
+> 画像提取 / cron 深度重写 / 人格调整）走的是**第二个客户端**
+> `modules/resources.ts` 的 `al:memory-llm`（`resources.ts` 直连 `fetch`，
+> 刻意绕开 ProviderManager）。它由 **§4.1.3 契约 5** 单独约束。
+> 读日志时注意区分：聊天链路 `[LLM]`、记忆链路 `[LLM:memory]`。
+> （2026-10-11 `instrument-memory-llm` 补记：该前提原先写漏了，导致会话摘要槽的
+> 失败恰好落在观测盲区里。）
+
 **契约 3：`role: 'err'` 不得被压成空串。**
 
 调用方（如 `modules/life.ts` 的事件生成回调）拿到 `role === 'err'` 时
@@ -492,6 +500,41 @@ TS 不报错（少形参可赋给多形参签名），但槽位会被静默丢�
 
 **没有这两项观测就不许改预算数字**——凭感觉填正是本项目反复吃亏的地方
 （§4.1.1 那三次故障都是这么来的）。
+
+#### 4.1.3 ★ 记忆链路 LLM 客户端的观测契约（2026-10-11，change: instrument-memory-llm）
+
+> §4.1.2 契约 2 的前提「所有槽位都流经 provider 层」**与实现不符**：
+> 记忆系统走的是 `modules/resources.ts` 的 `al:memory-llm`——**第二条链路**。
+> 它此前一条日志都不打，于是线上持续发生的摘要槽失败
+> （8 天 10 次「LLM 返回空响应」+ 4 次 `truncated=true`）
+> **恰好落在观测盲区**，契约 4 的判定口径对它完全失效。
+
+**契约 5：`al:memory-llm` 必须与 provider 层同款留下预算现场。**
+
+`modules/resources.ts` 的 `memoryLlmModule.complete()` 成功路径必须打一行：
+
+```
+[LLM:memory] <model> → <内容摘要> tokens=<in>+<out>=<total> finish=<stop|length|?> reasoning=<n|?> (<Xms)
+```
+
+- `content` 为空时**单独 `logger.warn`**，文案必须区分
+  `finish=length`（预算被推理吃光 ⇒ 该槽要更大的 `max_tokens`）与
+  `finish≠length`（**不是预算问题**，另查）。
+- `usage` / `completion_tokens_details` / `finish_reason` 缺失时**降级为 `?`，不得报错**
+  （非推理模型 / 老响应）。
+- 日志标签**必须是 `[LLM:memory]`**，与聊天链路的 `[LLM]` 区分——
+  两条链路的失败处置不同（前者用户可感知，后者是静默的记忆质量），
+  混在同一标签下会让 token 统计与失败归因都失真。
+- 观测点必须在**客户端**而不是各槽位：会话摘要 / 画像提取 / cron 深度重写 /
+  人格调整**四个槽位共用这一个客户端**，逐槽打点会在新增槽位时漏掉（同契约 2 的理由）。
+
+**契约 5 的边界（刻意不做）**：本条只约定**观测**。
+该客户端**仍然没有超时 / 没有 signal / 没有 fallback**——这是已知的历史现状
+（`resources.ts` 内有明确记载），收编进 ProviderManager 是**独立 change**。
+观测到位不包括把它的健壮性一起改掉。
+
+> **判定口径与契约 4 完全一致**，两个客户端用同一套读法：
+> `finish=length` + 空内容 ⇒ 预算吃光；`finish=stop` + 空内容 ⇒ 另查。
 
 ### 4.2 人格自适应引擎
 
@@ -776,6 +819,54 @@ active fact 永久固化（valid_until=null）→ `getUserActivitySummary` 按 c
    [相关记忆] 可捞回超 24h 的对话细节（含回写后的 AI 发言）
 
 EventStore 新增 getActiveSessions(since)；构造签名加 vectorStore 参数。
+
+#### 5.4.1 ★ SessionEnd 三入口的窗口锚点契约（2026-10-11，change: fix-session-end-window）
+
+> 上面第 2 条当时只描述了 **cron 路径**的锚点，从未声明另外两个入口可以不带锚点。
+> 实现里它们**没传 `since`**，于是 `EventStore.getBySession` 落到
+> 「全历史 `ORDER BY created_at DESC LIMIT 1000`」——线上 76% 的摘要窗口跨度 > 24h。
+
+`MemoryManager` 有**三个** SessionEnd 入口，**每一个都必须传窗口锚点**：
+
+| 入口 | 触发方 | 频率 |
+|---|---|---|
+| `archiveStaleSessions()` | cron 每 6h | 4 次/天 |
+| `onSessionEnd(sessionId)` | 聊天回合 `usage.input > 8000`（`llm-agent.ts`） | 每次命中一次 |
+| `extractProfile(sessionId)` | Web 端「提取画像」按钮 | 按需 |
+
+**契约 1：锚点只有一处定义。**
+
+```
+since = ConversationStore.getLatestBySession(sessionId)?.ended_at
+        无历史摘要 → 回退 24h 前
+```
+
+该规则必须由**唯一的 helper** 提供，三个入口共用。
+「同一个规则写多份」正是本次故障的成因：cron 那份写对了，另外两份漏了。
+
+**契约 2：不传锚点的 `process(sessionId)` 是 bug，不是合法用法。**
+
+`SessionEndProcessor.process(sessionId, since?)` 的 `since` 缺省不是「从头开始」，
+而是**「取该会话全历史最近的 1000 条事件」**（`EventStore.getBySession` 缺省
+`limit=1000`、无窗口条件）。后果不是「稍微多摘要一点」，而是：
+
+1. 窗口横跨数十天，同一段历史被反复摘要
+   （线上实测：10-03 `12:10:00` / `12:10:45` / `12:11:24` 三条，间隔 45 秒，
+   `started_at` 相差 1 分钟；29 条恰好 `message_count=1000`、跨度 **46~61 天**）；
+2. 1000 条消息的 prompt 让摘要槽**稳定失败**
+   （线上 8 天 10 次空响应 + 4 次 `truncated=true`）；
+3. 单次耗时从 ~6s 涨到 **19~35s**；
+4. 摘要经 `ConversationStore.getRecent()`（按 `started_at DESC`）注回 prompt
+   → prompt 膨胀 → 更易命中 `usage.input > 8000` → **正反馈**；
+5. 同一窗口的 `ProfileExtractor.extract` 被重复执行（同一天 6 次 = 6 倍提取成本）。
+
+**契约 3：`archiveStaleSessions` 内的两个 `since` 语义不同，不得合并。**
+
+- `getActiveSessions(since)` 的 `since` = **「24h 内有过活跃」的筛选门槛**
+- `process(sid, anchor)` 的 `anchor` = **「上次摘到哪」的窗口起点**
+
+两者数值常常不同（新会话无摘要时 anchor 回退 24h，而门槛始终是 24h）。
+把二者并成一个变量会让「很久没说话的会话」被漏掉。
 
 ### 5.5 CR 修复（2026-08-29，change: cr-p0-session-isolation / cr-p0-delete-cleanup）
 

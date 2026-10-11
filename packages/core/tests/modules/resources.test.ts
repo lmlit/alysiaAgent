@@ -161,4 +161,97 @@ describe('al:memory-llm', () => {
     expect(body.response_format).toBeUndefined();
     await r.stop();
   });
+
+  // ── 预算观测（change: instrument-memory-llm，spec §4.1.3 契约 5）──────────
+  //
+  // 记忆链路是**独立于 OpenAIProvider 的第二个 LLM 客户端**，此前一条日志都不打，
+  // 于是摘要/画像/cron/人格四个槽位的失败恰好落在观测盲区里。
+  // 下面五条守「观测必须存在」且「判定口径必须可区分」。
+
+  it('★ 成功调用留下预算现场：tokens= / finish= / reasoning=', async () => {
+    globalThis.fetch = (async () => ({
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: '{"summary":"x"}' }, finish_reason: 'stop' }],
+        usage: {
+          prompt_tokens: 1200, completion_tokens: 310, total_tokens: 1510,
+          completion_tokens_details: { reasoning_tokens: 242 },
+        },
+      }),
+    })) as any;
+
+    const r = await runModule(memoryLlmModule, cfg);
+    await r.get<any>('al:memory-llm').complete('sys', 'usr');
+
+    const line = r.logger.lines.find(l => l.level === 'info' && l.msg.includes('[LLM:memory]'));
+    expect(line, '记忆链路必须留一行 [LLM:memory]（此前一条日志都没有）').toBeDefined();
+    expect(line!.msg).toContain('tokens=1200+310=1510');
+    expect(line!.msg).toContain('finish=stop');
+    expect(line!.msg).toContain('reasoning=242');
+    await r.stop();
+  });
+
+  it('★ 空响应 + finish=length → warn 指向「预算耗尽」（契约 4 的判定现场）', async () => {
+    globalThis.fetch = (async () => ({
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: '' }, finish_reason: 'length' }],
+        usage: {
+          prompt_tokens: 900, completion_tokens: 1024, total_tokens: 1924,
+          completion_tokens_details: { reasoning_tokens: 1024 },
+        },
+      }),
+    })) as any;
+
+    const r = await runModule(memoryLlmModule, cfg);
+    expect(await r.get<any>('al:memory-llm').complete('s', 'u')).toBe('');
+
+    const w = r.logger.lines.find(l => l.level === 'warn' && l.msg.includes('EMPTY content'));
+    expect(w).toBeDefined();
+    expect(w!.msg).toContain('finish=length');
+    expect(w!.msg).toMatch(/max_tokens 预算耗尽/);
+    await r.stop();
+  });
+
+  it('★ 空响应 + finish=stop → warn 明确说【不是】预算问题（防误导）', async () => {
+    globalThis.fetch = (async () => ({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: '' }, finish_reason: 'stop' }] }),
+    })) as any;
+
+    const r = await runModule(memoryLlmModule, cfg);
+    await r.get<any>('al:memory-llm').complete('s', 'u');
+
+    const w = r.logger.lines.find(l => l.level === 'warn' && l.msg.includes('EMPTY content'));
+    expect(w).toBeDefined();
+    expect(w!.msg).toContain('不是预算问题');
+    expect(w!.msg).not.toMatch(/max_tokens 预算耗尽/);
+    await r.stop();
+  });
+
+  it('★ 字段缺失（非推理模型 / 老响应）→ 显示 ? 且不抛不崩', async () => {
+    globalThis.fetch = (async () => ({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: 'ok' } }] }),
+    })) as any;
+
+    const r = await runModule(memoryLlmModule, cfg);
+    expect(await r.get<any>('al:memory-llm').complete('s', 'u')).toBe('ok');
+
+    const line = r.logger.lines.find(l => l.level === 'info' && l.msg.includes('[LLM:memory]'));
+    expect(line!.msg).toContain('tokens=?');
+    expect(line!.msg).toContain('finish=?');
+    expect(line!.msg).toContain('reasoning=?');
+    await r.stop();
+  });
+
+  it('非 2xx → 抛错且错误文本含响应体（不静默返回空串）', async () => {
+    globalThis.fetch = (async () => ({
+      ok: false, status: 400, text: async () => '{"error":{"message":"bad json"}}',
+    })) as any;
+
+    const r = await runModule(memoryLlmModule, cfg);
+    await expect(r.get<any>('al:memory-llm').complete('s', 'u')).rejects.toThrow(/bad json/);
+    await r.stop();
+  });
 });

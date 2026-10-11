@@ -5,7 +5,6 @@
  * 变成内核里的服务。上层 `al:memory` 只认服务名，不认它们怎么建的。
  */
 
-import { logger } from '../utils/logger.js';
 import { initializeDatabase } from '../memory/database.js';
 import { slotToBody } from '../provider/sampling.js';
 import type { SamplingSlot } from '../provider/sampling.js';
@@ -136,12 +135,16 @@ export const memoryLlmModule: Module<HttpEndpointConfig> = {
   name: 'al:memory-llm',
   apply(ctx, config) {
     const cfg = config!;
+    // ★ 用 `ctx.logger`（生产环境 = `utils/logger` 的同一对象，见 `kernel/host.ts:37`）——
+    //   这样观测是可断言的：`tests/modules/helpers.ts` 的 runModule 注入测试 logger。
+    const log = ctx.logger;
     ctx.provide('al:memory-llm', {
       complete: async (
         systemPrompt: string,
         userPrompt: string,
         sampling?: Partial<SamplingSlot>,
       ): Promise<string> => {
+        const start = Date.now();
         const resp = await fetch(`${cfg.baseUrl}/chat/completions`, {
           method: 'POST',
           headers: {
@@ -161,7 +164,42 @@ export const memoryLlmModule: Module<HttpEndpointConfig> = {
           throw new Error(`LLM API error ${resp.status}: ${await resp.text().catch(() => '')}`);
         }
         const data = await resp.json() as any;
-        return data?.choices?.[0]?.message?.content || '';
+        const content: string = data?.choices?.[0]?.message?.content || '';
+
+        // ★ 2026-10-11（instrument-memory-llm）：记忆链路是**独立于 OpenAIProvider 的
+        //   第二个 LLM 客户端**（故意绕开 ProviderManager 直连 fetch，见上方注释）。
+        //   此前它一条日志都不打，于是会话摘要 / 画像提取 / cron 深度重写 / 人格调整
+        //   这四个槽位的失败**恰好落在观测盲区**——线上 8 天 10 次「空响应」+ 4 次
+        //   `truncated=true` 全都看不到 finish_reason，无法按 spec §4.1.2 契约 4 判定。
+        //   这里补齐与 `provider/openai.ts` 同款的预算现场；日志标签刻意用
+        //   `[LLM:memory]` 与聊天链路的 `[LLM]` 区分（两者失败处置不同）。
+        const finishReason: string | undefined = data?.choices?.[0]?.finish_reason ?? undefined;
+        const reasoningTokens: number | undefined =
+          data?.usage?.completion_tokens_details?.reasoning_tokens ?? undefined;
+        const usage = data?.usage;
+        const tokenStr = usage
+          ? `${usage.prompt_tokens}+${usage.completion_tokens}=${usage.total_tokens}`
+          : '?';
+
+        log.info(
+          `[LLM:memory] ${cfg.model} → ${content.slice(0, 80).replace(/\n/g, ' ')}` +
+          ` tokens=${tokenStr} finish=${finishReason ?? '?'} reasoning=${reasoningTokens ?? '?'}` +
+          ` (${Date.now() - start}ms)`
+        );
+
+        // ★ 空响应要单独可见（spec §4.1.3 契约 5）："没内容"与"预算被推理吃光"
+        //   此前在日志里长得一样，而后者有完全不同的处置（该槽要更大的 max_tokens）。
+        if (!content) {
+          log.warn(
+            `[LLM:memory] ${cfg.model} returned EMPTY content — finish=${finishReason ?? '?'}` +
+            ` tokens=${tokenStr} reasoning=${reasoningTokens ?? '?'}` +
+            (finishReason === 'length'
+              ? ' → max_tokens 预算耗尽（推理吃光），该槽位需要更大的 max_tokens'
+              : ' → 不是预算问题（finish≠length），需另查')
+          );
+        }
+
+        return content;
       },
     });
   },

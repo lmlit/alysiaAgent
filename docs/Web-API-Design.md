@@ -132,6 +132,12 @@ extractProfile(sessionId: string): Promise<{
 - 用户消息 → LLM 提取 facts → 冲突合并入画像
 - 自动排除 NPC 消息（skip_profile）
 
+**窗口语义**（2026-10-11 `fix-session-end-window`）：只处理
+**该会话最新一条摘要 `ended_at` 之后**的事件（无历史摘要则回退 24h 前）。
+签名与返回结构不变——但修复前该入口**不传窗口锚点**，会落到
+「全历史最近 1000 条事件」，即点一次按钮就重摘数十天历史
+（线上实测窗口跨度 46~61 天）。契约见 `openspec/specs/memory-system/spec.md` §5.4.1。
+
 ---
 
 ### 2.3 `GET /api/profile` — 画像快照

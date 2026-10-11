@@ -1045,11 +1045,35 @@ export class MemoryManager {
     return this.promptAssembler.assemble(mode, retrieved, triggers, lifeInjection, sessionId);
   }
 
+  /**
+   * 会话摘要的窗口锚点 = 该会话**最新一条摘要的 ended_at**；无历史摘要 → 24h 前。
+   *
+   * ★ 2026-10-11（fix-session-end-window）：`MemoryManager` 有三个 SessionEnd 入口
+   *   （`onSessionEnd` / `extractProfile` / `archiveStaleSessions`），**锚点规则只能有
+   *   这一处**。此前 cron 那份写对了、另外两个入口漏传 `since`，于是
+   *   `process(sessionId)` 落到 `EventStore.getBySession` 的缺省行为
+   *   「全历史 `ORDER BY created_at DESC LIMIT 1000`」：
+   *   线上实测 76% 的摘要窗口跨度 > 24h，29 条恰好 1000 条消息、跨度 46~61 天，
+   *   同一段历史被反复摘要（45 秒内连摘三次），摘要槽稳定失败（8 天 10 次空响应）。
+   *
+   * ⚠️ 不要与 `archiveStaleSessions` 里 `getActiveSessions(since)` 的那个 `since` 混用：
+   *   那个是「24h 内有过活跃」的**筛选门槛**，与本锚点是两个不同语义——
+   *   合并成一个变量会漏掉「很久没说话的会话」。
+   */
+  private summaryAnchor(sessionId: string): Date {
+    const last = this.conversationStore.getLatestBySession(sessionId);
+    const anchor = last?.ended_at
+      ? new Date(last.ended_at)
+      : new Date(Date.now() - 24 * 3600 * 1000);
+    logger.debug(`[Memory] summary anchor for ${sessionId.slice(-24)}: ${anchor.toISOString()}`);
+    return anchor;
+  }
+
   async onSessionEnd(sessionId: string): Promise<void> {
     logger.info(`[Memory] onSessionEnd: ${sessionId.slice(-30)} (summary + profile)`);
     const start = Date.now();
     try {
-      await this.sessionEndProcessor.process(sessionId);
+      await this.sessionEndProcessor.process(sessionId, this.summaryAnchor(sessionId));
       logger.info(`[Memory] onSessionEnd done (${Date.now() - start}ms)`);
     } catch (err: any) {
       logger.error(`[Memory] onSessionEnd failed: ${err.message}`);
@@ -1080,8 +1104,9 @@ export class MemoryManager {
       let failed = 0;
       for (const sid of active) {
         try {
-          const last = this.conversationStore.getLatestBySession(sid);
-          const anchor = last?.ended_at ? new Date(last.ended_at) : since;
+          // ★ 2026-10-11 fix-session-end-window：锚点改走共用 helper
+          //   （行为不变：无历史摘要仍回退 24h 前）。
+          const anchor = this.summaryAnchor(sid);
           const r = await this.sessionEndProcessor.process(sid, anchor);
           if (r.summarized) archived++;
           else if (r.reason === 'summary-failed') failed++;
@@ -1217,7 +1242,9 @@ export class MemoryManager {
   async extractProfile(sessionId: string): Promise<{ factsExtracted: number; summaryGenerated: boolean }> {
     const before = JSON.parse(this.profileStore.get().facts).length;
     const start = Date.now();
-    await this.sessionEndProcessor.process(sessionId);
+    // ★ 2026-10-11 fix-session-end-window：这里原先也不传 `since`，与 onSessionEnd 同病——
+    //   一次「提取画像」会把全历史最近 1000 条事件重摘一遍。
+    await this.sessionEndProcessor.process(sessionId, this.summaryAnchor(sessionId));
     const after = JSON.parse(this.profileStore.get().facts).length;
     const factsExtracted = Math.max(0, after - before);
     // ★ 9-25 fix-session-summary-silent-failure：**不再恒返回 true**——

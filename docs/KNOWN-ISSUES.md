@@ -30,9 +30,17 @@
 >    最终日志统一显示 `empty response` → **网络故障伪装成「模型没输出」**。
 >
 > 两处都已修好，判定入口：
-> - `[LLM] <model> → … tokens=… finish=<x> reasoning=<n|?> (…)` —— **所有槽位全局可见**
+> - `[LLM] <model> → … tokens=… finish=<x> reasoning=<n|?> (…)` —— **聊天链路**的槽位
+> - `[LLM:memory] <model> → … tokens=… finish=… reasoning=…` —— **记忆链路**
+>   （会话摘要 / 画像提取 / cron 深度重写 / 人格调整）★ **2026-10-11 补**
+>   （change: `instrument-memory-llm`）。⚠️ 这四类之前**一条日志都没有**——
+>   §4.1.2 契约 2 那句「所有槽位都流经 provider 层」是错的，它们走
+>   `modules/resources.ts` 的第二个客户端。**部署 HEAD 之前，摘要槽的失败根本采不到数。**
 > - 空响应会单独 warn，并直接指出「预算耗尽」还是「不是预算问题」
 > - `[Life] event LLM: finish=… tokens=… reasoning=… content=N字 (…)` —— 事件槽位级现场
+>
+> **若手边日志里没有任何 `[LLM:memory]` 行，先确认线上镜像是否含本 change**——
+> 缺它等于记忆链路全盲。
 >
 > **判定口径**：`finish=length` + `content=0字` ⇒ 预算被推理吃光，该加 `max_tokens`；
 > `finish=stop` + `content=0字` ⇒ 另查。
@@ -276,6 +284,21 @@
 
 ### KI-19 🟡 同一会话可能被重复摘要（20 秒内两条 conversation）
 
+> ★ **2026-10-11 更新：根因已坐实并修复**（change: `fix-session-end-window`）。
+> 下面「疑似原因」第 2 条猜对了方向，但真正的机制更基础：
+> **`MemoryManager` 的三个 SessionEnd 入口里，`onSessionEnd` / `extractProfile`
+> 没传窗口锚点** → `process(sessionId)` 落到 `EventStore.getBySession` 的缺省语义
+> 「全历史 `ORDER BY created_at DESC LIMIT 1000`」。
+> 于是**每一次触发都会为同一段历史再造一条 conversation 行**——
+> 「20 秒内两条」「45 秒内三条」都是这个机制的直接表象。
+>
+> 服务器实测（2026-10-11）：主线 QQ 会话 199 条摘要里 **153 条（76%）窗口跨度 > 24h**，
+> **29 条恰好 `message_count=1000`、跨度 46~61 天**；
+> 10-03 `12:10:00` / `12:10:45` / `12:11:24` 三条的 `started_at` 相差 1 分钟。
+> 修复 = 三个入口共用一个锚点 helper（`getLatestBySession().ended_at`，无摘要回退 24h）。
+> 契约见 `openspec/specs/memory-system/spec.md` §5.4.1。
+> **验证口径**：部署后查新摘要行的 `ended_at - started_at` 应 ≤ 24h。
+
 - **现象**：`conversations` 表里同一子 agent 会话在 **09:29:56 与 09:30:14** 各产生一条记录
   （实测 `dsh:9a33c81f-…`；`dsh:session-02e15a3c` 同样 2 条）。
 - **影响**：重复的 LLM 摘要调用（成本）＋可能有重复/漂移的记忆摘要。
@@ -284,6 +307,10 @@
 - **证据**：2026-10-02 本机库只读盘点（`conversations` 表按 session_id 分组计数 + 时间戳）。
 - **建议方向**：先看 `process()` 的幂等判据（processed 位 / 摘要锚点）在「没有新消息时」是否早退，
   再决定是加幂等还是修触发方。**先取证再改**（同 KI-1 纪律）。
+
+- **残留（未闭环）**：本 change 修的是**锚点缺失**。「两个触发方在同一窗口内并发调用
+  `process()`」是否还需要**显式幂等**（例如按 session 加锁），
+  等部署后用 §5.4.1 的验证口径观察一轮再定。
 
 ### KI-20 🟠 dsh 的「runtime context 快照」被当用户消息回传入库（回流闭环）
 
@@ -302,6 +329,48 @@
 - **建议方向**：adapter 侧过滤这类合成消息（payload 前缀判据），或提取侧对
   `Current runtime context` 开头的 payload 打 `skip_profile`（后者是现成机制）。
   ⚠️ 先确认这段文本是 dsh 合成注入还是真实用户输入（前者才该滤）。
+
+### KI-21 🔴 记忆链路 LLM 客户端**没有超时** → 一次网络中断把请求挂了 117 分钟
+
+- **现象**（2026-10-11 线上实测）：`POST /api/sessions/<qq>/extract`
+  （= 控制台「提取画像」按钮）的日志为
+  `[Memory] extractProfile: 0 new facts, summary ok (7039529ms)` —— **7,039,529ms ≈ 1 小时 57 分**。
+  发起后 HTTP 请求一直不返回，把发起方的连接一起拖死。
+- **根因**：`modules/resources.ts` 的 `al:memory-llm` **绕开 ProviderManager 直连 `fetch`，
+  没有 `AbortController` / 没有超时**（`resources.ts` 内的注释已自陈这是历史现状）。
+  对比：**聊天链路**的 `provider/openai.ts` 有 **60s 超时 + Promise.race**
+  （就是为 `llm-request-timeout-race` 那个事故加的）。
+  同一断网窗口里两条链路的日志对比非常清楚：
+  ```
+  [10:49:47] [ERROR] [LLM] deepseek-v4-flash timed out after 60s        ← 聊天链路：60s 就放弃
+  [10:50:10] [WARN] [Life] event LLM call failed (310724ms)             ← 事件槽：310s
+  [12:08:56] [INFO] [Memory] extractProfile: … (7039529ms)              ← 记忆链路：117 分钟
+  ```
+- **触发场景**（同日 10:13–12:13 宿主机网络中断，见下「同批次发现」）：
+  断网期间发出的记忆链路请求**不会失败，只会挂住**——不报错、不降级、不留痕，
+  直到 TCP 自己放弃。上层（`extractProfile` / `onSessionEnd` 的调用方）全部被阻塞。
+- **影响**：① Web「提取画像」按钮卡死近 2 小时；② `onSessionEnd` 被 `llm-agent.ts`
+  **不 await** 地调用，所以它挂住不会阻塞聊天——但会**长期占住一条 promise 与其持有的
+  events 快照**；③ 断网期间 cron 的 `archiveStaleSessions` 也可能整轮卡住。
+- **证据**：`alysia-2026-10-11.log`（上述三行）；`docker logs alysia-server --since 1h`。
+- **建议方向**：给 `al:memory-llm` 补**与聊天链路同款的 60s 超时 + `AbortSignal`**
+  （属行为变更，需独立 change）。★ 注意与 `instrument-memory-llm` 的分工：
+  那一刀只补**观测**，明说了「不改超时/signal/fallback」。
+
+### ⚠️ 同批次发现：宿主机内存长期吃紧（非代码缺陷）
+
+- **现象**：`free -m` → 总 **1613MB**、used 1424MB、**available 仅 188MB**；
+  `dmesg` 里 `Under memory pressure, flushing caches` 累计 **808 次**。
+- **大户**：`astrbot` 容器 **549MB** + casaos 全家桶（`casaos-app-mana` 120MB、
+  `casaos-local-st` 72MB、`casaos-message-` 35MB + `casaos`）≈ 260MB。
+  **alysia-server 只占 54MB**（512MB 限额的 10.6%）。
+- **磁盘**：`/var/log/journal` = **3.3GB**；根分区 40G 已用 80%（剩 7.7G）。
+- **2026-10-11 事故**：10:13–12:13 两个**互不相关的容器同时**出网全挂
+  （alysia 20 次 `fetch failed`；astrbot `Connection timeout to host wss://api.sgroup.qq.com/websocket`），
+  12:13 自行恢复。该窗口与内存压力密集期重合，`OOMKilled=0`（没被 OOM，是被拖慢/饿死）。
+  ⚠️ 时间点与 10:10 部署新镜像相邻，**不能排除新容器（+54MB）是压垮的最后一根稻草**。
+- **建议方向**：`journalctl --vacuum-size=200M` 先回收 3.1GB 磁盘与对应的页缓存压力；
+  再评估 astrbot 与昔涟是否该分机。
 
 ---
 
