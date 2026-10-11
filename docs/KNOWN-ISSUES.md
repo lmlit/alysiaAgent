@@ -378,20 +378,48 @@
   （属行为变更，需独立 change）。★ 注意与 `instrument-memory-llm` 的分工：
   那一刀只补**观测**，明说了「不改超时/signal/fallback」。
 
-### ⚠️ 同批次发现：宿主机内存长期吃紧（非代码缺陷）
+### ⚠️ 同批次发现（★ 当晚更正）：**根因是宿主 DNS，不是内存**
 
-- **现象**：`free -m` → 总 **1613MB**、used 1424MB、**available 仅 188MB**；
-  `dmesg` 里 `Under memory pressure, flushing caches` 累计 **808 次**。
-- **大户**：`astrbot` 容器 **549MB** + casaos 全家桶（`casaos-app-mana` 120MB、
-  `casaos-local-st` 72MB、`casaos-message-` 35MB + `casaos`）≈ 260MB。
-  **alysia-server 只占 54MB**（512MB 限额的 10.6%）。
-- **磁盘**：`/var/log/journal` = **3.3GB**；根分区 40G 已用 80%（剩 7.7G）。
-- **2026-10-11 事故**：10:13–12:13 两个**互不相关的容器同时**出网全挂
-  （alysia 20 次 `fetch failed`；astrbot `Connection timeout to host wss://api.sgroup.qq.com/websocket`），
-  12:13 自行恢复。该窗口与内存压力密集期重合，`OOMKilled=0`（没被 OOM，是被拖慢/饿死）。
-  ⚠️ 时间点与 10:10 部署新镜像相邻，**不能排除新容器（+54MB）是压垮的最后一根稻草**。
-- **建议方向**：`journalctl --vacuum-size=200M` 先回收 3.1GB 磁盘与对应的页缓存压力；
-  再评估 astrbot 与昔涟是否该分机。
+> ⚠️ **初稿把 2026-10-11 那次 2 小时断网归因成「内存吃紧」，那是错的。**
+> 当晚查 journal 拿到真凭据：**dockerd 的 DNS 解析器在上游超时**。
+> 本节保留更正过程，因为「先写错再纠正」这件事本身值得留痕。
+
+**真正的现象**（`journalctl -u docker`）：
+
+```
+[10:31:34] dockerd: error   "[resolver] more than 1024 concurrent queries"
+[10:33:10] dockerd: warning "[resolver] connect failed" dial udp 127.0.0.53:53: i/o timeout
+[11:44:29] dockerd: error   "[resolver] failed to query external DNS server"
+                 question=";api.sgroup.qq.com.  IN  AAAA"
+```
+
+**解析链路**：`容器 → 127.0.0.11（Docker 内嵌）→ 宿主 127.0.0.53（systemd-resolved）`。
+`resolvectl statistics`：**148,980 miss / 1,618 hit、4 次上游超时**，`NRestarts=0`。
+
+**能同时解释「两个无关容器一起挂」+「三套 API 全中」+「12:13 自愈」**——
+共用宿主 stub resolver，上游恢复即全线恢复。
+
+**为什么排除内存**：`OOMKilled=0`；7 天 `oom-kill` **0 次**；
+**swap 只用 268K / 2047MB**——有 swap 却不换页，内核不认为内存告急。
+
+**今天独有**：DNS 故障 `10-09 = 0` / `10-10 = 0` / `10-11 = 8`，不是慢性病。
+
+**建议的针对性缓解**（**尚未执行**）：`/etc/docker/daemon.json` 加
+`"dns": ["223.5.5.5", "119.29.29.29"]`，让容器绕开宿主 stub resolver。
+
+#### 内存吃紧仍然属实，但**降级为「背景噪声」而非事故根因**
+
+- `available` 长期只有 ~180MB（总 1613MB）；大户是 **astrbot 549MB** + casaos 全家桶 ~260MB，
+  **alysia-server 只占 54MB**。
+- `journald: Under memory pressure, flushing caches` 7 天 **635 次**（最近一次就在刚才）——
+  这是 systemd 的 **PSI 触发式刷缓存**，**不是危机指标**。
+- `/var/log/journal` = **3.2GB**（攒了 83 天，7-20 起），`journald.conf` 全默认
+  → 上限是文件系统的 10%（≈4G），属**正常涨到接近上限**。
+- **它不占 RAM**（在磁盘上），所以 `journalctl --vacuum-size=200M` 回收的是**磁盘**（约 3.1GB），
+  **不会解决 DNS 问题、也不会明显缓解内存**。
+- ⚠️ journal 里**几乎没有昔涟的日志**（近 7 天提到 alysia 仅 22 行）——
+  应用日志在 `~/alysia/data/logs/`，容器 stdout 在 `/var/lib/docker/containers`（26MB）。
+  **清 journal 不会丢任何昔涟的日志。**
 
 ---
 
