@@ -98,4 +98,33 @@ describe('PromptAssembler', () => {
     expect(prompt).toContain('函数式编程');
     expect(prompt).toContain('Rust语言');
   });
+
+  // ★ 10-15 fix-reflection-insight-misroute：【关于我】块限量注入。
+  //   每日反思每天产一条，线上实测 31 条 = 1058 字 ≈ 705 tokens（占 3200 预算的 22%），
+  //   且该块是最后一个 canFit 检查的块 → 超预算整块被丢，她一条都读不到。
+  it('【关于我】只注入最近 8 条，较早的不进 prompt（但仍在库里）', async () => {
+    const now = Date.now();
+    const facts = Array.from({ length: 12 }, (_, i) => ({
+      fact: `第${i + 1}条自我认知`,
+      confidence: 0.5,
+      evidence: `每日反思 2026-09-${String(i + 1).padStart(2, '0')}`,
+      source_event: `reflection-2026-09-${String(i + 1).padStart(2, '0')}`,
+      updated_at: new Date(now + i * 1000).toISOString(),
+      source: 'inferred' as const,
+      valid_from: new Date(now + i * 1000).toISOString(),
+      valid_until: null,
+      status: 'active' as const,
+      category: 'general' as const,
+    }));
+    profileStore.addCharacterFacts(facts);
+
+    // 库里完整保留 12 条
+    expect(profileStore.getActiveCharacterFacts()).toHaveLength(12);
+
+    const prompt = await assembler.assemble('chat');
+    // 最近 8 条（5..12）在，最早 4 条（1..4）不在
+    for (const n of [5, 8, 12]) expect(prompt).toContain(`第${n}条自我认知`);
+    for (const n of [1, 2, 3, 4]) expect(prompt).not.toContain(`第${n}条自我认知`);
+    expect(prompt).toContain('[关于我]');
+  });
 });

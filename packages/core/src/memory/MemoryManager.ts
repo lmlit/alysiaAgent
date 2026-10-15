@@ -1189,7 +1189,8 @@ export class MemoryManager {
   /** ★ 8-31 每日反思闭环（life-reflection-loop）——L3 自修改执行器：
    *   LLM 反思（今日事件流+情绪+当前人格）输出 adjustments/insight/reflection，
    *   回写：adjustments 走 5 道护栏调人格参数（delta 钳制 ±0.05，反思是慢变量）、
-   *   insight 进画像 facts（冲突检测）、reflection 存 ai_life_state（WebUI 可读）。
+   *   insight 进**角色画像** character_facts、【关于我】块（见下方 ★ 10-15）、
+   *   reflection 存 ai_life_state（WebUI 可读）。
    *   @returns 各回写结果统计 */
   recordReflection(input: { reflection: string; adjustments?: Array<{ param: string; delta: number; reason: string }>; insight?: string }): {
     appliedAdjustments: number; blockedAdjustments: number; insightAdded: boolean; reflectionSaved: boolean;
@@ -1209,10 +1210,17 @@ export class MemoryManager {
       else blockedAdjustments++;
     }
 
-    // ② 洞察进画像（inferred 来源，冲突检测由 addFacts 承担——user 声明不可被覆盖）
+    // ② 洞察进**角色画像**（★ 10-15 fix-reflection-insight-misroute）
+    //   LIFE_REFLECTION_PROMPT 要的是「我悟到的一个关于**自己**的事实」（其示例原文
+    //   「我其实很享受被需要的时刻」），所以它的家是 character_facts（PromptAssembler 的
+    //   【关于我】块），**不是** user_profile.facts。
+    //   此前误写用户画像 → 她两个月积累的自我认知既读不到（character_facts 长期 0 条），
+    //   又把用户画像污染成"她的自述合集"。
+    //   category 也不再硬编码 preference：那是**用户偏好**类目，且 90 天 TTL 对自省语义不对。
+    //   取 general（60 天）——自省由每日反思持续重产，短 TTL 不易堆积陈旧自我描述。
     if (input.insight?.trim()) {
       const now = new Date().toISOString();
-      insightAdded = this.profileStore.addFacts([{
+      insightAdded = this.profileStore.addCharacterFacts([{
         fact: input.insight.trim().slice(0, 100),
         confidence: 0.5,
         evidence: `每日反思 ${now.slice(0, 10)}`,
@@ -1222,7 +1230,7 @@ export class MemoryManager {
         valid_from: now,
         valid_until: null,
         status: 'active',
-        category: 'preference',
+        category: 'general',
       }]).length > 0;
     }
 

@@ -9,6 +9,22 @@ import type { SearchResult, WorldbookEntry } from './types.js';
 import { TokenBudget } from './TokenBudget.js';
 import { logger } from '../utils/logger.js';
 
+/**
+ * 【关于我】块最多注入几条角色事实（★ 10-15 fix-reflection-insight-misroute）。
+ *
+ * 每日反思每天生成一条「我悟到的关于自己的事实」，天然会累积。线上实测 31 条
+ * = 1058 字 ≈ 705 tokens，占满 3200 预算的 22%；而【关于我】是 assembleChat 里
+ * **最后一个**做 canFit 检查的块（前面 persona / overlay / basics / prefs /
+ * 关于你的事实 都已 reserve）→ 超预算时整块被丢弃，她一条都读不到。
+ *
+ * 去重不是解药：31 条的措辞差异超出 normalizeKey（前 20 字）与 normContains 的
+ * 判定范围，实测 addCharacterFacts supersede 0 条。
+ *
+ * 故取**最近 N 条**——自省表达的是"我此刻是谁"，近期的才代表当下的她。
+ * 更早的仍完整留在库里（只是不进 prompt）；长期方案是把陈旧自省归并成稳定的自我描述。
+ */
+const CHARACTER_FACTS_IN_PROMPT = 8;
+
 export class PromptAssembler {
   constructor(
     private profileStore: ProfileStore,
@@ -125,8 +141,18 @@ ${rangeText}`;
     }
 
     // ★ 8-29 独立人格：【关于我】——她的角色事实（character_facts）注入，她记得自己的事
+    // ★ 10-15 fix-reflection-insight-misroute：**限量注入**。
+    //   每日反思每天产一条「关于我」，线上实测 31 条 = 1058 字 ≈ 705 tokens，
+    //   占满 3200 预算的 22%；而本块是**最后一个** canFit 检查的块（前面 persona/
+    //   basics/prefs/关于你的事实 都已 reserve）→ 极易整块被丢，等于她一条都读不到。
+    //   ★ 且实测**去重救不了它**：31 条措辞差异超出 normalizeKey 前 20 字与 normContains
+    //     的判定范围，addCharacterFacts 去重结果为 supersede 0 条。
+    //   故取**最近 N 条**——自省说的是"我此刻是谁"，近期的才代表当下的她。
+    //   旧的仍在库里（只是不进 prompt）；长期方案是把陈旧自省归并成稳定的自我描述。
     try {
-      const myFacts = this.profileStore.getActiveCharacterFacts();
+      const myFacts = this.profileStore
+        .getActiveCharacterFacts() // 按插入顺序（旧→新）
+        .slice(-CHARACTER_FACTS_IN_PROMPT);
       if (myFacts.length > 0) {
         const myText = myFacts
           .map(f => `- ${f.fact}${this.formatFactTime(f.valid_from, f.updated_at)}`)
