@@ -29,3 +29,7 @@ cyrene-assets/
 # ★ 设计 hook（impeccable）的工具状态：config 是本机忽略规则，cache 还含绝对 Windows 路径
 #   两者都不该进仓库（2026-09-25）
 .impeccable/
+
+# ★ 2026-10-15 服务器迁移：阿里云 Workbench CLI 落在工作区内（沙箱只允许写工作区），
+#   是 14MB 的第三方二进制 + OSS 下载的 zip，同 8-09 事故模式——未忽略就会被 git add -A 扫走
+.tools/

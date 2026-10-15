@@ -1008,6 +1008,43 @@ query → Worldbook 匹配 → embed API → LanceDB 向量检索
 - 本 change 的范围仅「凭据外置」；pre-commit 凭据扫描（治「敏感内容进公开仓库」的习惯问题）
   另开 change，不混在一起
 
+**† 2026-10-15 迁移到新机（migrate-server-to-new-host）**：
+
+服务已从旧机迁至新机（<SERVER_IP>，root + SSH 密钥免密）。同步脚本随之调整**两处**，
+上面「★ 9-25 凭据外置」段的纪律**继续有效、不被推翻**：
+
+- **† 契约 1：目标主机必须可配置，默认值可运行。**
+  `SERVER="${ALYSIA_SERVER:-root@<SERVER_IP>}"`。硬编码主机是本次迁移暴露的直接缺陷
+  （换一台机器就要改脚本正文）；留默认值是为了不动脑即可运行，留 env 覆盖是为了下一次迁移
+  与本地对着别的实例调试。**被否决**：写进 `config.yml` —— 那份文件是部署产物，
+  本机与服务器共用一份会互相污染（同类事故：`server-bind-host` 的 `host:` 字段）。
+
+- **† 契约 2：凭据要求是条件式的 —— 远程为 root 时无需凭据。**
+  脚本先探测远程真实身份：`REMOTE_UID="$(ssh "$SERVER" 'id -u')"`；
+  `REMOTE_UID = 0` → `SUDO_PREFIX=""`（免凭据）；否则走上面的优先级链并置
+  `SUDO_PREFIX="echo '$SUDO_PASS' | sudo -S "`。判断依据是**远程的真实身份**而非本机开关
+  （开关会被忘记、会与实际不符，`id -u` 不会说谎）。
+  前缀名取 `SUDO_PREFIX` 而非 `DOCKER_PREFIX`：实测 5 个调用点里有一个是 `sudo -S chown`
+  （容器 → 宿主机取文件后的属主修正），不只 docker。
+
+  ★ **这不是对「两者皆无 → exit 1」的削弱。** 该条款的**设计意图是「不许静默回落」**，
+  不是「无论什么场景都必须有密码」。在 root 场景下「没有密码」是**正确状态**而非缺失 ——
+  此时仍要求密码会让一个本可正常工作的情况被判死（这正是迁移前的实际故障形态）。
+  因此原条款**原文保留**，仅把适用条件明确为「**远程非 root** 且两者皆无」。
+
+- **† 契约 3：取代与新增是两件事。**
+  本 change 只改目标主机与凭据模型（+ 部署 SOP 与 `.gitignore` 的仓库卫生，同属一次迁移收尾）。
+  **旧机回收、凭据文件删除、LanceDB 瘦身都不夹带** —— 分别是旧机废弃、独立瘦身 change 的事。
+
+**迁移事实（落地证据，供追溯）**：停机窗口约 2~3 分钟；`./data` 612M → 压缩 225M（剔除
+`alysia.db.bak-*`）；旧机 → 新机直传约 11.6 MB/s；镜像 `save`/`load` 后 **15 层 digest 逐字节一致**
+（`.Id` 差异仅因存储驱动不同：旧机 containerd snapshotter vs 新机 overlay2）；
+`PRAGMA integrity_check` ok→ok；关键表计数（`ai_life_events` / `ai_life_daily_summaries` /
+`ai_life_intents` / `conversations` / `worldbook_entries` / `life_templates` / `profile.facts`）
+**逐项一致**；向量 2601→2602 行（+1 为迁移后新问候事件的向量，非丢失）；
+模块 13/13 + 10/10；QQ 官方 `READY` 且**主动消息实发成功**（端到端证据）。
+旧机保留为**回滚锚点**（数据原封不动），同机的 `astrbot` 容器全程未动。
+
 **★ 8-28 分类容错（profile-extractor-category-fix）**：
 - 根因：LLM 实测输出 location/interest/hobby 等自由词不遵循枚举 → 全回落 general（分类功能形同虚设）
 - 修复：prompt 强约束（category 必须且只能从五个枚举值中选择，附中文语义）+ 提取器
