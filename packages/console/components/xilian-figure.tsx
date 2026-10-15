@@ -1,90 +1,113 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useState } from 'react'
 import { cn } from '@/lib/utils'
-import { XilianAvatar } from '@/components/xilian-avatar'
-import { useLive2D } from '@/components/live2d/live2d-layer'
+import { useApi } from '@/lib/api/use-api'
+import { stickerApi } from '@/lib/api/modules'
 
 /**
- * 昔涟的**大尺寸形象** —— Live2D 优先，暖光球兜底。
+ * 昔涟的**大尺寸形象** —— 表情包轮换。
  *
- * 分工（change: migrate-live2d-to-console 决策 A）：
- *   - **小尺寸**（消息气泡 34 / 顶栏 44 / 侧栏 36 / CTA 120）→ 一律 `XilianAvatar`（SVG 暖光球）
- *     给 34px 的位置塞 3D 模型是荒谬的
- *   - **大尺寸 hero** → 本组件
+ * ★ 为什么不再用 Live2D（轻月 2026-10-03）：
+ *   9MB 模型、加载期空白、跨页持久化的复杂度，换来的只是"会呼吸"；
+ *   而手边这套表情包本来就是她的脸，还带情绪和台词。
+ *   形象应该让人**一眼认出是她**，而不是让人**等它加载完**。
  *
- * ★ 本组件**不持有 canvas**（change: live2d-persist-across-pages）：
- *   Live2D 实例在 `Live2DLayer`（root layout）里跨路由存活，本组件只做两件事——
- *   ① 注册一个"槽位"，让 layer 把共享 canvas portal 进来
- *   ② 容器尺寸变化时通知 layer 重算缩放
- *   这样换页面**不会重载 9MB 模型**（原先每次换页都要重建，约 500ms + 一次暖光球闪现）。
+ * ★ Live2D 的代码**原样保留**（`lib/live2d/`、`components/live2d/` 都没动），
+ *   只是 root layout 不再挂载 `Live2DLayer` —— 想回去，改一行即可。
+ *
+ * 尺寸分工不变（change: migrate-live2d-to-console 决策 A）：
+ *   - 小尺寸（气泡 34 / 顶栏 44 / 侧栏 36 / CTA 120）→ `XilianAvatar`（SVG 暖光球）
+ *   - 大尺寸 → 本组件
+ *
+ * change: sticker-figure
  */
-const RATIO = 0.88
+
+/** 轮换间隔。太快像闪烁，太慢就成了一张静态图。 */
+const ROTATE_MS = 7000
+/** 交叉淡入时长（与 globals.css 的动效节奏对齐） */
+const FADE_MS = 500
 
 export function XilianFigure({
   height = 260,
   className,
-  avatarClassName,
 }: {
-  /** 显示高度（宽按人像比例算） */
+  /** 边长 —— 表情包是正方形 */
   height?: number
   className?: string
-  /** 兜底暖光球的额外类名 */
-  avatarClassName?: string
 }) {
-  const live2d = useLive2D()
-  const slotRef = useRef<HTMLDivElement | null>(null)
+  const { data } = useApi(() => stickerApi.list())
+  const stickers = data?.stickers ?? []
 
-  const width = Math.round(height * RATIO)
-  const status = live2d?.status ?? 'fallback'
+  const [current, setCurrent] = useState<string | null>(null)
+  const [shown, setShown] = useState(false)
 
-  // ★ 依赖取**稳定的函数引用**，不要依赖整个 ctx 对象 ——
-  //   否则只要 layer 因任何原因重渲染，这里就会重注册，进而触发 layer 的 state 更新
-  const registerSlot = live2d?.registerSlot
-  const requestFit = live2d?.requestFit
-
-  // 注册槽位（挂载一次；尺寸变化走下面那条）
+  // 拿到列表立刻定下第一张 —— 不要等第一次定时器，否则白等一个间隔
   useEffect(() => {
-    const el = slotRef.current
-    if (!el || !registerSlot) return
-    return registerSlot(el)
-  }, [registerSlot])
+    if (!current && stickers.length) setCurrent(stickers[0].name)
+  }, [stickers, current])
 
-  // 尺寸变化 → 让共享实例适配新盒子（重算缩放，不重载模型）
+  // 轮换：每次随机挑一张**和当前不同的**（只有一张时不轮换）
   useEffect(() => {
-    requestFit?.(width, height)
-  }, [requestFit, width, height])
+    if (stickers.length < 2) return
+    const id = setInterval(() => {
+      setCurrent((prev) => {
+        const pool = stickers.filter((s) => s.name !== prev)
+        return pool[Math.floor(Math.random() * pool.length)]?.name ?? prev
+      })
+    }, ROTATE_MS)
+    return () => clearInterval(id)
+  }, [stickers])
 
-  // Live2D 真的失败时，暖光球是**兜底形象**（不是占位符）——这时必须显示它
-  if (status === 'fallback') {
-    return (
-      <div
-        data-live2d="fallback"
-        className={cn('grid place-items-center', className)}
-        style={{ width, height }}
-      >
-        <XilianAvatar size={Math.min(width, height)} className={avatarClassName} />
-      </div>
-    )
-  }
+  // 尊重 prefers-reduced-motion：照常轮换，但不做淡入（不闪）
+  const [reduceMotion, setReduceMotion] = useState(false)
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const sync = () => setReduceMotion(mq.matches)
+    sync()
+    mq.addEventListener('change', sync)
+    return () => mq.removeEventListener('change', sync)
+  }, [])
+
+  // 换图后先透明、下一帧再显现 —— 否则新图是"啪"地跳出来
+  useEffect(() => {
+    if (!current) return
+    if (reduceMotion) {
+      setShown(true)
+      return
+    }
+    setShown(false)
+    const t = setTimeout(() => setShown(true), 20)
+    return () => clearTimeout(t)
+  }, [current, reduceMotion])
 
   return (
     <div
-      // 可观测：Live2D 是静默退化，不标出来分不清"没加载"和"坏了"
-      data-live2d={status}
+      // 可观测：不标出来，分不清"图还没到"和"本来就没有图"
+      data-sticker={current ?? 'loading'}
       className={cn('relative grid place-items-center', className)}
-      // 尺寸照旧占住 → 模型出现时**不引起布局跳动**
-      style={{ width, height }}
+      // 固定边长占住位置 → 换图不引起布局跳动
+      style={{ width: height, height }}
     >
       {/*
-        槽位：只是给 Live2DLayer **测量**用的矩形，canvas 不放在这里（canvas 留在层里，
-        靠 transform 覆盖到这个矩形上 —— 把它搬进来会让 React 丢掉父节点认知而崩）。
+        加载期**什么都不显示**，沿用 2026-09-25 的决定：
+        占位符应当是同一个东西的粗糙版，而不是另一个东西（当初是拿暖光球顶 Live2D，很像"被换掉了"）。
+        这里靠固定尺寸防跳动。
 
-        ★ 加载期**不放暖光球占位**（2026-09-25 用户决定去掉）：
-          球和昔涟是两个完全不同的形状，先摆球再换成她，看起来像"被换掉了"而不是"加载好了"。
-          占位符应当是同一个东西的粗糙版，而不是另一个东西。加载期就留空，靠固定尺寸防跳动。
+        ⚠️ 只给当前这张发请求（不预载 65 张，那是 8MB）——
+           轮换变慢时再考虑预取下一张。
       */}
-      <div ref={slotRef} className="relative h-full w-full" />
+      {current && (
+        // eslint-disable-next-line @next/next/no-img-element -- 走 /api 直链，Next 的图片优化在这里用不上
+        <img
+          src={stickerApi.fileUrl(current)}
+          alt="昔涟"
+          width={height}
+          height={height}
+          className="h-full w-full object-contain transition-opacity"
+          style={{ opacity: shown ? 1 : 0, transitionDuration: `${FADE_MS}ms` }}
+        />
+      )}
     </div>
   )
 }

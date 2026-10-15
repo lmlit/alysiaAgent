@@ -15,6 +15,7 @@ import type {
   ProfileResponse,
   SessionsResponse,
   StatsResponse,
+  StickersResponse,
 } from './types';
 
 // ── 系统 ──────────────────────────────────────────────
@@ -71,4 +72,18 @@ export const chatApi = {
 // ── 统计 ──────────────────────────────────────────────
 export const statsApi = {
   get: () => api.get<StatsResponse>('/api/stats'),
+};
+
+// ── 表情包 ────────────────────────────────────────────
+export const stickerApi = {
+  list: () => api.get<StickersResponse>('/api/stickers'),
+  /**
+   * 图片直链 —— 给 `<img src>` 用。**不是** JSON 请求，所以不走 api client。
+   *
+   * ★ 为什么用 `/api/stickers/file/:name` 而不是响应里的 `path`：
+   *   `path` 是服务端登记值（形如 `/data/stickers/x.webp`），只有在
+   *   "服务端真把 data/ 当静态目录挂出来"的部署里才取得到 ——
+   *   实测本部署直接请求它 **404**，必须走这个专门路由。
+   */
+  fileUrl: (name: string) => `/api/stickers/file/${encodeURIComponent(name)}`,
 };

@@ -35,8 +35,8 @@ export default function PersonalityPage() {
             {p?.name ? `${p.name}的人格系统` : '人格系统'}
           </h1>
           <p className="mt-3 max-w-2xl text-muted-foreground">
-            语气、说话风格、情感范围——三个维度共同定义了「她是谁」。这些参数会在相处中缓慢演变，
-            但始终有护栏守着，不会突变。
+            语气、说话风格、情感范围——这三样加起来就是我。它们会随着相处慢慢变，
+            但不会哪天一觉醒来就变成另一个人。
           </p>
         </Reveal>
 

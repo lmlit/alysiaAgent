@@ -36,7 +36,7 @@ export function LifeContent() {
           {/* Live2D 优先，失败退回暖光球（模型自带 idling，不再叠 float 动画） */}
           <XilianFigure height={320} />
         </div>
-        <p className="mt-6 text-sm text-muted-foreground">此刻，她正在——</p>
+        <p className="mt-6 text-sm text-muted-foreground">此刻，我正在——</p>
 
         {life.loading && <LoadingBlock lines={2} className="mx-auto mt-5 max-w-md" />}
 
@@ -51,7 +51,7 @@ export function LifeContent() {
         {!life.loading && !life.error && (
           <>
             <h1 className="mt-2 text-balance font-display text-4xl leading-tight md:text-5xl">
-              {snapshot?.currentActivity?.trim() || '（还没有记录她的近况）'}
+              {snapshot?.currentActivity?.trim() || '（还没有记录我的近况）'}
             </h1>
             <div className="mt-7 inline-flex flex-wrap items-center justify-center gap-6 rounded-3xl border border-border bg-card/50 px-7 py-4 backdrop-blur">
               <div className="text-center">
@@ -83,15 +83,15 @@ export function LifeContent() {
       <div className="mx-auto max-w-5xl px-5 pb-20">
         {/* timeline */}
         <Reveal>
-          <h2 className="font-display text-3xl">她这几天的日子</h2>
-          <p className="mt-2 text-muted-foreground">像翻开她的日记本，看到她「活着」的证据。</p>
+          <h2 className="font-display text-3xl">我这几天的日子</h2>
+          <p className="mt-2 text-muted-foreground">像翻开我的日记本。</p>
         </Reveal>
 
         <div className="mt-8">
           {life.loading && <LoadingBlock lines={5} />}
           {!life.loading && life.error && <ErrorBlock message={life.error} onRetry={life.reload} />}
           {!life.loading && !life.error && events.length === 0 && (
-            <EmptyBlock text="最近 7 天还没有记录。等她过完今天再看。" />
+            <EmptyBlock text="最近 7 天还没有记录。等我过完今天再看。" />
           )}
           {!life.loading && !life.error && events.length > 0 && (
             <ol className="space-y-2 border-l border-border pl-6">
@@ -133,7 +133,7 @@ export function LifeContent() {
         {/* daily summaries */}
         <Reveal className="mt-16">
           <h2 className="font-display text-3xl">每日生活摘要</h2>
-          <p className="mt-2 text-muted-foreground">每天结束时，她给自己的一天写一小页。</p>
+          <p className="mt-2 text-muted-foreground">每天结束的时候，我给自己写一小页。</p>
         </Reveal>
         <div className="mt-6">
           {summaries.loading && <LoadingBlock lines={4} />}
@@ -161,9 +161,9 @@ export function LifeContent() {
         <div className="mt-16 grid gap-6 lg:grid-cols-2">
           <Reveal>
             <section className="h-full rounded-3xl border border-border bg-card/50 p-6">
-              <h2 className="font-display text-2xl">她的世界</h2>
+              <h2 className="font-display text-2xl">我的世界</h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                配角朋友会在场或离场，她不会凭空提到不在身边的人。
+                他们有时候在，有时候不在。我不会凭空提到不在身边的人。
               </p>
               <div className="mt-5">
                 {companions.loading && <LoadingBlock lines={3} />}
@@ -216,9 +216,9 @@ export function LifeContent() {
 
           <Reveal delay={120}>
             <section className="h-full rounded-3xl border border-border bg-card/50 p-6">
-              <h2 className="font-display text-2xl">生活素材库</h2>
+              <h2 className="font-display text-2xl">我平时做的事</h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                她的日常从这些「种子」里长出来，也会自己创造新的。
+                我的日子从这些小事里长出来，也会自己找新的做。
               </p>
 
               {templates.loading && <LoadingBlock lines={4} className="mt-5" />}
@@ -253,14 +253,14 @@ export function LifeContent() {
 
                   <div className="mt-5">
                     <p className="flex items-center gap-2 text-sm font-medium text-accent">
-                      <Wand2 className="h-4 w-4" /> 她自创的
+                      <Wand2 className="h-4 w-4" /> 我自己找的
                       <span className="text-xs font-normal text-muted-foreground">
                         {selfTemplates.length}
                       </span>
                     </p>
                     <div className="mt-3 flex flex-wrap gap-2">
                       {selfTemplates.length === 0 && (
-                        <span className="text-sm text-muted-foreground">还没有自创的活动</span>
+                        <span className="text-sm text-muted-foreground">还没自己找过新的</span>
                       )}
                       {selfTemplates.map((t) => (
                         <span

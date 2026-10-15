@@ -1,0 +1,119 @@
+/* ────────────────────────────────────────────────────────────────
+ * 主题表 —— 每套主题一份语义变量，挂在 <html data-theme="<id>">。
+ *
+ * ★ 为什么独立成文件（spec §2 契约 1）：
+ *   `globals.css` 是「设计系统的规则」（@theme 映射、base/utilities、动效），
+ *   本文件是「主题的数据」。规则不随主题变，数据只增不改。
+ *
+ * ★ 新增主题 = 在这里加一个 [data-theme="<id>"] 块，**不改任何组件**。
+ *   组件一律只读语义变量（var(--primary) 这类），这是现有架构本来就有的红利。
+ *
+ * ★ 主题 id 是持久化契约（spec §2 契约 3）：id 会被写进用户 localStorage，
+ *   改名等于让所有已存用户静默回落到默认。**显示名随便改，id 只增不改。**
+ *   （同类教训：dsh 的 preset id 改名一次性废掉 16 个会话。）
+ *
+ * ★ 每套主题内部仍严格只有一个 primary + 一个 accent（spec §2 契约 2）。
+ *   换整套色板 ≠ 放松「禁止多色强调」。
+ * ──────────────────────────────────────────────────────────────── */
+
+/* ── 默认主题：warm-ink（暖墨）────────────────────────────────────
+ * ★ 这些值与引入主题表之前**逐字一致**，不得顺手调整（spec §2 契约 4）。
+ *   :root 上也挂一份，保证未设 data-theme / JS 未执行时仍有色。
+ */
+:root,
+[data-theme='warm-ink'] {
+  /* Warm ink — the world of 昔涟 */
+  --background: oklch(0.17 0.014 55);
+  --foreground: oklch(0.94 0.012 75);
+  --card: oklch(0.215 0.016 58);
+  --card-foreground: oklch(0.94 0.012 75);
+  --popover: oklch(0.215 0.016 58);
+  --popover-foreground: oklch(0.94 0.012 75);
+  --primary: oklch(0.83 0.12 72);
+  --primary-foreground: oklch(0.22 0.03 60);
+  --secondary: oklch(0.27 0.018 58);
+  --secondary-foreground: oklch(0.94 0.012 75);
+  --muted: oklch(0.26 0.016 58);
+  --muted-foreground: oklch(0.72 0.02 72);
+  --accent: oklch(0.72 0.13 24);
+  --accent-foreground: oklch(0.98 0.008 80);
+  --destructive: oklch(0.63 0.2 25);
+  --border: oklch(0.92 0.02 75 / 12%);
+  --input: oklch(0.92 0.02 75 / 14%);
+  --ring: oklch(0.83 0.12 72);
+
+  --chart-1: oklch(0.83 0.12 72);
+  --chart-2: oklch(0.72 0.13 24);
+  --chart-3: oklch(0.72 0.09 190);
+  --chart-4: oklch(0.7 0.12 300);
+  --chart-5: oklch(0.78 0.13 140);
+
+  --sidebar: oklch(0.195 0.015 57);
+  --sidebar-foreground: oklch(0.9 0.012 75);
+  --sidebar-primary: oklch(0.83 0.12 72);
+  --sidebar-primary-foreground: oklch(0.22 0.03 60);
+  --sidebar-accent: oklch(0.27 0.018 58);
+  --sidebar-accent-foreground: oklch(0.94 0.012 75);
+  --sidebar-border: oklch(0.92 0.02 75 / 10%);
+  --sidebar-ring: oklch(0.83 0.12 72);
+}
+
+/* ── sakura（樱）—— 昔涟自己的颜色 ───────────────────────────────
+ * ★ 取色来源：cyrene-avatar.png 的量化取样（粉 #E294D1 / 淡紫 #AB92CC /
+ *   深紫 #413368 / 近白 #FDF9FC），经 sRGB → oklch 精确转换，**不是凭色调的**。
+ *
+ * ★ 三条来自设计 skill 的纪律：
+ *   1. 中性色带品牌色相（紫），而不是用洗淡的通用灰 —— impeccable `colorize`：
+ *      「On colored surfaces, derive secondary text from the foreground or surface hue
+ *       rather than using washed-out generic gray」
+ *   2. 接近黑处主动降 chroma（--background 的 C 只有 0.058）—— 同源条款：
+ *      「vary lightness and reduce chroma near white and black」。
+ *      高饱和的深紫在暗背景上会显脏，且放大色带断裂。
+ *   3. 暗色是**显式设计**的，不是把暖墨反相 —— 「do not invert the light theme mechanically」。
+ *
+ * ★ 对比度实测（**同一口径**：正文/次要文字/主色/强调 对各自主题的 --background；
+ *   卡片文字对 --card。全部 ≥ WCAG AA 4.5:1）：
+ *      sakura：正文 16.23:1 · 次要文字 7.85:1 · 主色 7.58:1 · 强调 5.95:1 · 卡片文字 13.92:1
+ *      暖墨  ：正文 16.05:1 · 次要文字 7.70:1 · 主色 11.15:1 · 强调 7.30:1 · 卡片文字 14.71:1
+ *
+ *   ★ 2026-10-15 复核修正：原注释里暖墨那组（14.06 / 6.08 / 8.74 / 5.01）
+ *     **用同一套方法复现不出来** —— 而 sakura 那组 5 个值逐项吻合到 0.01，
+ *     说明方法没问题、是那组数字有问题（疑似混用了不同参照背景，或用的是旧值）。
+ *     已换成与 sakura 同一口径的实测值。**结论不变：两套主题全部 ≥ AA。**
+ */
+[data-theme='sakura'] {
+  --background: oklch(0.235 0.058 303.8);
+  --foreground: oklch(0.986 0.006 334);
+  --card: oklch(0.289 0.074 299.8);
+  --card-foreground: oklch(0.986 0.006 334);
+  --popover: oklch(0.289 0.074 299.8);
+  --popover-foreground: oklch(0.986 0.006 334);
+  --primary: oklch(0.764 0.122 335);
+  --primary-foreground: oklch(0.235 0.058 303.8);
+  --secondary: oklch(0.328 0.08 299);
+  --secondary-foreground: oklch(0.986 0.006 334);
+  --muted: oklch(0.309 0.073 300.2);
+  --muted-foreground: oklch(0.765 0.071 303.8);
+  --accent: oklch(0.701 0.151 319.6);
+  --accent-foreground: oklch(0.235 0.058 303.8);
+  --destructive: oklch(0.626 0.193 23);
+  --border: oklch(0.986 0.006 334 / 12%);
+  --input: oklch(0.986 0.006 334 / 14%);
+  --ring: oklch(0.764 0.122 335);
+
+  --chart-1: oklch(0.764 0.122 335);
+  --chart-2: oklch(0.613 0.143 321.7);
+  --chart-3: oklch(0.771 0.082 252.8);
+  --chart-4: oklch(0.701 0.151 319.6);
+  --chart-5: oklch(0.819 0.085 151.2);
+
+  /* 侧栏比主底略亮一档 —— 与暖墨里「sidebar 0.195 > background 0.17」的关系一致 */
+  --sidebar: oklch(0.26 0.062 302);
+  --sidebar-foreground: oklch(0.96 0.01 330);
+  --sidebar-primary: oklch(0.764 0.122 335);
+  --sidebar-primary-foreground: oklch(0.235 0.058 303.8);
+  --sidebar-accent: oklch(0.328 0.08 299);
+  --sidebar-accent-foreground: oklch(0.986 0.006 334);
+  --sidebar-border: oklch(0.986 0.006 334 / 10%);
+  --sidebar-ring: oklch(0.764 0.122 335);
+}

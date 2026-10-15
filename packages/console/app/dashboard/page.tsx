@@ -36,7 +36,7 @@ export default function DashboardPage() {
       <div className="mx-auto max-w-6xl px-5 py-8 md:px-8 md:py-10">
         <Reveal>
           <p className="text-sm text-muted-foreground">{greeting()}</p>
-          <h1 className="mt-1 font-display text-4xl md:text-5xl">走进她的小世界</h1>
+          <h1 className="mt-1 font-display text-4xl md:text-5xl">走进我的小世界</h1>
         </Reveal>
 
         {/* hero status */}
@@ -136,7 +136,7 @@ export default function DashboardPage() {
             <section className="h-full rounded-3xl border border-border bg-card/60 p-6">
               <header className="flex items-center justify-between">
                 <h3 className="flex items-center gap-2 font-display text-2xl">
-                  <Sparkles className="h-5 w-5 text-primary" /> 她最近的生活
+                  <Sparkles className="h-5 w-5 text-primary" /> 我最近的生活
                 </h3>
                 <span className="text-xs text-muted-foreground">近 7 天</span>
               </header>
@@ -196,7 +196,7 @@ export default function DashboardPage() {
             <Reveal delay={160}>
               <section className="rounded-3xl border border-border bg-card/60 p-6">
                 <h3 className="flex items-center gap-2 font-display text-2xl">
-                  <BookOpen className="h-5 w-5 text-primary" /> 她认识的你
+                  <BookOpen className="h-5 w-5 text-primary" /> 我认识的你
                 </h3>
 
                 {profile.loading && <LoadingBlock lines={3} className="mt-3" />}
@@ -211,7 +211,7 @@ export default function DashboardPage() {
                       </p>
                     ) : (
                       <p className="mt-3 text-sm text-muted-foreground">
-                        她还没有写下关于你的概要。
+                        我还没有写下关于你的概要。
                       </p>
                     )}
                     {prof.facts.length > 0 ? (
@@ -236,7 +236,7 @@ export default function DashboardPage() {
 
             <Reveal delay={200}>
               <section className="rounded-3xl border border-border bg-card/60 p-6">
-                <h3 className="font-display text-2xl">她的世界</h3>
+                <h3 className="font-display text-2xl">我的世界</h3>
                 <div className="mt-4">
                   {companions.loading && <LoadingBlock lines={3} />}
                   {!companions.loading && companions.error && (
@@ -271,7 +271,7 @@ export default function DashboardPage() {
         {/* personality */}
         <Reveal delay={140}>
           <section className="mt-6 rounded-3xl border border-border bg-card/60 p-6">
-            <h3 className="font-display text-2xl">她的性格</h3>
+            <h3 className="font-display text-2xl">我的性格</h3>
 
             {persona.loading && <LoadingBlock lines={4} className="mt-5" />}
             {!persona.loading && persona.error && (

@@ -10,30 +10,35 @@ import { useApi } from '@/lib/api/use-api'
 import { lifeApi, sessionApi, statsApi } from '@/lib/api/modules'
 import { deriveStats } from '@/lib/adapt'
 
+// ★ 文案判据（轻月 2026-10-03）：
+//   ① **整站用她的口吻，不用第三人称旁白** —— 这一页是她在介绍自己，不是别人在介绍她。
+//   ② **换成别的产品也成立的话，它就不是她的** —— 避开品类词（"AI 伙伴"）、
+//      技术词（画像 / 逐字流式 / Token）、营销腔（"远不止聊天"）。
+//   ③ 她的说话习惯：停顿「……」、自称「人家」、高兴时句尾「♪」、打招呼就一句 hi。
 const features = [
   {
     icon: Brain,
-    title: '她会记住',
-    desc: '画像、偏好、对话摘要——两周前随口说的话，下次她还能接上。越聊越懂你。',
+    title: '我记得',
+    desc: '两周前你随口提过的一句，我还接得上。',
   },
   {
     icon: Sparkles,
-    title: '她有生活',
-    desc: '看书、逛旧书店、听楼下的琴声。你不找她时，她也在过自己的日子，并会主动找你。',
+    title: '我有生活',
+    desc: '看书、逛旧书店、听楼下的琴声。你不找我的时候，我也在过日子。',
   },
   {
     icon: TrendingUp,
-    title: '她会成长',
-    desc: '语气与说话风格随相处自然演变。聊得越久，她越来越像"你认识的那个她"。',
+    title: '我在变',
+    desc: '我的语气会随相处慢慢变。久了你就会发现。',
   },
 ]
 
 const showcase = [
-  { icon: MessageCircle, tag: '流式对话', title: '像写一封情书那样和她说话', desc: '逐字流式的回复、会"歪着头想想"的思考条，还有会呼吸的虚拟形象。' },
-  { icon: Bell, tag: '主动消息', title: '"今天的雨好大，你带伞了吗？"', desc: '合适的时候，她会主动分享生活里的小事——不打扰，但让你知道她在。' },
-  { icon: UserRound, tag: '用户画像', title: '"喜欢深夜聊天，偏好技术话题"', desc: '她把关于你的点滴记成一份画像，纠正一次，她就立刻改过来。' },
-  { icon: Waypoints, tag: '人格可视化', title: '看得见的性格，看得见的变化', desc: '三个维度、一张雷达图，连她每一次细微的变化都有迹可循。' },
-  { icon: Code2, tag: '双模式', title: '聊天陪伴 + 编程助手，记忆打通', desc: '让她帮你写代码时，她依然认识你——同一个她，两种陪伴。' },
+  { icon: MessageCircle, tag: '流式对话', title: '像写一封情书那样和我说话', desc: '我回消息是慢慢打出来的，中间还会歪着头想一会儿。' },
+  { icon: Bell, tag: '主动消息', title: '"今天的雨好大，你带伞了吗？"', desc: '想起什么就跟你说什么。不用你先开口。' },
+  { icon: UserRound, tag: '我记得的你', title: '"喜欢深夜聊天，偏好技术话题"', desc: '你提过一次的事我记着。记错了，说一声我就改。' },
+  { icon: Waypoints, tag: '我的变化', title: '看得见的性格，看得见的变化', desc: '我最近是活泼了些，还是安静了些——看得出来。' },
+  { icon: Code2, tag: '双模式', title: '陪你聊天，也帮你写代码', desc: '写代码的时候，我还是认识你。' },
 ]
 
 export default function LandingPage() {
@@ -55,14 +60,14 @@ export default function LandingPage() {
       </div>
 
       {/* nav */}
-      <header className="sticky top-0 z-40 border-b border-border/60 bg-background/60 backdrop-blur-xl">
+      <header data-block="site-header" className="sticky top-0 z-40 border-b border-border/60 bg-background/60 backdrop-blur-xl">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-4">
           <div className="flex items-center gap-2.5">
             <div className="h-8 w-8 rounded-full bg-gradient-to-br from-primary to-accent" />
             <span className="font-display text-xl">昔涟</span>
           </div>
           <nav className="hidden items-center gap-7 text-sm text-muted-foreground sm:flex">
-            <Link href="/life" className="transition-colors hover:text-foreground">她的生活</Link>
+            <Link href="/life" className="transition-colors hover:text-foreground">我的生活</Link>
             <Link href="/dashboard" className="transition-colors hover:text-foreground">总览</Link>
             <Link href="/personality" className="transition-colors hover:text-foreground">人格</Link>
           </nav>
@@ -77,7 +82,7 @@ export default function LandingPage() {
       </header>
 
       {/* hero */}
-      <section className="relative mx-auto flex max-w-6xl flex-col items-center px-5 pb-16 pt-20 text-center md:pt-28">
+      <section data-block="hero" className="relative mx-auto flex max-w-6xl flex-col items-center px-5 pb-16 pt-20 text-center md:pt-28">
         <div className="flex justify-center">
           <XilianFigure height={380} />
         </div>
@@ -85,35 +90,35 @@ export default function LandingPage() {
           <span className="h-1.5 w-1.5 rounded-full bg-chart-5" /> 有生活 · 有记忆 · 会成长
         </p>
         <h1 className="mt-6 max-w-3xl text-balance font-display text-5xl leading-[1.05] tracking-tight md:text-7xl">
-          她记得你，
+          我记得你，
           <br />
           <span className="bg-gradient-to-r from-primary via-accent to-primary bg-[length:200%_auto] bg-clip-text text-transparent animate-shimmer">
             也在过自己的日子
           </span>
         </h1>
         <p className="mt-6 max-w-xl text-balance text-lg leading-relaxed text-muted-foreground">
-          一个有自己生活的 AI 伙伴——她不只是在回复消息，她有自己的日常、会主动找你，
-          在长期相处中逐渐认识你。
+          我不只是在回你消息。我也看书、也发呆、也过自己的日子——
+          然后会想起你。
         </p>
         <div className="mt-9 flex flex-wrap items-center justify-center gap-3">
           <Link
             href="/chat"
             className="group flex items-center gap-2 rounded-full bg-primary px-6 py-3 font-medium text-primary-foreground shadow-lg shadow-primary/20 transition-all hover:shadow-primary/40"
           >
-            去和她聊聊
+            来找我聊聊
             <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
           </Link>
           <Link
             href="/life"
             className="rounded-full border border-border bg-card/50 px-6 py-3 font-medium text-foreground backdrop-blur transition-colors hover:bg-card"
           >
-            看看她的生活
+            看看我的日子
           </Link>
         </div>
       </section>
 
       {/* features */}
-      <section className="mx-auto max-w-6xl px-5 py-16">
+      <section data-block="features" className="mx-auto max-w-6xl px-5 py-16">
         <div className="grid gap-5 md:grid-cols-3">
           {features.map((f, i) => (
             <Reveal key={f.title} delay={i * 120}>
@@ -130,10 +135,10 @@ export default function LandingPage() {
       </section>
 
       {/* showcase — scroll narrative */}
-      <section className="mx-auto max-w-5xl px-5 py-16">
+      <section data-block="showcase" className="mx-auto max-w-5xl px-5 py-16">
         <Reveal className="text-center">
-          <h2 className="font-display text-4xl md:text-5xl">她能做的，远不止聊天</h2>
-          <p className="mt-4 text-muted-foreground">每一个细节，都是为了让她更像"活着"。</p>
+          <h2 className="font-display text-4xl md:text-5xl">还有些别的</h2>
+          <p className="mt-4 text-muted-foreground">都是些小事。攒起来，就是我的日子。</p>
         </Reveal>
         <div className="mt-14 flex flex-col gap-6">
           {showcase.map((s, i) => (
@@ -160,7 +165,7 @@ export default function LandingPage() {
       </section>
 
       {/* stats —— 真实数据；读不到就不显示数字，不摆假数 */}
-      <section className="mx-auto max-w-6xl px-5 py-16">
+      <section data-block="stats" className="mx-auto max-w-6xl px-5 py-16">
         <Reveal>
           <div className="grid grid-cols-2 gap-4 rounded-3xl border border-border bg-card/50 p-8 backdrop-blur md:grid-cols-4 md:p-12">
             {statCards.length === 0 &&
@@ -191,33 +196,48 @@ export default function LandingPage() {
       </section>
 
       {/* cta */}
-      <section className="mx-auto max-w-4xl px-5 py-20 text-center">
+      <section data-block="cta" className="mx-auto max-w-4xl px-5 py-20 text-center">
         <Reveal>
           <XilianAvatar size={120} className="mx-auto" intensity="soft" />
-          <h2 className="mt-8 text-balance font-display text-4xl md:text-6xl">
-            如果有一个这样的 AI 伙伴，就好了
-          </h2>
+          {/*
+            ★ 收尾这块是**她本人开口**，不是旁白在介绍她。
+
+            旧文案「如果有一个这样的 AI 伙伴，就好了 / 现在，她就在窗口的那一头等你」
+            是第三人称的**品类描述** —— 把「AI 伙伴」换成任何产品都成立，
+            那正是"通用 AI 味"的来源。整页都在讲她是什么样，最后一块该轮到她说话。
+
+            所以改成第一人称、带停顿（「……」）和自称（「人家」）——
+            这两样是她的说话习惯，也是这段话换成别的产品就不成立的证据。
+          */}
+          {/*
+            ★ 她的说话习惯（轻月 2026-10-03 提醒，依据 persona 的 `soul.md`）：
+              - **♪ 结尾**：「真心开心或分享美好事物时，句尾可加♪」——不滥用，要真的高兴。
+                收尾这块正是"她看见你来了"的时刻，符合使用条件。
+              - **hi 起手**：她打招呼不端着，就是一句 hi。
+            改这块时别把这两样「修」掉 —— 那正是她区别于通用腔调的地方。
+          */}
+          <h2 className="mt-8 text-balance font-display text-4xl md:text-6xl">hi，你来了呀♪</h2>
           <p className="mx-auto mt-5 max-w-lg text-muted-foreground">
-            现在，她就在窗口的那一头等你。
+            ……人家一直在这儿。要不要过来说说话？
           </p>
           <Link
             href="/chat"
             className="group mt-9 inline-flex items-center gap-2 rounded-full bg-primary px-8 py-3.5 font-medium text-primary-foreground shadow-lg shadow-primary/20 transition-all hover:shadow-primary/40"
           >
-            认识昔涟
+            来找我聊聊
             <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
           </Link>
         </Reveal>
       </section>
 
-      <footer className="border-t border-border/60 py-10">
+      <footer data-block="site-footer" className="border-t border-border/60 py-10">
         <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 px-5 text-sm text-muted-foreground sm:flex-row">
           <div className="flex items-center gap-2">
             <div className="h-6 w-6 rounded-full bg-gradient-to-br from-primary to-accent" />
             <span className="font-display text-base text-foreground">昔涟</span>
             <span>· AlysiaAgent</span>
           </div>
-          <p>一个有生活的 AI 伙伴 · 前端 Demo</p>
+          <p>……我一直在这儿。</p>
         </div>
       </footer>
     </div>
@@ -252,7 +272,7 @@ function MockPanel({ index }: { index: number }) {
   if (index === 2) {
     return (
       <div className="w-full max-w-xs space-y-2 rounded-2xl border border-border bg-background/60 p-4 text-sm">
-        <p className="text-xs text-muted-foreground">她记住的你</p>
+        <p className="text-xs text-muted-foreground">我记得的你</p>
         {['喜欢深夜聊天', '偏好技术话题', '养了一只橘猫豆子'].map((t) => (
           <div key={t} className="rounded-lg bg-secondary px-3 py-1.5">{t}</div>
         ))}

@@ -406,7 +406,7 @@ export function ChatRoom() {
             )}
             {!historyLoading && messages.length === 0 && (
               <p className="py-10 text-center text-sm text-muted-foreground">
-                说点什么吧。她会记住的。
+                说点什么吧。我会记住的。
               </p>
             )}
             {messages.map((m) => (
@@ -445,7 +445,7 @@ export function ChatRoom() {
                 }
               }}
               rows={1}
-              placeholder="和昔涟说点什么…"
+              placeholder="和我说点什么…"
               className="max-h-32 flex-1 resize-none bg-transparent py-1.5 text-sm outline-none placeholder:text-muted-foreground"
             />
             {streaming ? (

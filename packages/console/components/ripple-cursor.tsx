@@ -26,11 +26,13 @@ export function RippleCursor() {
       const dx = e.clientX - last.current.x
       const dy = e.clientY - last.current.y
       const dist = Math.hypot(dx, dy)
-      // Throttle: only ripple after enough travel and a small time gap
-      if (dist < 42 || now - last.current.t < 55) return
+      // 触发条件。★ 2026-10-03 放宽：原值 42px / 55ms 太严 ——
+      //   慢慢挪鼠标完全不出涟漪，用户会以为"水波没了"，其实只是"划得不够快"。
+      //   现在 26px / 42ms，随手一动就有反馈。
+      if (dist < 26 || now - last.current.t < 42) return
       last.current = { x: e.clientX, y: e.clientY, t: now }
       const speed = Math.min(dist, 160)
-      spawn(e.clientX, e.clientY, 18 + speed * 0.5)
+      spawn(e.clientX, e.clientY, 20 + speed * 0.55)
     }
 
     const onClick = (e: MouseEvent) => spawn(e.clientX, e.clientY, 120)
@@ -65,11 +67,14 @@ export function RippleCursor() {
           position: absolute;
           transform: translate(-50%, -50%) scale(0.2);
           border-radius: 9999px;
-          border: 1.5px solid oklch(0.83 0.12 72 / 0.55);
+          /* ★ 用主题变量，不用写死的暖金 ——
+             否则切到 sakura 之后满地还是暖金色涟漪，跟她的粉紫对不上。
+             2026-10-03 同时提高对比：原描边 55% 在深底上太淡，看着像没画出来。 */
+          border: 1.5px solid color-mix(in oklab, var(--primary) 85%, transparent);
           background: radial-gradient(
             circle,
-            oklch(0.83 0.12 72 / 0.18) 0%,
-            oklch(0.72 0.13 24 / 0.06) 45%,
+            color-mix(in oklab, var(--primary) 30%, transparent) 0%,
+            color-mix(in oklab, var(--accent) 14%, transparent) 45%,
             transparent 70%
           );
           animation: ripple-pop 1.05s cubic-bezier(0.22, 0.61, 0.36, 1) forwards;

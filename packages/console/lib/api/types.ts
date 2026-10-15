@@ -138,6 +138,19 @@ export type LifeSummary = {
 
 export type LifeSummariesResponse = { summaries: LifeSummary[] };
 
+// ── 表情包（10-03 sticker-figure）────────────────────────────────
+// 素材在服务端 `data/stickers/`，经世界书 content_type='image' 条目登记。
+// 图走 `/api/stickers/file/:name` —— **不放进前端产物**（二创图不进公开仓库）。
+
+export type Sticker = {
+  /** trigger_keys 里的名字，也是 `[表情包:名字]` 协议用的那个词 */
+  name: string;
+  /** 服务端登记的路径（形如 `/data/stickers/x.webp`）—— 前端**不要**直接拿它拼 URL，见 stickerApi.fileUrl */
+  path: string;
+};
+
+export type StickersResponse = { stickers: Sticker[] };
+
 /**
  * 配角在场状态（HDSI ScenePresence 简化版）。
  * status: 'present' 在场 / 'expected' 期待中 / 'off-scene' 离场

@@ -1,6 +1,9 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
 @import 'shadcn/tailwind.css';
+/* ★ 主题表：色值（数据）与设计系统（规则）分文件，见 themes.css 顶部说明。
+   CSS 规定 @import 必须先于其他规则，故紧跟三条 import。 */
+@import './themes.css';
 
 @custom-variant dark (&:is(.dark *));
 
@@ -73,44 +76,12 @@
   }
 }
 
+/* ★ 主题色值已整体搬到 themes.css。:root 上也挂了一份暖墨，
+   保证「未设 data-theme」或「JS 未执行」时仍然有色。
+   这里只留与主题无关的全局项。 */
 :root {
   color-scheme: dark;
   --radius: 0.9rem;
-
-  /* Warm ink — the world of 昔涟 */
-  --background: oklch(0.17 0.014 55);
-  --foreground: oklch(0.94 0.012 75);
-  --card: oklch(0.215 0.016 58);
-  --card-foreground: oklch(0.94 0.012 75);
-  --popover: oklch(0.215 0.016 58);
-  --popover-foreground: oklch(0.94 0.012 75);
-  --primary: oklch(0.83 0.12 72);
-  --primary-foreground: oklch(0.22 0.03 60);
-  --secondary: oklch(0.27 0.018 58);
-  --secondary-foreground: oklch(0.94 0.012 75);
-  --muted: oklch(0.26 0.016 58);
-  --muted-foreground: oklch(0.72 0.02 72);
-  --accent: oklch(0.72 0.13 24);
-  --accent-foreground: oklch(0.98 0.008 80);
-  --destructive: oklch(0.63 0.2 25);
-  --border: oklch(0.92 0.02 75 / 12%);
-  --input: oklch(0.92 0.02 75 / 14%);
-  --ring: oklch(0.83 0.12 72);
-
-  --chart-1: oklch(0.83 0.12 72);
-  --chart-2: oklch(0.72 0.13 24);
-  --chart-3: oklch(0.72 0.09 190);
-  --chart-4: oklch(0.7 0.12 300);
-  --chart-5: oklch(0.78 0.13 140);
-
-  --sidebar: oklch(0.195 0.015 57);
-  --sidebar-foreground: oklch(0.9 0.012 75);
-  --sidebar-primary: oklch(0.83 0.12 72);
-  --sidebar-primary-foreground: oklch(0.22 0.03 60);
-  --sidebar-accent: oklch(0.27 0.018 58);
-  --sidebar-accent-foreground: oklch(0.94 0.012 75);
-  --sidebar-border: oklch(0.92 0.02 75 / 10%);
-  --sidebar-ring: oklch(0.83 0.12 72);
 }
 
 @layer base {
