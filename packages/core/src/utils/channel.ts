@@ -17,8 +17,19 @@
 //
 //   ⇒ 渠道必须是**写入时就显式记下来的字段**，不能事后反推。
 
-/** 记忆渠道。`unknown` 是**诚实**的兜底（老数据判不出来就是判不出来，不许猜）。 */
-export type MemoryChannel = 'qq' | 'dsh' | 'webui' | 'unknown';
+/**
+ * 记忆渠道。
+ *
+ * - `qq` / `dsh` / `webui`：三个**用户入口**（从 `session_id` 派生）
+ * - `life`：**她自己的生活管线**（`adjustFromMood` 等由生活事件驱动、没有用户会话的写入）
+ * - `system`：**系统发起**（如 24h 无信号的自动回归 `stale_regression`）
+ * - `unknown`：**诚实**的兜底 —— 老数据判不出来就是判不出来，**不许猜**
+ *
+ * ⚠️ `life` / `system` 不是"用户渠道"，但它们**必须**是独立取值：
+ * 否则"生活事件驱动的调整"和"判不出来的老数据"都会落进 `unknown`，
+ * 而这两者的处理策略完全不同（前者是设计行为，后者是数据债）。
+ */
+export type MemoryChannel = 'qq' | 'dsh' | 'webui' | 'life' | 'system' | 'unknown';
 
 /** 从 `session_id` 派生渠道（**只用于新写入**与老数据回填）。 */
 export function channelOfSession(sessionId: unknown): MemoryChannel {
@@ -33,7 +44,7 @@ export function channelOfSession(sessionId: unknown): MemoryChannel {
 
 /** 校验一个值是否是合法渠道（**不**把无法识别的值悄悄当成 unknown）。 */
 export function isMemoryChannel(v: unknown): v is MemoryChannel {
-  return v === 'qq' || v === 'dsh' || v === 'webui' || v === 'unknown';
+  return v === 'qq' || v === 'dsh' || v === 'webui' || v === 'life' || v === 'system' || v === 'unknown';
 }
 
 /**

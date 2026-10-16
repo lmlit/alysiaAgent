@@ -7,6 +7,8 @@ import { logger } from '../../utils/logger.js';
 //   与 SessionEndProcessor 同款。原来的裸 `JSON.parse` 遇到围栏直接抛，
 //   抛了又被 catch 吞掉，是画像静默停摆的帮凶。
 import { parseLLMJson } from '../../utils/llm-json.js';
+// ★ add-memory-channel-field：事实条目的渠道派生（写入时落库）
+import { channelOfSession } from '../../utils/channel.js';
 
 export interface CorrectionSignal {
   isCorrection: boolean;
@@ -128,6 +130,11 @@ export class ProfileExtractor {
           valid_until: new Date(Date.now() + ttlMs(category)).toISOString(),
           status: 'active' as const,
           category,
+          // ★ 2026-10-16（add-memory-channel-field）：渠道**写入时**就记下来。
+          //   起源事件这里拿得到（`events[0]`），所以能如实派生 qq/dsh/webui；
+          //   拿不到事件时记 'unknown'（**不许猜**）。
+          //   ⚠️ 不要拿上面的 `source` 当渠道 —— 它是提取方式（user/inferred）。
+          channel: channelOfSession(events[0]?.session_id),
         };
       };
       // ★ 8-28 双输出：用户事实 + 角色事实（角色事实 source 固定 inferred——对话中推断的角色信息）

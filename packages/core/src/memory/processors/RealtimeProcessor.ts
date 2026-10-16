@@ -2,6 +2,8 @@
 import type { MemoryEvent } from '../types.js';
 import { PROCESSED_PROFILE, PROCESSED_PERSONA, PROCESSED_KNOWLEDGE } from '../types.js';
 import { logger } from '../../utils/logger.js';
+// ★ add-memory-channel-field：hint 渠道派生
+import { channelOfSession } from '../../utils/channel.js';
 import { warnThrottled } from '../../utils/write-trace.js';
 import type { EventStore } from '../stores/EventStore.js';
 import type { ProfileStore } from '../stores/ProfileStore.js';
@@ -77,7 +79,8 @@ export class RealtimeProcessor {
     if (text) {
       const adjustment = await this.personaAdapter.processSignal(event);
       if (adjustment) {
-        this.personaAdapter.apply(adjustment);
+        // ★ add-memory-channel-field：把**事件所属渠道**传下去，让 hint 如实记来源
+        this.personaAdapter.apply(adjustment, { channel: channelOfSession(event.session_id) });
       }
     }
 

@@ -201,6 +201,14 @@ export interface ProfileFact {
   status: 'active' | 'superseded' | 'expired';
   /** ★ 8-28 分类（profile-facts-classification-confirm）：身份/偏好/状态/关系/默认——决定过期时长 */
   category: ProfileFactCategory;
+  /**
+   * ★ 2026-10-16（add-memory-channel-field）：记忆渠道。
+   * ⚠️ 与上面的 `source` **不是一回事**：`source` 是**提取方式**（user/behavior/inferred），
+   * `channel` 是**这条记忆从哪个入口来的**（qq/dsh/webui/life/system）。
+   * 用途：QQ 日常对话与 dsh 编程会话并存时做差异化处理。
+   * 老数据可能缺这个字段（判不出来就是 `'unknown'`，**不许猜**）。
+   */
+  channel?: MemoryChannel;
 }
 
 /** ★ 8-28 分类过期时长（ms）：identity 365 天 / preference 90 天 / status 14 天 /

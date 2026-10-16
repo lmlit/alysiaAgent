@@ -4,7 +4,7 @@
 
 - **日期**: 2026-10-16
 - **类型**: NEW（记忆元数据 + 迁移）
-- **状态**: **in-progress（未归档）** —— events/conversations 已完成；**facts / character_facts / adaptation_hints 待做**（见 tasks.md）
+- **状态**: **archived**（2026-10-16 propose → apply → archive；未部署）
 - **影响 spec**: `memory-system` §4.1.1 **契约 5**
 - **来源**: 用户 2026-10-16 决定：「后续计划让昔涟可以走 dsh 调用 dsh 的编程工具」⇒
   QQ 日常对话与 dsh 编程会话在同一套库里并存，且**将来要特殊处理** ⇒ 必须能区分
@@ -38,8 +38,11 @@
 - [x] **R4**：老库**回填**（只填 `channel = ''` 的行，不覆盖已判定的）
 - [x] **R5**：判不出来记 **`'unknown'`**，**不许猜**；`''`（还没回填）与 `'unknown'`（判不出来）
       **语义不同，不许混**
-- [ ] **R6**：`facts` / `character_facts` 条目加 `channel`（**待做**）
-- [ ] **R7**：`adaptation_hints` 条目加 `channel`（**待做**）
+- [x] **R6**：`facts` / `character_facts` 条目加 `channel`（写入点 `ProfileExtractor.toFact`，起源事件拿得到 ⇒ 如实派生）
+- [x] **R7**：`adaptation_hints` 条目加 `channel`（**穿参**：`apply(adj, {channel})`，两个有事件上下文的调用方各传各的）
+- [x] **R8**：枚举扩到 `life` / `system` —— 否则"生活事件驱动的调整"与"判不出来的老数据"都会落进 `unknown`，
+      而两者处理策略完全不同（前者是设计行为，后者是数据债）
+- [ ] **R9**：**老数据的回填**推迟到离线工具（见 tasks.md「为什么回填不放这儿」）
 
 ## 测试计划
 

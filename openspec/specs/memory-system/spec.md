@@ -502,10 +502,24 @@ TS 不报错（少形参可赋给多形参签名），但槽位会被静默丢�
 | ⚠️ **`events.source` 不是渠道**：它是 `chat`/`code`（事件性质） | 实测 730 条 dsh 事件里 **28 条**是 `source='chat'`（用户消息）—— 用 `source='code'` 判 dsh **会漏 28 条** |
 | ⚠️ 也不要把 `session_id` 前缀当作**唯一**渠道来源 | 前缀是脆的：dsh 拿不到 `session.id` 时退化成 `dsh:unknown`，多会话挤一个桶（KI-23） |
 
-⏳ **未完成部分**（同一 change）：`facts` / `character_facts` / `adaptation_hints` 的条目
-还没有 `channel` 字段 —— 这三层**目前仍无法可靠区分渠道**
-（`facts.source` 是 `user`/`inferred` ＝提取方式，不是渠道；只能从 `source_event` 的 id 形态反推，
-而本仓已有契约：`source_event` 会造**合成 id**（如 `reflection-<日期>`），**不可用于溯源**）。
+**结构化记忆条目也要有渠道**（同上 change，同一契约）：
+
+| 对象 | 字段 | 写入点 | 值怎么来 |
+|---|---|---|---|
+| `facts` / `character_facts` 条目 | `channel` | `ProfileExtractor.toFact` | 起源事件在手里 ⇒ `channelOfSession(events[0].session_id)` 如实派生 |
+| `adaptation_hints` 条目 | `channel` | `PersonaAdapter.apply()` | **穿参**：调用方（两个处理器）传事件渠道；情绪漂移传 `life`；24h 回归传 `system` |
+
+⚠️ **`source` 与 `channel` 是两个轴，不许互相顶替**：`source` 是**提取方式**
+（`user`/`behavior`/`inferred`），`channel` 是**从哪个入口来的**。
+
+⚠️ **枚举必须够用**：`life`（她自己的生活管线）与 `system`（系统发起）是**独立取值**。
+若把这两者塞进 `unknown`，就与"**判不出来的老数据**"混成同一个值，
+而处理策略相反（前者是设计行为要保留，后者是数据债要回填或忽略）。
+
+⏳ **存量条目的回填刻意不放在启动路径**（`initializeDatabase`）：这三样是 JSON 列，
+回填要整列 parse + 重写，每次启动做一次不可接受；而它本质是**一次性数据修复**，
+应当离线、可 dry-run、可核对 —— 恰好与 KI-20 的清理/合并是同一次操作，
+届时新增的 dsh 条目就地打标、老条目按 `source_event` 形态补标，判不出记 `unknown`。
 
 语义是**替换**默认槽，不是合并（否则调用方无法摆脱默认槽的字段，例如去掉 `json_object`）。
 

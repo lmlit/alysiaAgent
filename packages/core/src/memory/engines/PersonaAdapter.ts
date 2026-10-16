@@ -6,6 +6,8 @@ import { logger } from '../../utils/logger.js';
 // ★ KI-4：共用解析器（与 ProfileExtractor / SessionEndProcessor 同一套判据）
 import { parseLLMJson } from '../../utils/llm-json.js';
 import { warnThrottled } from '../../utils/write-trace.js';
+// ★ add-memory-channel-field：hint 条目的渠道（穿参下来，不默认 unknown）
+import type { MemoryChannel } from '../../utils/channel.js';
 
 const MAX_DELTA = 0.1;
 const COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
@@ -113,15 +115,15 @@ export class PersonaAdapter {
    *  走 apply 5 道护栏（Δ 钳制/冷却/同向次数/24h 回归）；24h 回归把参数拉回默认，不会无限累积。 */
   adjustFromMood(moodValue: number): boolean {
     if (moodValue >= 15) {
-      return this.apply({ param: 'emotional_range.playfulness', delta: 0.05, reason: '情绪惯性：连续开心，自然更活泼' });
+      return this.apply({ param: 'emotional_range.playfulness', delta: 0.05, reason: '情绪惯性：连续开心，自然更活泼' }, { channel: 'life' });
     }
     if (moodValue <= -15) {
-      return this.apply({ param: 'emotional_range.empathy', delta: 0.05, reason: '情绪惯性：连续低落，变得更敏感共情' });
+      return this.apply({ param: 'emotional_range.empathy', delta: 0.05, reason: '情绪惯性：连续低落，变得更敏感共情' }, { channel: 'life' });
     }
     return false;
   }
 
-  apply(adjustment: PersonaAdjustment, options?: { bypassLimits?: boolean }): boolean {
+  apply(adjustment: PersonaAdjustment, options?: { bypassLimits?: boolean; channel?: MemoryChannel }): boolean {
     // Prevent concurrent apply() calls from racing on Maps
     if (this.applyLock) return false;
     this.applyLock = true;
@@ -132,7 +134,7 @@ export class PersonaAdapter {
     }
   }
 
-  private _applyLocked(adjustment: PersonaAdjustment, options?: { bypassLimits?: boolean }): boolean {
+  private _applyLocked(adjustment: PersonaAdjustment, options?: { bypassLimits?: boolean; channel?: MemoryChannel }): boolean {
     const bypass = adjustment.explicit || options?.bypassLimits || false;
 
     // Regress stale params toward default before processing new adjustment
@@ -179,6 +181,8 @@ export class PersonaAdapter {
       adjustment: { [adjustment.param]: clampedDelta },
       evidence: adjustment.reason,
       applied_at: new Date().toISOString(),
+      // ★ add-memory-channel-field：**穿参**下来的渠道（调用方有事件上下文，能如实给）
+      channel: options?.channel ?? 'unknown',
     });
 
     return true;
@@ -246,6 +250,8 @@ export class PersonaAdapter {
         adjustment: { [param]: regressionDelta },
         evidence: 'No signal for >24h, regressed toward default',
         applied_at: new Date().toISOString(),
+        // ★ add-memory-channel-field：**系统发起**的回归，不是任何用户渠道
+        channel: 'system' as MemoryChannel,
       });
     }
   }

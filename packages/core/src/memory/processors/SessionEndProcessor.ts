@@ -6,6 +6,8 @@ import { parseLLMJson } from '../../utils/llm-json.js';
 // ★ KI-19 残余：并发互斥失败要留痕（限频）；id 唯一后缀用 randomUUID
 import { warnThrottled } from '../../utils/write-trace.js';
 import { randomUUID } from 'crypto';
+// ★ add-memory-channel-field：hint 渠道派生
+import { channelOfSession } from '../../utils/channel.js';
 import type { EventStore } from '../stores/EventStore.js';
 import type { ConversationStore, VectorWriteOutcome } from '../stores/ConversationStore.js';
 import type { ProfileStore } from '../stores/ProfileStore.js';
@@ -528,7 +530,7 @@ export class SessionEndProcessor {
       if (event.type === 'persona_change') {
         const adjustment = await this.personaAdapter.processSignal(event);
         if (adjustment) {
-          this.personaAdapter.apply(adjustment);
+          this.personaAdapter.apply(adjustment, { channel: channelOfSession(event.session_id) });
         }
       }
     }
