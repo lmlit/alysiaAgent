@@ -254,7 +254,7 @@ alysia 未启动是常态，通道失败**绝不能**让 dsh 会话不可用。
 | `alysia_life` 变量（生活事件注入） | ❌ 仍是骨架（见 §2.3） |
 | 其余写工具（`adjust_persona`/`switch_role`/`import_knowledge`/`list_life_events`/`set_reminder`） | ❌ 未做（见 §2.4） |
 | QQ 适配器（全新 dsh 插件） | ❌ 未做（当前 QQ 仍在 server 侧 `adapters/qq-official.ts`） |
-| 昔涟控制台 dsh 插件（`build-alysia-console-plugin`） | ⚠️ **进行中且上游已变**——原方案踩在已废弃的 `.agent-presets` / `tapIndex` 上（见 §5） |
+| 昔涟控制台 dsh 插件（`build-alysia-console-plugin`） | ⚠️ **进行中**。★ 2026-10-16 **更正**：原记的「踩在**已废弃的** `.agent-presets` / `tapIndex` 上」**理由不准** —— `.agent-presets` 确实废弃（且本包早已不用它，走的是 `dsh.bundle.patch`），但 `tapIndex` **没有废弃**（程序还在，dsh 文档称它是"任何行都无法表达的标记的逃生口"）。**真问题是**：桌面端 UI 不走 `renderIndex()` ⇒ **`tapIndex` 在桌面端不执行** ⇒ 入口脚本进不了页面（悬浮球不出现）。**已修**：注入改为 `webserver/index-inject` 行（`script-preload` + `script-src`@body），并加了「不再用 tapIndex」的回归守卫。**未做**：世界书/生活模板页、记忆旋钮页、审计页、`install_bundle` 装入 web profile 后的真机验收（见 §5） |
 | 结算的「两段确认」服务端接口 | ❌ 未做（本 change 走适配器侧挂起重试，见 §2.5.1 契约 6；是否要服务端配合待评估） |
 
 ## 5. 与 dsh 的对接约束

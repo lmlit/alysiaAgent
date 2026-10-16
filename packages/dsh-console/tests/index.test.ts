@@ -12,6 +12,8 @@ import type { Context } from '@deepseek-ai/cordis'
 function makeMockCtx() {
   const routes: Array<{ kind: string; path: string; handler: unknown }> = []
   const tapIndexFns: Array<(html: string) => string> = []
+  /** 按事件名存 handler —— index-inject 的测试要手动触发 */
+  const handlers = new Map<string, (...a: unknown[]) => void>()
   const register = vi.fn((route: { kind: string; path: string; handler: unknown }) => {
     routes.push(route)
     return () => {}
@@ -20,9 +22,25 @@ function makeMockCtx() {
     tapIndexFns.push(fn)
     return () => {}
   })
+  const on = vi.fn((type: string, fn: (...a: unknown[]) => void) => {
+    handlers.set(type, fn)
+    return () => {}
+  })
   const effect = vi.fn((cb: () => unknown) => { cb(); return () => {} })
-  const ctx = { webServer: { register, tapIndex }, effect } as unknown as Context
-  return { ctx, register, tapIndex, routes, tapIndexFns }
+  const ctx = { webServer: { register, tapIndex }, on, effect } as unknown as Context
+  /** 触发某个已注册事件，参数原样透传 */
+  const emit = (type: string, ...args: unknown[]): void => {
+    const h = handlers.get(type)
+    if (!h) throw new Error(`没有注册 ${type} 的 handler`)
+    h(...args)
+  }
+  /** 收集一次注入表（语义同 dsh：每次渲染发一次事件、订阅方 push） */
+  const collectRows = () => {
+    const rows: unknown[] = []
+    emit('webserver/index-inject', rows as unknown as { push(...r: unknown[]): unknown })
+    return rows
+  }
+  return { ctx, register, tapIndex, on, routes, tapIndexFns, handlers, emit, collectRows }
 }
 
 describe('alysia-console 插件', () => {
@@ -30,23 +48,55 @@ describe('alysia-console 插件', () => {
     expect(name).toBe('alysia-console')
   })
 
-  it('apply 注册反代 prefix + widget 托管 + tapIndex 注入', () => {
-    const { ctx, routes, tapIndexFns } = makeMockCtx()
+  it('apply 注册反代 prefix + widget 托管 + 订阅 index-inject', () => {
+    const { ctx, routes, on } = makeMockCtx()
     apply(ctx)
     expect(routes).toHaveLength(2)
     expect(routes[0]).toMatchObject({ kind: 'prefix', path: '/alysia-api' })
     expect(routes[1]).toMatchObject({ kind: 'exact', path: '/alysia-console/widget.js' })
-    expect(tapIndexFns).toHaveLength(1)
+    expect(on).toHaveBeenCalledWith('webserver/index-inject', expect.any(Function))
   })
 
-  it('tapIndex 注入 script 且去重', () => {
-    const { ctx, tapIndexFns } = makeMockCtx()
+  // ─────────────────────────────────────────────────────────────
+  // ★ 2026-10-16 · 注入方式从 `tapIndex` 改为 `index-inject` 行
+  //
+  // 第一版用 `tapIndex`，而 **dsh 桌面端 UI 不走 `renderIndex()`** ⇒ `tapIndex` 不执行
+  // ⇒ 插件装得上、路由注册得上，但**入口脚本永远不进页面**（悬浮球不出现）。
+  // 下列断言锁住"改用行"，并**明确断言不再用 tapIndex**（回归守卫）。
+  // ─────────────────────────────────────────────────────────────
+
+  it('★ index-inject 推入两条行：preload 提示 + 真正执行的 script-src', () => {
+    const { ctx, collectRows } = makeMockCtx()
     apply(ctx)
-    const fn = tapIndexFns[0]
-    const injected = fn('<html><body></body></html>')
-    expect(injected).toContain('<script defer src="/alysia-console/widget.js"></script>')
-    // 已注入 → 原样返回
-    expect(fn(injected)).toBe(injected)
+
+    expect(collectRows()).toEqual([
+      // preload 只是提示（更早开始下载）——**不执行**
+      { kind: 'script-preload', src: '/alysia-console/widget.js' },
+      // 真正加载：放 body 尾 ⇒ DOM 已就绪（dsh 渲染器**不加 defer**，位置就是时序保证）
+      { kind: 'script-src', placement: 'body', src: '/alysia-console/widget.js' },
+    ])
+  })
+
+  it('★★ 回归守卫：**不再使用 `tapIndex`**（它在桌面端不执行，是本包第一版失效的原因）', () => {
+    const { ctx, tapIndex, tapIndexFns } = makeMockCtx()
+    apply(ctx)
+
+    expect(
+      tapIndex,
+      '又用回 tapIndex 了 —— 桌面端不执行它，悬浮球不会出现',
+    ).not.toHaveBeenCalled()
+    expect(tapIndexFns).toHaveLength(0)
+  })
+
+  it('★ mountPath 配置要一路生效到注入行与托管路由（不是写死的）', () => {
+    const { ctx, routes, collectRows } = makeMockCtx()
+    apply(ctx, { mountPath: '/my-console' })
+
+    expect(routes[1]).toMatchObject({ path: '/my-console/widget.js' })
+    expect(collectRows()).toEqual([
+      { kind: 'script-preload', src: '/my-console/widget.js' },
+      { kind: 'script-src', placement: 'body', src: '/my-console/widget.js' },
+    ])
   })
 
   it('widget.js 返回合法 JS 脚本(自执行 IIFE)', () => {

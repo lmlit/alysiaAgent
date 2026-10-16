@@ -135,13 +135,18 @@ src/
 
 1. **调召回系数** `tune-recall-with-runtime-data` —— 阻塞已解除（摘要修好 + 存量回填干净），
    但**先积累运行数据再调**，别拍脑袋改系数（部分指标现在还没日志）
-2. **两个老 backlog**：`add-platforms-endpoint`（契约声明了但全仓没建）、
-   `worldbook-sampling-cooldown`（世界书采样缺 cooldown 过滤）
-3. **可观测性** `add-ops-health-report` —— 存活指标骗过一次（22 天全绿）；
-   前置是日志降噪（96.6% 是 QQ 噪声）
-4. **文档卫生** `clean-spec-diff-residue` —— apply 残留的 `+ ` diff 标记。
-   ★ 2026-10-02 实测范围比立项时记的大（`ai-life-system` 约 42 行，不止 `memory-system` 那 5 行）；
-   ⚠️ **不能直接 `grep '^+'` 删**，里面混着 ASCII 树角字符和提示词模板正文
+2. ~~两个老 backlog：`add-platforms-endpoint`、`worldbook-sampling-cooldown`~~
+   ✅ **2026-10-16 都已完成并归档**（平台状态端点口径收敛为"已接入的 scope"；
+   世界书采样冷却取 `max(6h, 条目 cooldown_sec)`）
+3. **可观测性** `add-ops-health-report` —— ✅ **2026-10-16 前置评估已完成**
+   （`scripts/log-profile.cjs`：本机样本单一来源 QQ 占 84%、关键信号 `SessionEnd` 仅 0.2%
+   ⇒ **按日志行数比例做监控必然无效**；且**前置（日志源头分级/限频）尚未完成**）。
+   **实现仍待拍板**——用户原话「日报算了，后面迭代再处理」
+4. ~~**文档卫生** `clean-spec-diff-residue`~~ ✅ **2026-10-16 已清理归档**：
+   真值 **55 行**（不是 5 行、也不是 ~42 行），其中 15 行在代码块内
+   （提示词模板 + ASCII 树 `+│`）。全部纯剥行首 `+`、内容零改动。
+   防复发已做成**机器拦得住**：`scripts/check-spec-diff-residue.cjs`（残留即 exit 1）
+   已接进 `.claude/skills/openspec-archive` 的 apply 步骤 —— **合并后必须跑，非 0 不许归档**
 5. **console 收尾**：表情包 `[表情包:名字]` 渲染（现按纯文本，★ 10-02 起已无任何前端渲染它）、
    `play_live2d_action` 工具 + 输出驱动状态切换
    ~~**删 `packages/webui`**~~ ★ **2026-10-02 已完成**（`remove-packages-webui`，已归档）：
@@ -153,8 +158,14 @@ src/
    provider 的 `[LLM]` 行与 `[Life] event LLM` 行会打出 `finish=` / `reasoning=` / `content=N字`。
    **下一步是采数据再决策**（`finish=length` + 空内容 ⇒ 加 `max_tokens`），
    **不要再凭感觉填数字**
-7. **dsh 侧** `build-alysia-console-plugin` **进行中且上游已变**——原方案踩在已废弃的
-   `.agent-presets` / `tapIndex` 上（dsh 桌面端换代了插件机制），需重新判断范围
+7. **dsh 侧** `build-alysia-console-plugin` **进行中**。★ 2026-10-16 更正原表述：
+   不是"踩在已废弃的 `.agent-presets` / `tapIndex` 上"——
+   `.agent-presets` 确实废弃（本包早已不用，走 `dsh.bundle.patch`），
+   但 **`tapIndex` 没废弃**（dsh 文档称它是"逃生口"）；
+   **真问题是桌面端 UI 不走 `renderIndex()` ⇒ `tapIndex` 在桌面端不执行**，
+   入口脚本进不了页面。**已修**为 `webserver/index-inject` 行。
+   **剩**：4 个面板页（世界书/生活模板、记忆旋钮、审计）+ `install_bundle` 真机验收。
+   ⚠️ 装 bundle 前**必须先 `npm run build`**（`main` 指向 `dist/`，而 `dist/` 是 gitignored）
 
 ## 环境变量 (.env)
 > 实际 key 在项目根目录 .env 文件中（已 gitignore）。
