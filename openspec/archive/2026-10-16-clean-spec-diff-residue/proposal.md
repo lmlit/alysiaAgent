@@ -2,10 +2,10 @@
 
 ## 元信息
 
-- **日期**: 2026-09-25
+- **日期**: 2026-09-25（**2026-10-16 清理完成并归档**）
 - **类型**: DOC（纯文档）
-- **状态**: pending
-- **影响 spec**: `memory-system`（§ 末尾「★ 8-29 Overlay 稳定演化」段）
+- **状态**: **archived**
+- **影响 spec**: `memory-system`、`ai-life-system`（两处残留）；另改 `scripts/` + `.claude/skills/openspec-archive/SKILL.md`（防复发）
 
 ## 动机
 

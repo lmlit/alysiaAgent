@@ -242,7 +242,7 @@ LLM 可选 `continuation_of`（防幻觉：须命中今天事件 ID 集合）。
 【当前时间】2026年8月6日 星期四 21:35
 【当前状态】你正在: 在阳台看书；心情: 平静
 【亲密度】与轻月: 62/100
-+【心情】情绪累积: +8（最近心情偏开心）——事件风格贴合当前情绪
+【心情】情绪累积: +8（最近心情偏开心）——事件风格贴合当前情绪
 
 【今天的生活】
 - 09:30 在阳台看书，看到一朵像兔子的云
@@ -257,10 +257,10 @@ LLM 可选 `continuation_of`（防幻觉：须命中今天事件 ID 集合）。
 - （世界书条目 2 摘要）
 - ...
 
-+【在场角色】（★ 只有这些配角此刻在你身边/可互动；列表为空就是独处，不要凭空召唤他人）
-+- 迷迷（在你身边蹭来蹭去）
-+- 风堇（在昏光庭院忙，偶尔路过）
-+【轻月最近】用户最近在忙什么（ProfileStore facts 摘要，可空）
+【在场角色】（★ 只有这些配角此刻在你身边/可互动；列表为空就是独处，不要凭空召唤他人）
+- 迷迷（在你身边蹭来蹭去）
+- 风堇（在昏光庭院忙，偶尔路过）
+【轻月最近】用户最近在忙什么（ProfileStore facts 摘要，可空）
 
 你是被定时任务唤醒的——这不是用户发来的消息，不要问候、不要等回复。
 请生成一个此刻可能发生在你身上的生活事件（1-2 句话，第一人称）。
@@ -371,16 +371,16 @@ worldbook_entries（激活角色的实际设定内容，如人设/回忆/情境�
 │
 ├── ① 人设背景注入：事件生成器采样 N=5 条 → 「你的人设背景」块
 │      ★ 内容以当前激活角色世界书为准（切角色事件风格跟随）
-+│      ★ 8-27 分层随机（life-worldbook-layered-sample）：content_type='life_event' 随机取 3
-+│        + content_type='text' 随机取 2（ORDER BY RANDOM()，不再按 priority 排序），
-+│        每条截断 200 字（原 100 字）——角色生活化条目优先于设定条目
-+│      ★ 8-27 digest 简介优先（worldbook-digest-summary）：text 条目由 LLM 生成
-+│        120-150 字「角色简介」（digest 列：核心设定 + 与昔涟的关系 + 对生活的意义），
-+│        采样注入时 content 字段 = digest ?? 截断正文（无 digest 兜底 200 字）。
-+│        life_event（天然 ≤154 字）/ image（表情包）不生成 digest。
-+│        生成方式：一次性脚本 scripts/digest-worldbook.ts 批量生成（幂等可重跑，
-+│        只处理无 digest 的条目；失败跳过计数）——66 条 text 全量生成后注入质量
-+│        不受截断影响（白厄 974 字 → 简介保留发小关系核心）
+│      ★ 8-27 分层随机（life-worldbook-layered-sample）：content_type='life_event' 随机取 3
+│        + content_type='text' 随机取 2（ORDER BY RANDOM()，不再按 priority 排序），
+│        每条截断 200 字（原 100 字）——角色生活化条目优先于设定条目
+│      ★ 8-27 digest 简介优先（worldbook-digest-summary）：text 条目由 LLM 生成
+│        120-150 字「角色简介」（digest 列：核心设定 + 与昔涟的关系 + 对生活的意义），
+│        采样注入时 content 字段 = digest ?? 截断正文（无 digest 兜底 200 字）。
+│        life_event（天然 ≤154 字）/ image（表情包）不生成 digest。
+│        生成方式：一次性脚本 scripts/digest-worldbook.ts 批量生成（幂等可重跑，
+│        只处理无 digest 的条目；失败跳过计数）——66 条 text 全量生成后注入质量
+│        不受截断影响（白厄 974 字 → 简介保留发小关系核心）
 │
 ├── ② 命中统计：事件引用条目 → hit_count+1，与对话触发共用冷却
 │
@@ -600,46 +600,46 @@ await memoryManager.ingest({
 - 裁决回调：generateIntentMessage 升级为 JSON 输出 {action, content, delay_hours?}
   ——prompt 带承诺原文/内容/当前状态/已延期次数
 
-+ **★ 8-28 间隔叙事补写（life-interval-narrative）**：
-+ - 事件覆盖"从上次事件到现在"的时间（HDSI advance 式补写），不再只写此刻瞬间——
-+   每个事件 = 上次事件的延续 + 间隔生活（进展/变化/被打断/小波折，停在哪里）
-+ - 【上次事件】块注入生成 prompt：8h 内 internal 且 30min 无互动 → 延续候选
-+   （continuation_of 引导）；其他 → 间隔补写引导（覆盖间隔不写瞬间）
-+ - 长间隔（重启/隔夜）自然补写这段时间的生活，重启空白顺带解决
-+ - 替代 8-09 延续块（【你正在做的事】并入【上次事件】）
+**★ 8-28 间隔叙事补写（life-interval-narrative）**：
+- 事件覆盖"从上次事件到现在"的时间（HDSI advance 式补写），不再只写此刻瞬间——
+  每个事件 = 上次事件的延续 + 间隔生活（进展/变化/被打断/小波折，停在哪里）
+- 【上次事件】块注入生成 prompt：8h 内 internal 且 30min 无互动 → 延续候选
+  （continuation_of 引导）；其他 → 间隔补写引导（覆盖间隔不写瞬间）
+- 长间隔（重启/隔夜）自然补写这段时间的生活，重启空白顺带解决
+- 替代 8-09 延续块（【你正在做的事】并入【上次事件】）
 
-+ **★ 8-29 聊天生活衔接（chat-life-continuity）**：
-+ - 用户消息进来（私聊）时,30min 内有生活事件 → 注入【此刻的你】块("你刚才在 {事件}——
-+   自然地从这段生活里走出来接话")——HDSI"用户消息进入生活"的简化落地,对话从生活走出
-+ - MemoryManager.getLifeContinuityBlock():30min 内最近事件 → 补写块;无则空
+**★ 8-29 聊天生活衔接（chat-life-continuity）**：
+- 用户消息进来（私聊）时,30min 内有生活事件 → 注入【此刻的你】块("你刚才在 {事件}——
+  自然地从这段生活里走出来接话")——HDSI"用户消息进入生活"的简化落地,对话从生活走出
+- MemoryManager.getLifeContinuityBlock():30min 内最近事件 → 补写块;无则空
 
-+ **★ 8-29 情绪侧端分析（mood-side-analysis，HDSI Alter 简化）**：
-+ - mood_value 深度阈值 |mv|≥30 且 6h 冷却 → 侧端 LLM 生成描述性氛围 mood_note
-+   （"这段日子心里像落了雨…"）——注入【心情】块与事件生成 context,情绪参与叙事氛围
-+ - 回落到 |mv|<30 → 清空;分析失败不阻塞（冷却后重试）
+**★ 8-29 情绪侧端分析（mood-side-analysis，HDSI Alter 简化）**：
+- mood_value 深度阈值 |mv|≥30 且 6h 冷却 → 侧端 LLM 生成描述性氛围 mood_note
+  （"这段日子心里像落了雨…"）——注入【心情】块与事件生成 context,情绪参与叙事氛围
+- 回落到 |mv|<30 → 清空;分析失败不阻塞（冷却后重试）
 
-+ **★ 8-29 跨世界之窗与独立人格（worldview-crossworld-window）**：
-+ - 世界观：她与轻月隔着两个世界,对话窗口是唯一的桥——想念顺着光走过去,每次对话像偷来的时光
-+   （daily_life 条目 + identity.md 常驻段 + 事件生成 context 底色）
-+ - 独立人格：事件动机围绕自己（post-check ⑧ 拦截"等/为/怕轻月"动机）；【轻月最近】移除；
-+   【你惦记的事】注入（未完成 intent 驱动生活）；【关于我】注入（character_facts 对话可见）；
-+   亲密度加"她主动"维度（delivered 事件数——关系不单由用户频率决定）
-+ - 节日/问候融入事件生成：todaySpecial 注入【今天是什么日子】——节日氛围自然进事件,不再独立打卡
-+ - 触发时间联动：next_in_hours 明确映射（沉浸 3-8h / 无聊想聊 0.5-2h）——修复 LLM 全给默认值
-+   导致事件间隔恒 2.5h 的问题
+**★ 8-29 跨世界之窗与独立人格（worldview-crossworld-window）**：
+- 世界观：她与轻月隔着两个世界,对话窗口是唯一的桥——想念顺着光走过去,每次对话像偷来的时光
+  （daily_life 条目 + identity.md 常驻段 + 事件生成 context 底色）
+- 独立人格：事件动机围绕自己（post-check ⑧ 拦截"等/为/怕轻月"动机）；【轻月最近】移除；
+  【你惦记的事】注入（未完成 intent 驱动生活）；【关于我】注入（character_facts 对话可见）；
+  亲密度加"她主动"维度（delivered 事件数——关系不单由用户频率决定）
+- 节日/问候融入事件生成：todaySpecial 注入【今天是什么日子】——节日氛围自然进事件,不再独立打卡
+- 触发时间联动：next_in_hours 明确映射（沉浸 3-8h / 无聊想聊 0.5-2h）——修复 LLM 全给默认值
+  导致事件间隔恒 2.5h 的问题
 
-+ **★ 8-29 事件/对话拆分（life-event-message-split，HDSI script vs interaction.reply）**：
-+ - 事件 JSON 加 message 字段：type=chat 时 content=生活叙述（入库），message=对轻月说的话
-+   （第二人称/口语/互动感）——推送 message，不再把生活日记推给用户
-+ - 无 message 回落 content；回写记忆回写 message（她记得自己对轻月说过的话）
-+ - intent 用 message（想对轻月说的话）；intent.content 缺失时 message 兜底
-+ - post-check ⑨：message 第二人称/长度/不得复述 content
+**★ 8-29 事件/对话拆分（life-event-message-split，HDSI script vs interaction.reply）**：
+- 事件 JSON 加 message 字段：type=chat 时 content=生活叙述（入库），message=对轻月说的话
+  （第二人称/口语/互动感）——推送 message，不再把生活日记推给用户
+- 无 message 回落 content；回写记忆回写 message（她记得自己对轻月说过的话）
+- intent 用 message（想对轻月说的话）；intent.content 缺失时 message 兜底
+- post-check ⑨：message 第二人称/长度/不得复述 content
 
-+ **★ 8-29 世界观底色统一字段（worldview-base-field）**：
-+ - 新建 persona/worldview.md（跨世界之窗/独立人格/生活中心）——**一个字段,每轮注入**：
-+   聊天经 PERSONA_FILES 自动注入 system prompt;事件生成经 MemoryManager.getWorldviewBlock()
-+   取同一数据源（缓存读取）
-+ - identity.md 跨世界段移入 worldview.md（去重）——改一处,聊天与事件生成同时生效
+**★ 8-29 世界观底色统一字段（worldview-base-field）**：
+- 新建 persona/worldview.md（跨世界之窗/独立人格/生活中心）——**一个字段,每轮注入**：
+  聊天经 PERSONA_FILES 自动注入 system prompt;事件生成经 MemoryManager.getWorldviewBlock()
+  取同一数据源（缓存读取）
+- identity.md 跨世界段移入 worldview.md（去重）——改一处,聊天与事件生成同时生效
 
 ---
 
