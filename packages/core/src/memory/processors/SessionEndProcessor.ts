@@ -3,6 +3,9 @@ import type { MemoryEvent, Conversation } from '../types.js';
 import { PROCESSED_SUMMARY } from '../types.js';
 import { logger } from '../../utils/logger.js';
 import { parseLLMJson } from '../../utils/llm-json.js';
+// ★ KI-19 残余：并发互斥失败要留痕（限频）；id 唯一后缀用 randomUUID
+import { warnThrottled } from '../../utils/write-trace.js';
+import { randomUUID } from 'crypto';
 import type { EventStore } from '../stores/EventStore.js';
 import type { ConversationStore, VectorWriteOutcome } from '../stores/ConversationStore.js';
 import type { ProfileStore } from '../stores/ProfileStore.js';
@@ -25,7 +28,7 @@ export interface SessionEndResult {
   /** 是否产生了可用的摘要（写入了 status='ok' 的行） */
   summarized: boolean;
   /** 未产生摘要的原因 */
-  reason?: 'no-events' | 'no-messages' | 'no-dialogue' | 'summary-failed';
+  reason?: 'no-events' | 'no-messages' | 'no-dialogue' | 'summary-failed' | 'in-flight';
   /**
    * ★ KI-15：**向量的**落库结果，与摘要分开。
    *
@@ -71,6 +74,12 @@ const SUMMARY_SYSTEM_PROMPT =
  *   改为落一条 `summary_status='failed'` 的行（summary 空、无向量），失败因此**可见且可补**。
  */
 export class SessionEndProcessor {
+  /**
+   * ★ KI-19 残余：**在飞的会话**（per-session 并发互斥）。
+   * 同一会话重叠结算会让同一批事件被摘两遍 ⇒ 两条摘要。
+   */
+  private inFlight = new Set<string>();
+
   constructor(
     private eventStore: EventStore,
     private conversationStore: ConversationStore,
@@ -93,8 +102,43 @@ export class SessionEndProcessor {
    *   2. **返回处理结果**而不是 `void`——空转绝不能伪装成成功：
    *      调用方（archiveStaleSessions）原先无条件 `archived++`，
    *      于是"什么都没做"在日志里长得和"归档成功"一模一样。
+   *
+   * ★ 2026-10-16（change: `fix-concurrent-summary-duplication`，KI-19 残余）：
+   *   **同一会话同时只允许一个摘要在跑**（per-session 互斥）。
+   *
+   *   为什么需要：两次调用若**重叠**（各自在对方落库前就算好了窗口锚点），
+   *   两次都会摘**同一批事件** ⇒ 同一会话出现**两条摘要**（KI-19 的原症状）。
+   *   而 `getLatestBySession` 提供的锚点只在**第一次落库之后**才前进，挡不住重叠。
+   *
+   *   ⚠️ 与"撞 PK"的关系：`conversations.id` 曾用 `conv-${sid}-${Date.now()}`，
+   *   同毫秒的两次落库会撞 PRIMARY KEY 抛错 —— 那**歪打正着地挡住**了重复，
+   *   代价是"后一次整段丢掉 + 异常抛给调用方"。
+   *   ⇒ 所以**不能只把 id 改成唯一**（那会把崩溃换成静默重复）；
+   *     本互斥是**语义修复**，id 唯一只是防御。
+   *
+   *   为什么"直接跳过"是对的：两次调用摘的是同一窗口 ⇒ 让先到的那个做，
+   *   后到的本来也没有新内容可摘。**重试**（`retryFailedSummaries`）不受影响 ——
+   *   那时第一次早已结束、不在飞。
    */
   async process(sessionId: string, since?: Date): Promise<SessionEndResult> {
+    if (this.inFlight.has(sessionId)) {
+      // 留痕但不刷屏：并发结算本身是**异常时序**，但可能成批出现（cron 与调用方撞车）
+      warnThrottled(
+        'session-end-inflight',
+        `[SessionEnd] 会话 ${sessionId.slice(-24)} 已有摘要在跑 —— 本次**跳过**` +
+          `（避免同一批事件被摘两遍；重试路径不受影响）`,
+      );
+      return { summarized: false, reason: 'in-flight' };
+    }
+    this.inFlight.add(sessionId);
+    try {
+      return await this.processInner(sessionId, since);
+    } finally {
+      this.inFlight.delete(sessionId);
+    }
+  }
+
+  private async processInner(sessionId: string, since?: Date): Promise<SessionEndResult> {
     // 1. 取该会话的（窗口内）最近事件
     const events = this.getSessionEvents(sessionId, since);
     if (events.length === 0) return { summarized: false, reason: 'no-events' };
@@ -176,7 +220,16 @@ export class SessionEndProcessor {
         ? new Date(newestMs).toISOString()
         : now;
     const conv: Conversation = {
-      id: `conv-${sessionId}-${Date.now()}`,
+      // ★ 2026-10-16（KI-19 残余）：id 加**唯一后缀**。
+      //   原来只有 `conv-${sid}-${Date.now()}` —— 同一毫秒的两次落库做出同一个 id
+      //   ⇒ 撞 PRIMARY KEY ⇒ 抛 `UNIQUE constraint failed: conversations.id`
+      //   ⇒ `onSessionEnd` 把异常抛给调用方，**后一次整段丢掉**。
+      //   ⚠️ 单靠 id 唯一**不足以**修好本项（会把崩溃换成"静默重复两条"）——
+      //      并发语义由 `process()` 的 per-session 互斥负责，这里只是**防御**：
+      //      即便互斥失效，也不该因为一个 id 撞车把整段摘要丢掉。
+      //   为什么还留时间戳：它能让人在日志/库里一眼看出这条摘要大致何时落的，
+      //      排序本身靠 `started_at`/`ended_at`，不依赖 id。
+      id: `conv-${sessionId}-${Date.now()}-${randomUUID().slice(0, 8)}`,
       session_id: sessionId,
       summary: ok ? summaryData!.summary : '',
       participants: JSON.stringify(ok ? summaryData!.participants : []),

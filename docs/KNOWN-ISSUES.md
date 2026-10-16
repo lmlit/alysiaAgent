@@ -98,6 +98,16 @@
 
 ### KI-4 🟠 `PersonaAdapter.processSignal` 用裸 `JSON.parse`
 
+> ★ **2026-10-16 已修**（change: [`fix-persona-adapter-json-tolerance`](../openspec/archive/2026-10-16-fix-persona-adapter-json-tolerance/proposal.md)，已归档）。
+> 改用**共用解析器** `utils/llm-json.ts`（与 `ProfileExtractor` / `SessionEndProcessor` 同一套判据），
+> 解析失败（`bare` / `empty`）走 `warnThrottled` **留痕**。
+> 契约写进 `memory-system` §4.1.1 **契约 4**（含"当前实现分布"清单）。
+> ★ 值得记的背景：`utils/llm-json.ts` 的头注写着**这个需求在本仓出现过两次、只做对了一处** ——
+> 后果是会话摘要 22 天 100% 失败（全部静默）。当时 `ProfileExtractor` / `SessionEndProcessor`
+> 都换了，**只有这里留着裸写法**。
+> 测试里刻意分开了三种"没有调整"：① 解析失败（要 warn）② 合法 JSON 但字段不合法（不 warn）
+> ③ `adjustments: []`（不 warn）—— 把后者报成失败等于**用噪声淹掉真失败**。
+
 - **现象**：与刚修的 `ProfileExtractor` 同源写法——裸 `JSON.parse(response)`，
   catch 后注释「LLM returned invalid JSON, skip」直接放弃（**无日志**）。
 - **证据**：`packages/core/src/memory/engines/PersonaAdapter.ts:57`（parse）与 `:72`（catch）。
@@ -414,6 +424,17 @@
 - **建议方向**：加与 ingest 同级的来源/形状校验（或至少在会话不存在时响亮失败而不是空转）。
 
 ### KI-19 🟡 同一会话可能被重复摘要（20 秒内两条 conversation）
+
+> ★ **2026-10-16 残余也已修**（change: [`fix-concurrent-summary-duplication`](../openspec/archive/2026-10-16-fix-concurrent-summary-duplication/proposal.md)，已归档）。
+> 本轮给它写复现测试时发现**两种坏结果同源**：
+> ① `conversations.id = conv-${sid}-${Date.now()}` 同毫秒撞 PRIMARY KEY ⇒
+> `UNIQUE constraint failed` ⇒ 异常抛给调用方、**后一次整段丢掉**；
+> ② 两次调用**重叠**时两次摘同一批事件 ⇒ **两条摘要**。
+> ★ **关键判断**：撞 PK 其实**歪打正着地挡住**了 ②，
+> 所以"只把 id 改成唯一"会把「响的错 + 丢一条」换成「**静默重复两条**」。
+> ⇒ 修法是**两件一起**：per-session 互斥（语义修复）+ id 唯一（防御）。
+> 契约写进 `memory-system` §5.4.1 契约 4d。
+
 
 > ★ **2026-10-11 更新：根因已坐实并修复**（change: `fix-session-end-window`）。
 > 下面「疑似原因」第 2 条猜对了方向，但真正的机制更基础：

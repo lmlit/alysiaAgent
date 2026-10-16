@@ -471,6 +471,22 @@ interface IVectorStore {
 `MemoryManager` 用 `slotify(slot)` 按场景绑定槽位。实现方若**少声明一个形参**，
 TS 不报错（少形参可赋给多形参签名），但槽位会被静默丢弃——
 所有调用塌回实现自己的默认槽。`OpenAILLMService` 曾如此。
+
+**契约 4：所有 LLM 结构化输出必须走共用解析器 `utils/llm-json.ts`，且解析失败必须留痕**
+（2026-10-16，change: `fix-persona-adapter-json-tolerance`，KI-4）。
+
+| 规则 | 为什么 |
+|---|---|
+| 禁裸 `JSON.parse(response)` | 模型即使被要求"只输出 JSON"也常包一层 ` ```json `；裸 parse 遇围栏直接抛 |
+| 统一用 `parseLLMJson()`（剥围栏 + 空判 + 截断检测 → `json`/`bare`/`empty` 判别联合） | 这个需求在本仓**出现过两次、只做对了一处**——线上后果是**会话摘要 22 天 100% 失败**（见该文件头注） |
+| 解析不出来（`bare`/`empty`）→ **必须留痕**（限频 warn） | 「模型说了句人话」与「自适应静默失效」**不许同形**——这正是 KI-4 藏了很久的原因 |
+| 「合法 JSON 但内容不合法」（如 `adjustments` 不是数组）→ 返回 null，**不算解析失败** | 报 warn 会把真失败淹掉 |
+| 「合法 JSON 且语义上无需调整」（如 `adjustments: []`）→ 正常结果，**不报警** | 同上 |
+
+⚠️ **当前的实现分布**（改动时要一起想）：`ProfileExtractor`、`SessionEndProcessor`、
+`PersonaAdapter` 都已改用共用解析器。**新增任何 LLM 结构化消费方都必须照办**，
+不要再抄一份 `JSON.parse`。
+
 语义是**替换**默认槽，不是合并（否则调用方无法摆脱默认槽的字段，例如去掉 `json_object`）。
 
 **契约 4：这条链路上禁止裸 `catch {}`。**
@@ -1108,6 +1124,26 @@ since = ConversationStore.getLatestBySession(sessionId)?.ended_at
 所以窗口锚点是唯一的闸；而该分支的前提是「**一条会话记录都没有**」
 ⇒ 这个会话**从来没被摘过** ⇒ 从头摘正是它该做的事。一旦摘过一次，
 下界就变成 `ended_at`，**绝不回头**（有测试直接锁这一条）。
+
+**契约 4d：同一会话的结算必须**互斥**，conversation id 必须唯一**
+（2026-10-16，change: `fix-concurrent-summary-duplication`，KI-19 残余）。
+
+两条缺一不可，且**顺序不能反**：
+
+1. **per-session 并发互斥**（`SessionEndProcessor` 的 `inFlight` 集合）。
+   两次调用若**重叠**（各自在对方落库前就算好窗口锚点），两次都会摘**同一批事件**
+   ⇒ 同一会话出现**两条摘要**。锚点（`getLatestBySession`）只在**第一次落库之后**才前进，
+   **挡不住重叠**。互斥命中时返回 `{ summarized: false, reason: 'in-flight' }` 并**限频留痕**。
+   ⚠️ **重试路径不受影响**：那时第一次早已结束、不在飞。
+2. **`conversations.id` 必须唯一**，不能只用 `conv-${sid}-${Date.now()}` ——
+   同一毫秒的两次落库会做出同一个 id ⇒ 撞 PRIMARY KEY ⇒
+   `UNIQUE constraint failed: conversations.id` ⇒ 异常抛给调用方，**后一次整段丢掉**。
+   现在带一个 `randomUUID()` 短后缀。
+
+⚠️ **为什么不"只把 id 改成唯一"就完事**：撞 PK 其实**歪打正着地挡住**了第 1 条的问题，
+代价是"崩溃 + 丢一条"。只改 id 会把**响的错**换成**静默的重复摘要**——
+拿一个更坏的错换掉一个更响的错。⇒ 互斥是**语义修复**，id 唯一只是**防御**。
+
 
 > 契约 4 的 `ended_at` 数据边界化正是触发条件，故由本 change 兑现。
 

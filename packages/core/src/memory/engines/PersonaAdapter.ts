@@ -3,6 +3,9 @@ import type { MemoryEvent, PersonaAdjustment } from '../types.js';
 import { PersonaStore } from '../stores/PersonaStore.js';
 import type { ILLMService } from '../interfaces/ILLMService.js';
 import { logger } from '../../utils/logger.js';
+// ★ KI-4：共用解析器（与 ProfileExtractor / SessionEndProcessor 同一套判据）
+import { parseLLMJson } from '../../utils/llm-json.js';
+import { warnThrottled } from '../../utils/write-trace.js';
 
 const MAX_DELTA = 0.1;
 const COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
@@ -54,7 +57,33 @@ export class PersonaAdapter {
     );
 
     try {
-      const parsed = JSON.parse(response);
+      // ★ 2026-10-16（change: `fix-persona-adapter-json-tolerance`，KI-4）：
+      //   改用**共用解析器**（剥 markdown 围栏 + 空判 + 裸文本分类），不再裸 `JSON.parse`。
+      //
+      //   为什么必须换：模型即使被要求"只输出 JSON"，也常包一层 ```json。
+      //   裸 parse 遇到围栏直接抛，而这里原来 catch 后只写一句注释就放弃（**无日志**）
+      //   ⇒ **人格自适应静默失效**：没有人格调整，也没有任何痕迹，
+      //     看起来和"这轮确实不需要调整"一模一样。
+      //
+      //   ⚠️ 这个坑项目里**已经修过一次**（见 `utils/llm-json.ts` 头注：
+      //     "这个需求出现了两次——只做对了一处。线上后果：会话摘要 22 天 100% 失败"）。
+      //     `ProfileExtractor` / `SessionEndProcessor` 当时都换了，
+      //     **只有这里还留着裸写法** —— 本 change 把它对齐，判据不再分叉。
+      const parsedResult = parseLLMJson(response);
+
+      if (parsedResult.kind !== 'json') {
+        // 「模型说了句人话」与「话说到一半被掐了」策略不同，但**都必须留痕** ——
+        // 静默正是 KI-4 藏了这么久的原因。限频：人格扫描是**每条用户消息**都走的路径。
+        warnThrottled(
+          'persona-adapter-json',
+          `[PersonaAdapter] LLM 未返回可解析的 JSON（kind=${parsedResult.kind}` +
+            `${parsedResult.kind === 'bare' && parsedResult.truncated ? ', 疑似被截断' : ''}）` +
+            `—— 本次人格调整**跳过**（不是"不需要调整"）`,
+        );
+        return null;
+      }
+
+      const parsed = parsedResult.value;
       if (parsed.adjustments && parsed.adjustments.length > 0) {
         const adj = parsed.adjustments[0];
         // Validate required fields exist before using them
@@ -68,8 +97,13 @@ export class PersonaAdapter {
           ...(isExplicit ? { explicit: true } : {}),
         };
       }
-    } catch {
-      // LLM returned invalid JSON, skip
+    } catch (err: any) {
+      // 走到这里说明是**解析成功但结构不对**（如 adjustments 不是数组）——
+      // 与上面那类"解析不出来"不同，但也**不该静默**（限频）。
+      warnThrottled(
+        'persona-adapter-shape',
+        `[PersonaAdapter] LLM 返回的 JSON 结构异常：${err?.message ?? err}`,
+      );
     }
     return null;
   }
