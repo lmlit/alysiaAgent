@@ -121,7 +121,11 @@ describe('alysia-adapter 插件', () => {
     const { ctx, logger, on } = makeMockCtx()
     apply(ctx)
     const listener = on.mock.calls[0][1] as (session: unknown, event: { type: string; data: unknown }) => void
-    listener(null, { type: 'user/message', data: { content: [{ type: 'text', text: '早上好' }] } })
+    // ★ 必须传**带 id 的** session：2026-10-16 起（fix-dsh-ingest-and-settlement 契约 7）
+    //   取不到 id 的会话是 **fail closed**（不回传、只打一条限频 warn 就返回），
+    //   连 `session/event` 那行 info 都不会打——所以旧的 `listener(null, …)` 已不成立。
+    //   无 id 的行为由 `tests/delivery.test.ts` 的 T3 覆盖。
+    listener({ id: 'sess-log' }, { type: 'user/message', data: { content: [{ type: 'text', text: '早上好' }] } })
     expect(logger.info).toHaveBeenCalledWith(expect.stringContaining('session/event user/message'))
   })
 })
@@ -646,5 +650,229 @@ describe('★ recall_memory 的主动引导（2026-10-02）', () => {
     expect(desc).toContain('主动查');
     expect(desc, '要讲清自动带上的只是概览').toMatch(/概览/);
     expect(desc, '要点名触发场景').toContain('你还记得吗');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// ★ 第三批 · 缓存乱序：预热**不得覆盖**更新的「话题刷新」
+//
+// 两条链各自 `.then(setMemoryContext)`：
+//   - 挂载时的预热（**空 query**，启动那一波最慢）
+//   - 用户消息到达后的刷新（**原话 query**，话题相关）
+// 预热是**更早发起**但可能**更晚返回**（空 query 的召回通常更慢），
+// 于是它落地时把话题刷新的结果**覆盖掉** —— 那一轮她看到的记忆比上一轮还旧。
+// 修法：给每次检索发一个**单调序号**，只允许"不比已应用的更旧"的结果落地。
+// ─────────────────────────────────────────────────────────────
+
+describe('★ 缓存乱序：预热不得覆盖话题刷新（第三批）', () => {
+  it('★★ 主症：预热晚归 → 不许覆盖已应用的话题刷新结果', async () => {
+    const original = globalThis.fetch;
+    /** 每次请求都挂住，由测试决定谁先返回（用来精确制造乱序） */
+    const pending: Array<{ q: string; release: () => void }> = [];
+    globalThis.fetch = (async (_u: string, init: any) => {
+      const q = init?.body ? JSON.parse(init.body).query : '';
+      await new Promise<void>(r => pending.push({ q, release: () => r() }));
+      return {
+        ok: true, status: 200, text: async () => '',
+        json: async () => ({ context: q === '' ? '过期的预热内容' : '话题刷新内容', retrieved: [] }),
+      };
+    }) as never;
+
+    try {
+      const { ctx, emit } = makeMockCtx();
+      (await freshApply())(ctx, { alysiaBaseUrl: 'http://127.0.0.1:1', prewarmReuseMs: 0 });
+      await new Promise(r => setTimeout(r, 20));   // 让预热请求发出去
+
+      emit('session/event', SESSION, {
+        seq: 1, type: 'user/message', time: 1,
+        data: { message: { content: [{ type: 'text', text: '我家猫最近怎么样' }] } },
+      });
+      await new Promise(r => setTimeout(r, 20));   // 让刷新请求发出去
+
+      const prewarm = pending.find(p => p.q === '');
+      const refresh = pending.find(p => p.q !== '');
+      expect(prewarm, '预热请求没发出去').toBeDefined();
+      expect(refresh, '刷新请求没发出去').toBeDefined();
+
+      // ① 刷新**先**返回并落地
+      refresh!.release();
+      await new Promise(r => setTimeout(r, 20));
+      expect(ctxText(ctx)).toContain('话题刷新内容');
+
+      // ② 预热**后**返回 —— 它是更早发起的，不许回退记忆
+      prewarm!.release();
+      await new Promise(r => setTimeout(r, 20));
+      expect(
+        ctxText(ctx),
+        '预热晚归覆盖了更新的刷新结果 —— 这一轮她看到的记忆比上一轮还旧',
+      ).toContain('话题刷新内容');
+      expect(ctxText(ctx)).not.toContain('过期的预热内容');
+    } finally { globalThis.fetch = original; }
+  });
+
+  it('回归：预热先返回、刷新后返回 → 刷新照常覆盖（后者更新，天经地义）', async () => {
+    const original = globalThis.fetch;
+    const pending: Array<{ q: string; release: () => void }> = [];
+    globalThis.fetch = (async (_u: string, init: any) => {
+      const q = init?.body ? JSON.parse(init.body).query : '';
+      await new Promise<void>(r => pending.push({ q, release: () => r() }));
+      return {
+        ok: true, status: 200, text: async () => '',
+        json: async () => ({ context: q === '' ? '预热内容' : '话题刷新内容', retrieved: [] }),
+      };
+    }) as never;
+
+    try {
+      const { ctx, emit } = makeMockCtx();
+      (await freshApply())(ctx, { alysiaBaseUrl: 'http://127.0.0.1:1', prewarmReuseMs: 0 });
+      await new Promise(r => setTimeout(r, 20));
+      emit('session/event', SESSION, {
+        seq: 1, type: 'user/message', time: 1,
+        data: { message: { content: [{ type: 'text', text: 'x' }] } },
+      });
+      await new Promise(r => setTimeout(r, 20));
+
+      pending.find(p => p.q === '')!.release();      // 预热先落地
+      await new Promise(r => setTimeout(r, 20));
+      expect(ctxText(ctx)).toContain('预热内容');
+
+      pending.find(p => p.q !== '')!.release();      // 刷新后落地 → 覆盖
+      await new Promise(r => setTimeout(r, 20));
+      expect(ctxText(ctx)).toContain('话题刷新内容');
+    } finally { globalThis.fetch = original; }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// ★ 2026-10-16 · change: filter-synthetic-context-inflow（KI-20）
+//
+// dsh 每一步之前会把「动态运行时上下文」投影成**一条 user 消息**塞进会话
+// （`RuntimeContextProjection.project()`），而 adapter 的「用户消息」监听器照单全收
+// ⇒ 这段文本以 `role:'user'` 回传入库 ⇒ 画像回吸 / 记忆触发记忆。
+//
+// 适配器在这里的职责很窄：**只上报事实**（dsh 给的 `source.kind`），
+// 「要不要跳过学习」由服务端判定（`packages/server/src/ingest.ts`）。
+// ─────────────────────────────────────────────────────────────
+
+/** dsh 投影出来的那条消息：`source: { kind: 'runtime-context', … }` */
+const syntheticMsg = (seq: number, text: string) => [
+  SESSION,
+  {
+    seq,
+    type: 'user/message',
+    time: 1767225600000,
+    data: {
+      turn: 1,
+      step: 1,
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text }],
+        source: { kind: 'runtime-context', form: 'snapshot', sections: [] },
+      },
+    },
+  },
+] as const;
+
+const RUNTIME_CONTEXT_TEXT =
+  'Current runtime context. This snapshot supersedes earlier runtime-context snapshots.\n\n[关于你]…';
+
+describe('★ 合成注入：适配器只上报来源，不自己决定策略（KI-20）', () => {
+  it('★★ 主症：把 dsh 的 source.kind 透传进 payload（证据留在事件里）', async () => {
+    const { ctx, emit } = makeMockCtx();
+    const f = stubFetch();
+    try {
+      apply(ctx, { alysiaBaseUrl: 'http://127.0.0.1:1' });
+      emit('session/event', ...syntheticMsg(1, RUNTIME_CONTEXT_TEXT));
+      emit('session/event', ...msg(2, 'turn/end', ''));
+      await new Promise(r => setTimeout(r, 20));
+
+      const e = f.ingestCalls[0].body.events[0];
+      expect(e.payload.dsh_source, '没把来源报上去 —— 服务端就没法判定').toBe('runtime-context');
+      // 事件本身照常回传（**不是**在适配器侧丢弃：事件日志要不可变、且要能复盘）
+      expect(e.payload.content).toBe(RUNTIME_CONTEXT_TEXT);
+      expect(e.payload.role).toBe('user');
+    } finally { f.restore(); }
+  });
+
+  it('★★ 合成注入**不触发话题刷新**（它不是用户发言）', async () => {
+    const { ctx, emit } = makeMockCtx();
+    const f = stubFetch();
+    try {
+      apply(ctx, { alysiaBaseUrl: 'http://127.0.0.1:1' });
+      await new Promise(r => setTimeout(r, 20));
+      const before = f.readCalls.length;
+
+      emit('session/event', ...syntheticMsg(1, RUNTIME_CONTEXT_TEXT));
+      await new Promise(r => setTimeout(r, 30));
+
+      expect(
+        f.readCalls.length,
+        '合成注入触发了话题刷新 —— 那是为"用户刚说了什么"准备的，白花一次检索',
+      ).toBe(before);
+    } finally { f.restore(); }
+  });
+
+  it('★ 回归：真实用户消息**照常**触发话题刷新', async () => {
+    const { ctx, emit } = makeMockCtx();
+    const f = stubFetch();
+    try {
+      apply(ctx, { alysiaBaseUrl: 'http://127.0.0.1:1' });
+      await new Promise(r => setTimeout(r, 20));
+      const before = f.readCalls.length;
+
+      emit('session/event', ...msg(1, 'user/message', '我家猫最近怎么样'));
+      await new Promise(r => setTimeout(r, 30));
+
+      expect(f.readCalls.length, '真实用户消息不再触发刷新了（闸焊死了）').toBeGreaterThan(before);
+    } finally { f.restore(); }
+  });
+
+  it('★ 留痕：合成注入会喊一次（限频）——"滤掉了"与"没采到"必须能分开', async () => {
+    const { ctx, emit, logger } = makeMockCtx();
+    const f = stubFetch();
+    try {
+      apply(ctx, { alysiaBaseUrl: 'http://127.0.0.1:1' });
+      emit('session/event', ...syntheticMsg(1, RUNTIME_CONTEXT_TEXT));
+      emit('session/event', ...syntheticMsg(2, RUNTIME_CONTEXT_TEXT));
+      expect(
+        logger.info.mock.calls.map(c => String(c[0])).filter(s => s.includes('合成注入')).length,
+        '合成注入没留痕、或者没限频',
+      ).toBe(1);
+    } finally { f.restore(); }
+  });
+
+  it('★ 回归：普通用户消息**不带** dsh_source（别把所有消息都标成合成）', async () => {
+    const { ctx, emit } = makeMockCtx();
+    const f = stubFetch();
+    try {
+      apply(ctx, { alysiaBaseUrl: 'http://127.0.0.1:1' });
+      emit('session/event', ...msg(1, 'user/message', '普通消息'));
+      emit('session/event', ...msg(2, 'turn/end', ''));
+      await new Promise(r => setTimeout(r, 20));
+
+      expect(f.ingestCalls[0].body.events[0].payload.dsh_source).toBeUndefined();
+    } finally { f.restore(); }
+  });
+
+  it('★ 别的 source.kind 原样透传（由服务端判，适配器不预设白名单）', async () => {
+    const { ctx, emit } = makeMockCtx();
+    const f = stubFetch();
+    try {
+      apply(ctx, { alysiaBaseUrl: 'http://127.0.0.1:1' });
+      emit('session/event', SESSION, {
+        seq: 1, type: 'user/message', time: 1767225600000,
+        data: {
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: '你好' }],
+            source: { kind: 'user' },
+          },
+        },
+      });
+      emit('session/event', ...msg(2, 'turn/end', ''));
+      await new Promise(r => setTimeout(r, 20));
+
+      expect(f.ingestCalls[0].body.events[0].payload.dsh_source).toBe('user');
+    } finally { f.restore(); }
   });
 });

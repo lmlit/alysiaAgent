@@ -456,6 +456,34 @@ async process(event: MessageEvent): Promise<void> {
 }
 ```
 
+#### 4.3.1 「不进学习管道」闸的通用契约（2026-10-16，change: `filter-synthetic-context-inflow`）
+
+上面那个「NPC 只留流水账」的机制，**从 2026-10-16 起是一个通用闸**，不只服务群聊：
+
+| 标记 | 含义 | 谁写 |
+|---|---|---|
+| `payload.skip_profile = true` | **不进学习管道**（画像 / 人格 / 嵌入） | 群聊 NPC：`memory-ingest` 阶段；**合成注入**：服务端 `/api/ingest` |
+| `payload.synthetic = <原因>` | **为什么**被跳过（可观测 / 复盘用） | 同上（合成注入时为 `'runtime-context'`） |
+
+**三条必须同时成立**（缺一条就会退化成"悄悄少了她一段记忆"）：
+
+1. **事件仍然入库** —— 闸拦的是「**它进学习管道**」，不是「它入库」。
+   事件日志是不可变的，而且「这类注入出现多频繁、长什么样」将来还要复盘；
+   在链路前端丢弃等于把可复盘性一起丢掉。
+2. **跳过必须留痕**（限频）。否则「滤掉了」与「本来就没采到」同形 ——
+   这正是 KI-20 那条回流闭环能安静跑很久的原因。
+   ⚠️ 留痕**只对有 `synthetic` 的事件**：群聊 NPC 的 `skip_profile` 量很大，
+   一起打会把日志淹掉（本项目已因 96.6% QQ 噪声吃过一次亏）。
+3. **摘要也必须排除 `synthetic` 事件**（`SessionEndProcessor`）。
+   这是**第三条泄漏路径**：摘要会被召回、并回灌进下一轮上下文 ——
+   把合成注入摘要进去，等于让它**换个形式**继续留在记忆里，还会挤占真实对话的摘要预算。
+   ⚠️ 只过滤 `synthetic`，**不**过滤 `skip_profile`：群聊 NPC 消息进摘要是既有行为，
+   换成过滤 `skip_profile` 会静默改变群聊摘要的形态。
+
+**判据纪律**：跳过学习这类决定，**优先用结构化来源标记，不用文本前缀**。
+以 KI-20 为例：文本前缀判据会误伤「用户自己粘贴了类似文本」，
+而结构化来源（`source.kind`）按定义不会 —— 详见 `dsh-adapter` §2.5。
+
 ### 4.4 Token 统计（LLMAgent 洋葱后置）
 
 ```typescript
@@ -598,6 +626,27 @@ fetch 的 DNS/连接建立阶段（libuv getaddrinfo 不可取消）——网络
 挂起 fetch 的最终 rejection 用 `.catch(() => {})` 吞掉防 unhandledRejection；
 外部打断仍走 AbortController（请求已发出后 abort 有效）。
 
+★ **超时也必须 abort，两者分工不得互相替代**（2026-10-16，change: `fix-llm-request-cancellation`）：
+
+| 手段 | 保证什么 | 到不了哪 |
+|---|---|---|
+| `Promise.race` | **准时返回** | —— |
+| `controller.abort()` | **回收连接 / 让后端停止生成** | DNS / 连接建立阶段 |
+
+原实现超时只 `reject(...)`、**从不 abort** ⇒ 准时返回了，但**已建立的连接继续挂着**
+（socket 不释放、服务端继续生成）。修法：超时处理器里先 `controller.abort()` 再 reject。
+⚠️ **禁止用 abort 替代 race**：删掉 race 会让 DNS 挂起重新退化成 566s。
+同理**禁止**改写成 `AbortSignal.any()` / `AbortSignal.timeout()` ——
+后者看起来更短，但它绕开了本节这条结论（DNS 阶段不可中断 ⇒ 准时只能靠 race），
+且它的定时器不可清理。
+
+★ **外部打断信号上的监听必须配对摘除**：`addEventListener('abort', …, { once: true })`
+**只在触发时**自动摘除，而外部 `signal`（Coalescer 打断注册表）是**长寿命**对象、
+且**大多数请求正常跑完**（永不触发）⇒ 每次请求残留一个闭包，**只增不减**。
+非流式与流式共用同一个 `linkAbort(reqSignal, controller) → cleanup` helper，
+`cleanup()` 必须在 `finally` 调用（覆盖成功 / API 错误 / 超时 / 打断**全部出口**）。
+实测：修复前 5 次请求在同一个 signal 上留下 **5 个**监听。
+
 ### 6.1.2 流式输出契约（2026-08-15，change: llm-streaming-pipeline）
 
 **能力分层**：OpenAIProvider.textChatStream 与 textChat 对等（此前已实现 SSE 解析 +
@@ -668,6 +717,26 @@ MessageSession.toString 拼接，与 QQ adapter 同模式；与 QQ 通道完全�
 | set_reminder | 设置定时提醒 | node-cron + 到时 @用户 |
 | list_reminders | 列出当前提醒 | 查询 cron 任务表 |
 | cancel_reminder | 取消提醒 | 删除 cron 任务 |
+
+#### 6.2.1 工作区边界契约（2026-10-16，change: `fix-workspace-path-boundary`）
+
+`write_file` / `read_file` / `list_files` 的**唯一**边界判据是 `workspaceDir`。
+`safePath()` 必须同时满足两条，**缺一条就等于没有边界**：
+
+1. **穿越检查按「路径段」**，不是字符串前缀。
+   `target === base` 或 `target.startsWith(base + sep)` 才算在内。
+   ⚠️ 旧写法 `resolved.startsWith(resolve(base))` 会把**兄弟目录**放行 ——
+   `/work/ws-evil/x` 确实以 `/work/ws` 开头，但它**不在** ws 里。
+2. **软链检查必须覆盖「待创建」的路径**。对不存在的目标，查它**最近的已存在祖先**
+   （父目录是软链同样能逃逸）；对已存在的目标，另外查它自己。
+   ⚠️ 旧实现把检查写在 `if (existsSync(resolved))` 里，而**待创建的文件当然不存在**
+   ⇒ 直接放行 ⇒ 父目录若是软链 / junction，**写入会真的落到工作区外**
+   （读路径不受影响：文件已存在 → 走 realpath 检查 → 能挡住）。
+
+⚠️ **这不是沙箱**：`workspaceDir` 只约束**这三个工具**；`shell_exec` 一旦启用，
+其命令黑名单**不构成**安全边界。生产配置 `codeMode: false`（`packages/server/config.yml`）
+使这组工具**当前不可达**，但 `registerCodeTools()` 是**公开方法** ——
+任何新调用方都会让边界立刻变成生产问题，故按契约维护。
 
 ### 6.3 会话管理命令
 

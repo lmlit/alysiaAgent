@@ -44,6 +44,28 @@ describe('al:db', () => {
   it('缺配置时立刻抛错（不建到 cwd 去）', async () => {
     await expect(runModule(dbModule, undefined as never)).rejects.toThrow(/缺少配置/);
   });
+
+  // ── ★ 2026-10-16 unify-core-shutdown：停机必须真的关句柄 ──
+  it('★ 停机时关闭 SQLite 句柄（旧实现 stop() 只停 EventBus）', async () => {
+    const path = join(tmp(), 'close.db');
+    const r = await runModule(dbModule, { path });
+    const db = r.get<any>('al:db');
+    expect(db.open).toBe(true);
+
+    await r.stop();
+
+    expect(db.open, 'stop() 之后句柄仍开着 —— Windows 上临时目录删不掉就是在说这件事').toBe(false);
+  });
+
+  it('★ 「关太早」必须**响亮失败**，不是静默丢弃（行为变更）', async () => {
+    const path = join(tmp(), 'close2.db');
+    const r = await runModule(dbModule, { path });
+    const db = r.get<any>('al:db');
+    await r.stop();
+
+    // 停机后仍有写入 = 调用方假设错了；必须抛，不许静默成功
+    expect(() => db.prepare('SELECT 1 AS x').get()).toThrow(/not open|closed/i);
+  });
 });
 
 // ── al:vector ─────────────────────────────────────────────────
@@ -53,6 +75,25 @@ describe('al:vector', () => {
     const r = await runModule(vectorModule, { dir: join(tmp(), 'lancedb'), table: 'vectors', dimension: 1024 });
     expect(r.get('al:vector')).toBeTruthy();
     await r.stop();
+  });
+
+  it('★ 停机时释放 LanceDB 句柄（unify-core-shutdown；尽力而为）', async () => {
+    const r = await runModule(vectorModule, { dir: join(tmp(), 'lancedb-close'), table: 'vectors', dimension: 1024 });
+    const store = r.get<any>('al:vector');
+    expect(store.ready).toBe(true);
+
+    await r.stop();
+
+    // ⚠️ 这里只能断言「本包装放掉了引用」—— LanceDB 是 napi 绑定，
+    //    原生侧是否立刻释放（Windows 目录能否删掉）**需要在真实 e2e 里确认**。
+    expect(store.ready, 'stop() 后仍持有句柄').toBe(false);
+    expect(store.table).toBeNull();
+  });
+
+  it('★ 降级路径（提供 null）不应注册关闭 effect —— 没有东西可关', async () => {
+    const r = await runModule(vectorModule, { dir: '\0bad\0', table: 'vectors', dimension: 1024 });
+    expect(r.get('al:vector')).toBeNull();
+    await expect(r.stop()).resolves.toBeUndefined();   // 不因为 null 而抛
   });
 
   it('★ 失败时降级：提供 null 并 warn，**不中止整树**', async () => {

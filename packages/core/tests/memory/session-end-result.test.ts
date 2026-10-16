@@ -48,11 +48,14 @@ describe('process() 返回结果 — 空转必须可区分', () => {
 
   it('摘要失败 → reason=summary-failed（与"无内容"区分开）', async () => {
     const { p } = makeProcessor({ llm: '这不是 JSON' });
-    expect(await p.process('s1')).toEqual({ summarized: false, reason: 'summary-failed' });
+    // ★ 2026-10-16 KI-15：结果多了 `vectorOutcome`（摘要与向量分开记账）。
+    //   本用例只关心「摘要有没成功、原因是什么」，故用 toMatchObject；
+    //   向量的四种结果由 `tests/memory/unit/ConversationStore-vector.test.ts` 单独锁。
+    expect(await p.process('s1')).toMatchObject({ summarized: false, reason: 'summary-failed' });
   });
 
   it('成功 → summarized:true', async () => {
     const { p } = makeProcessor();
-    expect(await p.process('s1')).toEqual({ summarized: true });
+    expect(await p.process('s1')).toMatchObject({ summarized: true });
   });
 });

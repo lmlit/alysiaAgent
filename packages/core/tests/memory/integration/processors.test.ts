@@ -124,6 +124,15 @@ describe('RealtimeProcessor', () => {
       worldbookMatcher,
       personaAdapter,
       profileStore,
+      // ★ 2026-10-16：补上**漏掉的第 5 个参数** `profileExtractor`。
+      //   构造函数是 7 个参数，这里原先只传了 6 个 —— 于是
+      //   `profileExtractor` 拿到的是 mockEmbed、`embedService` 拿到 vectorStore、
+      //   `vectorStore` 成了 undefined（走"没有向量库"分支），
+      //   而 `detectCorrectionSignal` 的 TypeError 被 RealtimeProcessor 的
+      //   try/catch 吞掉 ⇒ **测试一直是绿的，但跑的不是它以为的那条路**。
+      //   ⚠️ 之所以长期没暴露：`tsconfig.json` 只 include `src/**/*.ts`，
+      //      **测试文件不参与类型检查**，参数个数不对也没有报错。
+      new ProfileExtractor(mockLLM),
       mockEmbed,
       vectorStore,
     );
@@ -337,7 +346,8 @@ describe('SessionEndProcessor', () => {
     eventStore.insert(evt);
 
     // ★ 9-26：返回结果而非 void。提取不到 facts 不影响摘要本身成功。
-    await expect(p.process(sessionId)).resolves.toEqual({ summarized: true });
+    // ★ 2026-10-16 KI-15：结果另带 `vectorOutcome`，故只匹配本用例关心的字段。
+    await expect(p.process(sessionId)).resolves.toMatchObject({ summarized: true });
 
     // Still should mark as summary-processed
     const processed = eventStore.getById('e-nf');

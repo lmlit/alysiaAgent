@@ -13,7 +13,7 @@ import type { Context } from './types.ts'
 import type { AssembleContext, SessionEvent } from './types.ts'
 import { createRecallMemoryTool } from './recall-memory.ts'
 import { AlysiaClient } from './alysia-client.ts'
-import type { IngestEvent } from './alysia-client.ts'
+import { IngestDelivery } from './delivery.ts'
 import { isSubagentSession, sessionIdOf, toAlysiaSessionId } from './session-id.ts'
 // PERSONA_VARIABLE 定义在 persona.ts（与变量注册处共用同一常量）
 export { PERSONA_VARIABLE } from './persona.ts'
@@ -86,19 +86,43 @@ export function apply(ctx: Context, config: Config = {}): void {
   let memorySessionId: string | undefined;
 
   /**
+   * ★ 第三批（2026-10-16）· 缓存乱序：**按序号落地，后发起的永远赢**。
+   *
+   * 记忆检索有**两条链**，各自 `.then(setMemoryContext)`：
+   *   - 挂载时的**预热**（空 query —— 启动那一波，通常最慢）
+   *   - 用户消息到达后的**刷新**（原话 query —— 话题相关）
+   *
+   * 预热**更早发起、可能更晚返回**，于是它落地时把话题刷新的结果**覆盖掉**：
+   * 那一轮她看到的记忆比上一轮**还旧**（而且是"没话题的上古快照"，不是最新话题）。
+   * 这属于典型的**乱序响应**缺陷，只按"谁先回来谁生效"写就必然中招。
+   *
+   * 修法：每次**发起**检索时领一个单调递增的序号；结果落地时，
+   * **不比已应用的更旧才允许写入**（`>=` 允许"同一批里较新的那次"覆盖自身）。
+   */
+  let issuedSeq = 0;
+  let appliedSeq = 0;
+
+  /**
    * 唯一的写入口——**预热与刷新都必须走它**。
    *
    * ⚠️ 曾经只有刷新走、预热直接赋值，于是**第一轮（靠预热的那轮）看不到引导提示**。
    *   两处收敛成一个，避免再分叉。
+   *
+   * @param seq 发起该次检索时领的序号（见 `issuedSeq`）；乱序晚归的旧结果会被丢弃
    */
-  const setMemoryContext = (raw: string): void => {
-    if (raw) memoryContext = withRecallHint(raw);
-    // 空：保留旧值（失败时客户端已记日志，不抛）
+  const setMemoryContext = (raw: string, seq: number): void => {
+    if (seq < appliedSeq) return;   // 乱序晚归的**旧**结果：丢弃（本轮保持更新的那份）
+    if (raw) {
+      memoryContext = withRecallHint(raw);
+      appliedSeq = seq;
+    }
+    // 空：保留旧值（失败时客户端已记日志，不抛），也不推进 appliedSeq
   };
 
   const refreshMemory = async (query: string): Promise<void> => {
+    const mySeq = ++issuedSeq;
     const r = await client.readMemory(query, memorySessionId);
-    if (r) setMemoryContext(r.context);
+    if (r) setMemoryContext(r.context, mySeq);
   };
 
   /**
@@ -140,7 +164,9 @@ export function apply(ctx: Context, config: Config = {}): void {
     ctx.logger.info('[alysia-adapter] 记忆通道已关闭（config.bridge=false）——只剩 recall_memory 工具');
   } else {
     // 预热（不 await：不能拖慢插件挂载）。★ 走模块级共享，多实例只发一次
-    void sharedPrewarm(client, config.prewarmReuseMs).then(setMemoryContext);
+    // ★ 序号在**发起时**领（不是返回时）—— 否则晚归的预热会拿着"最新号"把刷新盖掉。
+    const prewarmSeq = ++issuedSeq;
+    void sharedPrewarm(client, config.prewarmReuseMs).then(t => setMemoryContext(t, prewarmSeq));
     installBridge(ctx, client, debug, (text, alysiaSessionId) => {
       memorySessionId = alysiaSessionId;
       void refreshMemory(text);
@@ -155,8 +181,11 @@ export function apply(ctx: Context, config: Config = {}): void {
  *   - **`turn/end`**：一轮说完就发。批量而非每条，减少请求数。
  *   - **`session/disposed`**：兜底把尾巴发出去，然后触发结算。
  *
- * 队列策略：回传失败**保留一批**等下次重试（容忍 alysia 短暂重启）；
- * 但设上限，长期不可用时丢最旧的并计数——不能无限涨内存。
+ * 队列策略（★ 2026-10-16 重做，change: `fix-dsh-ingest-and-settlement`）：
+ *   分批 / 串行化 / 故障分类 / 不静默丢弃 都收敛到 `delivery.ts`（契约 1–4）；
+ *   结算**必须等消息确认落库**（契约 5）并有**再次结算入口**（契约 6）；
+ *   取不到会话 id 时 **fail closed**（契约 7）。契约全文见
+ *   `openspec/specs/dsh-adapter/spec.md` §2.5.1。
  *
  * ★ **子 agent 会话一律跳过**（2026-10-02，change: exclude-subagent-sessions-from-bridge）：
  *   preset 是 standing mount 被父子 agent 共享，本插件的 scoped 监听**会**收到子会话事件
@@ -169,10 +198,110 @@ function installBridge(
   /** 用户消息到达时回调：`(原话, alysia 侧会话 id)` —— 用于刷新记忆缓存 */
   onUserMessage: (text: string, alysiaSessionId: string) => void,
 ): void {
-  let pending: IngestEvent[] = [];
-  let dropped = 0;
+  /**
+   * 投递队列 —— 分批（≤ 服务端上限）、串行化、故障分类、不静默丢弃。
+   * ★ 以前这里是一个内联的 `flush()` + `let pending`，在途批次对后来的调用方**不可见**
+   *   （`flush` 开头即 `pending = []`）—— 那正是 KI-24 的根。
+   */
+  const delivery = new IngestDelivery({
+    send: (events) => client.ingest(events),
+    logger: ctx.logger,
+  });
+
   /** 已提示过的子 agent 会话——每个只打一行 info，避免刷屏 */
   const notedSubagents = new Set<string>();
+  /** 身份缺失的诊断：按**事件类型**限频（坏上游不许刷爆日志） */
+  const notedMissingId = new Set<string>();
+  /** 合成注入的诊断：同样限频（**不许静默** —— 否则"滤掉了"与"本来没采到"同形） */
+  const notedSynthetic = new Set<string>();
+  /** 因回传未完成 / 结算失败而**挂起**的会话：sid → 已尝试结算次数（去重，防 KI-19 式重复摘要） */
+  const pendingSettlements = new Map<string, number>();
+
+  /** 结算尝试上限：耗尽后**明确失败**，不再静默挂起 */
+  const MAX_SETTLE_ATTEMPTS = 3;
+
+  /**
+   * 身份缺失 → **fail closed**（契约 7 / KI-23）。
+   *
+   * 与「子 agent 会话」同一条纪律：不回传、不结算，但**必须留痕**（限频）。
+   * 静默跳过会让「上游契约破了」和「这轮本来没消息」长得一样。
+   */
+  const noteMissingId = (kind: string): void => {
+    if (notedMissingId.has(kind)) return;
+    notedMissingId.add(kind);
+    ctx.logger.warn(
+      `[alysia-adapter] ${kind}：取不到 dsh 会话 id —— **不回传、不结算**` +
+        `（身份不明会把多个真实会话混进同一个桶；同类诊断此后静默）`,
+    );
+  };
+
+  /**
+   * 合成注入（runtime context 快照）→ 仍回传入库，但**不算用户发言**。
+   *
+   * 限频也**必须喊一次**：这是 KI-20 那个「画像回吸 / 记忆触发记忆」回路的入口，
+   * 静默掉它，将来出问题时就分不清「滤掉了」和「本来就没采到」。
+   */
+  const noteSynthetic = (kind: string): void => {
+    if (notedSynthetic.has(kind)) return;
+    notedSynthetic.add(kind);
+    ctx.logger.info(
+      `[alysia-adapter] ${kind}：dsh 合成注入（source.kind=runtime-context）—— ` +
+        `**不算用户发言**（不触发话题刷新；回传给服务端时打 skip_profile，见 ingest.ts）`,
+    );
+  };
+
+  /** 结算一次。失败则**挂起**（下次成功排空后重试），尝试次数用尽后明确失败 */
+  const trySettle = async (sid: string): Promise<void> => {
+    const alysiaId = toAlysiaSessionId(sid);
+    if (await client.extractSession(alysiaId)) {
+      pendingSettlements.delete(sid);
+      return;
+    }
+    const tried = (pendingSettlements.get(sid) ?? 0) + 1;
+    if (tried >= MAX_SETTLE_ATTEMPTS) {
+      pendingSettlements.delete(sid);
+      ctx.logger.warn(`[alysia-adapter] 结算**失败**（已试 ${tried} 次，不再重试）：${alysiaId}`);
+      return;
+    }
+    pendingSettlements.set(sid, tried);
+    ctx.logger.warn(`[alysia-adapter] 结算未成功，挂起待重试（第 ${tried} 次）：${alysiaId}`);
+  };
+
+  /**
+   * 排空 → **成功才**结算（契约 5 / KI-24）。
+   *
+   * ★ `delivery.drain()` 返回的是**覆盖在途批次**的链（契约 2），所以 await 完
+   *   即代表该会话已排队与在途的消息都拿到了服务端确认。
+   *
+   * ★ 回传未完成时**不**宣布结算完成 —— 旧实现在这里无条件继续 extract：
+   *   迟到事件的 `created_at`（dsh 事件时间）早于新摘要的 `ended_at`（服务端时间），
+   *   会**永久**落在结算窗口之外，且摘要是 `summary_status='ok'`，补处理不会捡。
+   */
+  const drainThenSettle = async (sid: string): Promise<void> => {
+    const r = await delivery.drain();
+    if (!r.drained) {
+      if (!pendingSettlements.has(sid)) pendingSettlements.set(sid, 0);
+      ctx.logger.warn(
+        `[alysia-adapter] 回传未完成（仍有 ${r.remaining} 条待发），结算**挂起**：${toAlysiaSessionId(sid)}`,
+      );
+      return;
+    }
+    await trySettle(sid);
+  };
+
+  /**
+   * `turn/end` 的排空 + **补做挂起的结算**（契约 6：再次结算入口）。
+   *
+   * 不依赖「下一次刚好有消息」——只要还有成功排空的机会，挂起的结算就会被重试。
+   * ⚠️ 已知边界：若插件实例在排空成功前就被卸载，这条重试链随之消失，
+   *    此时只保证「**不结算 + 响亮失败**」（不写一个假的完成态），不保证补上。
+   */
+  const drainAndRetrySettlements = async (): Promise<void> => {
+    const r = await delivery.drain();
+    if (!r.drained) return;
+    if (pendingSettlements.size === 0) return;
+    for (const sid of [...pendingSettlements.keys()]) await trySettle(sid);
+  };
 
   /**
    * 子 agent 会话 → 跳过（返回 true），**不回传、不结算**。
@@ -182,7 +311,7 @@ function installBridge(
    */
   const skipSubagentSession = (session: unknown): boolean => {
     if (!isSubagentSession(session)) return false;
-    const sid = sessionIdOf(session);
+    const sid = sessionIdOf(session) ?? '(无 id)';
     if (!notedSubagents.has(sid)) {
       notedSubagents.add(sid);
       ctx.logger.info(`[alysia-adapter] 跳过子 agent 会话 ${sid}（origin=subagent）——不回传、不结算`);
@@ -190,57 +319,23 @@ function installBridge(
     return true;
   };
 
-  const flush = async (): Promise<void> => {
-    if (pending.length === 0) return;
-    const batch = pending;
-    pending = [];
-    const result = await client.ingest(batch);
-    if (result === null) {
-      // alysia 不可达 —— 放回队首等下次（有上限，不会无限涨）
-      pending = [...batch, ...pending];
-      if (pending.length > MAX_PENDING) {
-        dropped += pending.length - MAX_PENDING;
-        pending = pending.slice(pending.length - MAX_PENDING);
-      }
-      ctx.logger.warn(`[alysia-adapter] 回传失败，${batch.length} 条暂存（累计丢弃 ${dropped}）`);
-      return;
-    }
-    if (result.rejected.length > 0) {
-      // 拒收必须报出来 —— 静默丢弃会让「回传成功」和「其实没进库」长得一样
-      ctx.logger.warn(
-        `[alysia-adapter] 回传 ${result.accepted} 条，${result.rejected.length} 条被拒：${result.rejected.slice(0, 2).join(' | ')}`,
-      );
-    } else if (debug) {
-      ctx.logger.info(`[alysia-adapter] 回传 ${result.accepted} 条`);
-    }
-  };
-
   ctx.on('session/event', (session, event: SessionEvent) => {
     if (skipSubagentSession(session)) return;
     const sid = sessionIdOf(session);
-    if (event.type === 'user/message') {
-      {
-        const text = extractText(event.data).trim();
-        if (text) {
-          onUserMessage(text, toAlysiaSessionId(sid));
-          push({ role: 'user', text });
-        }
-      }
-    } else if (event.type === 'assistant/message') {
-      const text = extractText(event.data).trim();
-      if (text) push({ role: 'assistant', text });
-    } else if (event.type === 'turn/end') {
-      void flush();
+    // ★ 契约 7：没有 id 就是「没有 id」——不回传、不结算，且留痕（限频）
+    if (!sid) {
+      noteMissingId(`session/event ${event.type}`);
+      return;
     }
-
-    if (debug || event.type === 'user/message' || event.type === 'assistant/message') {
-      ctx.logger.info(`[alysia-adapter] session/event ${event.type}`);
-    }
-
-    /** 入队 + 超限丢弃最旧的 */
-    function push(msg: { role: 'user' | 'assistant'; text: string }): void {
-      pending.push({
-        // ★ 去重键 = 会话 + seq：同一事件重传不会在记忆里产生两条
+    /** 入队（上限与丢弃规则在 delivery 里，且**必须留痕**） */
+    //   ★ 用箭头函数常量而不是 `function push()`，且**定义在调用点之前**：
+    //     函数声明会把上面 `sid` 的收窄丢掉（TS 认为它可能被更晚调用），
+    //     于是 `toAlysiaSessionId(sid)` 报 `string | null`。
+    const push = (msg: { role: 'user' | 'assistant'; text: string; sourceKind?: string }): void => {
+      delivery.enqueue({
+        // ★ 去重键 = 会话 + seq：同一事件重传不会在记忆里产生两条。
+        //   ⚠️ `seq` 跨 restart/resume 是否重数**尚未证实**（KI-25）——
+        //      按「先取证再改」的纪律不在这里换成时间戳+内容哈希。
         id: `dsh-${sid}-${event.seq}`,
         session_id: toAlysiaSessionId(sid),
         // ★ 2026-10-02 record-dsh-as-coding-mode：**不是 'chat'**。
@@ -253,30 +348,62 @@ function installBridge(
         //   在 dsh 里闲聊两句生活，仍然是编程环境里发生的。
         source: 'code',
         type: 'message',
-        payload: { role: msg.role, content: msg.text },
+        payload: {
+          role: msg.role,
+          content: msg.text,
+          // ★ change: filter-synthetic-context-inflow —— 把 dsh 的**来源标记**透传给服务端
+          //   （证据留在事件里，将来复盘要靠它；"要不要跳过学习"由服务端判）。
+          ...(msg.sourceKind ? { dsh_source: msg.sourceKind } : {}),
+        },
         created_at: new Date(event.time || Date.now()).toISOString(),
       });
-      if (pending.length > MAX_PENDING) {
-        pending.shift();
-        dropped++;
+    };
+
+    if (event.type === 'user/message') {
+      const text = extractText(event.data).trim();
+      if (text) {
+        const sourceKind = sourceKindOf(event.data);
+        if (sourceKind === RUNTIME_CONTEXT_SOURCE) {
+          // ★ 合成注入（runtime context 快照）**不是用户发言**：
+          //   - **不触发话题刷新**（`onUserMessage` 是为"用户刚说了什么"准备的）
+          //   - **但仍然回传入库** —— 事件日志要不可变，且复盘要靠它；
+          //     拦的是"它进学习管道"，由服务端打 `skip_profile` 实现
+          // ⚠️ 限频键**不能带 seq**（带了就每条都不同 ⇒ 等于没限频）。
+          noteSynthetic('user/message');
+        } else {
+          onUserMessage(text, toAlysiaSessionId(sid));
+        }
+        push({ role: 'user', text, sourceKind });
       }
+    } else if (event.type === 'assistant/message') {
+      const text = extractText(event.data).trim();
+      if (text) push({ role: 'assistant', text, sourceKind: sourceKindOf(event.data) });
+    } else if (event.type === 'turn/end') {
+      // 排空 + 补做挂起的结算（契约 6）。不 await：turn/end 不该阻塞 dsh 这一轮。
+      void drainAndRetrySettlements().then(() => {
+        if (debug && delivery.queued === 0) {
+          ctx.logger.info(`[alysia-adapter] 回传排空完成（累计受理 ${delivery.stats().accepted} 条）`);
+        }
+      });
+    }
+
+    if (debug || event.type === 'user/message' || event.type === 'assistant/message') {
+      ctx.logger.info(`[alysia-adapter] session/event ${event.type}`);
     }
   });
 
-  // 会话结束 → 先把尾巴发出去，再触发**结算**（摘要 + 画像 + 人格确认 + 固化）
+  // 会话结束 → 先把尾巴发出去（**等确认落库**），再触发**结算**（摘要 + 画像 + 人格确认 + 固化）
   ctx.on('session/disposed', (session) => {
     if (skipSubagentSession(session)) return;
     const sid = sessionIdOf(session);
+    if (!sid) {
+      noteMissingId('session/disposed');
+      return;
+    }
     ctx.logger.info(`[alysia-adapter] session/disposed → 结算 ${toAlysiaSessionId(sid)}`);
-    void (async () => {
-      await flush();
-      await client.extractSession(toAlysiaSessionId(sid));
-    })();
+    void drainThenSettle(sid);
   });
 }
-
-/** 待回传队列上限。alysia 长期不可用时丢最旧的，不无限涨内存 */
-const MAX_PENDING = 500;
 
 /**
  * 模块级共享的「预热」结果。
@@ -326,6 +453,29 @@ function sharedPrewarm(client: AlysiaClient, reuseMs: number = PREWARM_REUSE_MS)
     })();
   }
   return prewarmInFlight;
+}
+
+/**
+ * dsh 消息的**来源标记** —— `data.message.source.kind`。
+ *
+ * ★★ 实测（2026-10-16，从 dsh 产物 `app.asar` 读出）：
+ *   `RuntimeContextProjection.project()` 造 runtime context 快照时用的是
+ *
+ *     createUserMessage({ content: [{type:'text', text: snapshot}],
+ *                         source: { kind: 'runtime-context', form: 'snapshot', sections } })
+ *
+ *   而 dsh **自己**就是靠 `message.source.kind === 'runtime-context'`
+ *   从**已提交事件**里回溯这个快照的（`isOwned()` + `session.snapshotEvents()`）
+ *   ⇒ 该字段**能挺过序列化**，是**可靠判据**（不是文本前缀那种脆弱判据）。
+ *
+ * 这里**只上报事实**，不决定策略：要不要跳过学习由服务端判定（见 `ingest.ts`）。
+ */
+const RUNTIME_CONTEXT_SOURCE = 'runtime-context'
+
+function sourceKindOf(data: unknown): string | undefined {
+  const kind = (data as { message?: { source?: { kind?: unknown } } } | null | undefined)
+    ?.message?.source?.kind
+  return typeof kind === 'string' && kind ? kind : undefined
 }
 
 /**

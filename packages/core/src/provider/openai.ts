@@ -1,6 +1,27 @@
 import { logger } from '../utils/logger.js';
 import type { ProviderConfig, ProviderRequest, LLMResponse } from './types.js';
 
+/**
+ * 把**外部**打断信号透传到本次请求自己的 `AbortController`，返回**清理函数**。
+ *
+ * ★ 第三批（2026-10-16）：原实现是内联的
+ *   `req.signal.addEventListener('abort', () => controller.abort(), { once: true })`
+ *   —— `{ once: true }` **只在触发时**自动摘除。而外部 signal（Coalescer 的打断注册表）
+ *   是**长寿命**对象，且**大多数请求根本不会被外部打断**（正常跑完）。
+ *   ⇒ 每次请求都在它身上**残留一个闭包**，长会话下只增不减（监听泄漏）。
+ *
+ * 清理函数必须在 `finally` 里调用 —— 不是可选项，是配对义务。
+ *
+ * ⚠️ 这是**监听**泄漏，与「超时后要 abort 底层请求」是两件事（见各自调用点）。
+ */
+function linkAbort(reqSignal: AbortSignal | undefined, controller: AbortController): () => void {
+  if (!reqSignal) return () => {};
+  if (reqSignal.aborted) { controller.abort(); return () => {}; }
+  const onAbort = () => controller.abort();
+  reqSignal.addEventListener('abort', onAbort, { once: true });
+  return () => reqSignal.removeEventListener('abort', onAbort);
+}
+
 export class OpenAIProvider {
   constructor(public readonly config: ProviderConfig) {}
 
@@ -37,10 +58,8 @@ export class OpenAIProvider {
 
     const controller = new AbortController();
     // ★ 8-10 打断：外部 signal（Coalescer 新消息打断在飞）→ 同一 controller 透传 fetch
-    if (req.signal) {
-      if (req.signal.aborted) controller.abort();
-      else req.signal.addEventListener('abort', () => controller.abort(), { once: true });
-    }
+    // ★ 第三批：改走 `linkAbort`，它返回**清理函数**（必须在 finally 摘掉，否则监听泄漏）
+    const unlinkAbort = linkAbort(req.signal, controller);
     const start = Date.now();
 
     // ★ 8-12 超时修复（llm-request-timeout-race）：60s 超时改用 Promise.race——
@@ -51,7 +70,14 @@ export class OpenAIProvider {
     let timeoutTimer: NodeJS.Timeout | undefined;
     const timeoutPromise = new Promise<never>((_, reject) => {
       timeoutTimer = setTimeout(
-        () => reject(Object.assign(new Error('LLM request timed out (60s)'), { name: 'AbortError' as const })),
+        () => {
+          // ★ 第三批：**超时也要 abort**。race 只保证「准时返回」；
+          //   不 abort 的话**已建立的连接继续挂着**（后端继续生成、socket 不释放）。
+          //   ⚠️ 两者分工不同，别互相替代：abort 到不了 DNS/连接建立阶段（见上），
+          //      所以「准时」只能靠 race；而「回收」只能靠 abort。
+          controller.abort();
+          reject(Object.assign(new Error('LLM request timed out (60s)'), { name: 'AbortError' as const }));
+        },
         60_000,
       );
     });
@@ -142,6 +168,8 @@ export class OpenAIProvider {
       return { role: 'err', completionText: `Request error: ${err.message}` };
     } finally {
       if (timeoutTimer) clearTimeout(timeoutTimer);
+      // ★ 第三批：与 `linkAbort` 配对 —— 摘掉挂在外部 signal 上的监听
+      unlinkAbort();
     }
   }
 
@@ -174,10 +202,8 @@ export class OpenAIProvider {
 
     const controller = new AbortController();
     // ★ 8-15 外部打断：signal → 同一 controller 透传 fetch（读循环随之抛 AbortError）
-    if (req.signal) {
-      if (req.signal.aborted) controller.abort();
-      else req.signal.addEventListener('abort', () => controller.abort(), { once: true });
-    }
+    // ★ 第三批：改走 `linkAbort`（返回清理函数，必须在 finally 摘掉）
+    const unlinkAbort = linkAbort(req.signal, controller);
     const start = Date.now();
 
     // ★ 8-15 60s 超时 race（同 llm-request-timeout-race 模式）：fetch 阶段与
@@ -191,7 +217,14 @@ export class OpenAIProvider {
       const remaining = deadline - Date.now();
       if (remaining <= 0) throw timeoutErr();
       return Promise.race([p, new Promise<never>((_, reject) => {
-        timeoutTimer = setTimeout(() => reject(timeoutErr()), remaining);
+        timeoutTimer = setTimeout(
+          () => {
+            // ★ 第三批：超时也要 abort（回收连接/流；准时性由 race 保证，二者分工不同）
+            controller.abort();
+            reject(timeoutErr());
+          },
+          remaining,
+        );
       })]);
     };
 
@@ -322,6 +355,8 @@ export class OpenAIProvider {
       }
     } finally {
       clearTimer();
+      // ★ 第三批：与 `linkAbort` 配对 —— 摘掉挂在外部 signal 上的监听
+      unlinkAbort();
     }
   }
 

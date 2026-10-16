@@ -8,6 +8,7 @@ import type { CodeContextStore } from './stores/CodeContextStore.js';
 import type { SearchResult, WorldbookEntry } from './types.js';
 import { TokenBudget } from './TokenBudget.js';
 import { logger } from '../utils/logger.js';
+import { warnThrottled } from '../utils/write-trace.js';
 
 /**
  * 【关于我】块最多注入几条角色事实（★ 10-15 fix-reflection-insight-misroute）。
@@ -163,7 +164,15 @@ ${rangeText}`;
           blocks.push(myBlock);
         }
       }
-    } catch { /* character facts injection is non-fatal */ }
+    } catch (err: any) {
+      // ★ KI-5：这里原本是裸 catch。`getActiveCharacterFacts()` 读失败会被静默，
+      //   表现为「[关于我] 块忽然没了」而没有任何原因可查。
+      //   热路径（每轮组装）→ 限频。
+      warnThrottled(
+        'PromptAssembler.characterFacts',
+        `[PromptAssembler] [关于我] 块构建失败（本轮不注入）: ${err?.message ?? err}`,
+      );
+    }
 
     // ★ 8-28 过期确认（profile-facts-classification-confirm）：过期 ≤3 天的画像事实 →
     //   【待确认的事实】块（≤2 条）——昔涟在合适时机自然询问，用户回答后调 confirm_profile_fact 记录
@@ -181,7 +190,15 @@ ${rangeText}`;
           blocks.push(pendingBlock);
         }
       }
-    } catch { /* pending confirm injection is non-fatal */ }
+    } catch (err: any) {
+      // ★ KI-5 点名的那一处：`listPendingConfirmFacts()` 内部会先跑
+      //   `expireStaleFacts()` → `writeFacts()` —— 所以这里吞掉的可能是一次**写**失败
+      //   （过期事实永不清理），而日志上完全看不出来。热路径 → 限频。
+      warnThrottled(
+        'PromptAssembler.pendingConfirm',
+        `[PromptAssembler] [待确认的事实] 块构建失败（本轮不注入；注意它内部含过期清理的**写**）: ${err?.message ?? err}`,
+      );
+    }
 
     // Recent conversations
     if (recentConvs.length > 0) {

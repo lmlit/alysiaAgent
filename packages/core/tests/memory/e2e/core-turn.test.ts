@@ -16,7 +16,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { mkdtempSync, rmSync } from 'fs';
+import { existsSync, mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { AlysiaCore } from '../../../src/index.js';
@@ -56,14 +56,18 @@ describe('AlysiaCore E2E — 真实 API 跑完整一轮', () => {
   afterAll(async () => {
     await core?.stop();
     if (!dir) return;
-    try {
-      rmSync(dir, { recursive: true, force: true });
-    } catch {
-      // ★ Windows 上必然 EPERM：`stop()` 不关 SQLite 句柄（LanceDB 目录同理），
-      //   文件被占着删不掉。这是**已知的**生命周期问题，见 change
-      //   modularize-core-assembly 的「遗留」节——修复归 unify-core-shutdown。
-      //   临时目录留给 OS 清理，不因此判测试失败（它测的是装配不是清理）。
-    }
+    // ★ **这就是 `unify-core-shutdown` 的验收项**（2026-10-16 已达成）。
+    //
+    //   此前这里是 try/catch + 一段 `EPERM` 说明（"Windows 上必然删不掉，
+    //   因为 stop() 不关 SQLite 句柄"）——那是**已知生命周期问题**的变通。
+    //   现在 `al:db` / `al:vector` 都注册了停机 effect（且 `al:db` 逆序**最后一个**卸），
+    //   句柄真的被放掉 ⇒ 临时目录**必须能删掉**。
+    //
+    //   ⚠️ 所以这里改成**硬断言**，不再吞异常：将来谁把停机 effect 弄丢，
+    //      这一条会**直接红**，而不是像以前那样悄悄把异常咽掉、
+    //      留给 OS 去清理临时目录。
+    rmSync(dir, { recursive: true, force: true });
+    expect(existsSync(dir), 'stop() 之后临时目录仍删不掉 —— 说明句柄没被释放（停机 effect 丢了？）').toBe(false);
   });
 
   it('消息走完整管线并拿到 LLM 回复，回复回写进 EventLog', async () => {

@@ -3,6 +3,37 @@ import type Database from 'better-sqlite3';
 import type { MemoryEvent, SearchResult } from '../types.js';
 import type { IVectorStore } from '../interfaces/IVectorStore.js';
 import { traceZeroRows } from '../../utils/write-trace.js';
+import { logger } from '../../utils/logger.js';
+
+/** ★ 2026-10-16 KI-12：payload 在库里是 JSON **字符串**，键序取决于写库时的对象插入序。
+ *  ⚠️ 注意 `JSON.stringify(JSON.parse(raw))` **不排序**——它保留原串键序，因此
+ *  「同一对象、键序不同」仍会被判成"内容不同"（假冲突）。这里**递归按键名排序**
+ *  做规范化，数组保持原序（顺序对数组是有意义的）。 */
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (value !== null && typeof value === 'object') {
+    const src = value as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const k of Object.keys(src).sort()) out[k] = canonicalize(src[k]);
+    return out;
+  }
+  return value;
+}
+
+/** payload 归一化字符串；脏数据（非 JSON）退回原串 —— 宁可判成"不同"（走冲突分支，不覆盖），
+ *  也不吞掉这次比较 */
+function normalizePayload(raw: string): string {
+  try {
+    return JSON.stringify(canonicalize(JSON.parse(raw)));
+  } catch {
+    return raw;
+  }
+}
+
+/** 冲突日志里给一段可判别的 payload 摘要（避免整条长消息刷屏） */
+function preview(raw: string, max = 120): string {
+  return raw.length > max ? `${raw.slice(0, max)}…` : raw;
+}
 
 export class EventStore {
   constructor(private db: Database.Database, private vectorStore: IVectorStore | null = null) {}
@@ -24,16 +55,51 @@ export class EventStore {
   }
 
   insert(event: MemoryEvent): void {
+    const payload = JSON.stringify(event.payload);
+
+    // ★ 2026-10-16 KI-12（change: fix-store-write-trace）：Event Log 按定义是**不可变**的。
+    //
+    // 旧实现 `INSERT OR REPLACE` 的列单**不含 `archived`**（而它是 `DEFAULT 0`），于是
+    // 同 id 重投（QQ 重连 / dsh 重传）会**静默**：
+    //   - 复活软删除的会话（archived 回落 0）
+    //   - 把已摘要事件的 processed 归 0 → **再摘要 + 再画像提取**（重复学习副作用）
+    //   - 清掉 LLM 打的 importance
+    //   - 改写 created_at（可能把事件挪出摘要窗口）
+    //
+    // 现在先 SELECT 判存在与内容，再三分：**幂等空转 / 响亮冲突 / 真插入**。
+    //
+    // 并发：本项目是**单进程 + WAL**，better-sqlite3 是同步 API，SELECT 与 INSERT 之间
+    // 不会被事件循环交叠，一次 SELECT 足够，无需事务。即便真有并发写者，主键也会让
+    // 第二个 INSERT 抛 SQLITE_CONSTRAINT（**响亮失败**），不会回到静默覆盖。
+    const existing = this.db
+      .prepare('SELECT payload, session_id FROM events WHERE id = ?')
+      .get(event.id) as { payload: string; session_id: string } | undefined;
+
+    if (existing) {
+      // ① 同 id 同内容 → 幂等空转：**任何列都不许改**（archived/processed/importance/created_at）
+      if (normalizePayload(existing.payload) === normalizePayload(payload)) return;
+
+      // ② 同 id 不同内容 → **不覆盖**，保留原有事件，响亮报冲突
+      //    ★ 用 warn 不用 debug：debug 被 ALYSIA_DEBUG 门控，产线不输出
+      logger.warn(
+        `[EventStore] 事件 id 冲突：同 id 不同内容，保留原事件（id=${event.id}, session=${event.session_id}）` +
+        ` — 原 payload=${preview(existing.payload)} / 新 payload=${preview(payload)}` +
+        (existing.session_id === event.session_id ? '' : `；原 session=${existing.session_id}`),
+      );
+      return;
+    }
+
+    // ③ 新 id → 正常插入（列单与旧实现一致；archived 走表默认 0，这是对的）
     // ★ 8-28 perspective 列（memory-character-perspective）
     this.db.prepare(`
-      INSERT OR REPLACE INTO events (id, session_id, source, type, payload, importance, created_at, processed, perspective)
+      INSERT INTO events (id, session_id, source, type, payload, importance, created_at, processed, perspective)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       event.id,
       event.session_id,
       event.source,
       event.type,
-      JSON.stringify(event.payload),
+      payload,
       event.importance,
       event.created_at,
       event.processed,
@@ -82,18 +148,31 @@ export class EventStore {
    *   于是能不能取到窗口内的数据**取决于窗口外有多老**——这正是故障成因。
    *
    *   先 DESC 取最近 N 条、再在外层 ASC 排回来，保证对话拼接顺序正确。
+   *
+   * ★ 2026-10-16 fix-summary-window-late-events：**`since` 改为开区间**（`>`），
+   *   `until` 仍是闭区间（`<=`）——即窗口语义 **`(since, until]`**。
+   *
+   *   为什么必须改：摘要行的 `ended_at` 已改为**数据边界**
+   *   （= 窗口内最新事件的 `created_at`，见 `SessionEndProcessor` 与
+   *   `memory-system` §5.4.1 **契约 4**），而下一窗口的锚点就是它。
+   *   若 `since` 仍是闭区间，**边界那条事件会被相邻两次摘要各摘一遍**
+   *   （重复画像提取、重复计数）。
+   *
+   *   9-26 的注释当时就把这件事标成「另一个语义决策，会改变摘要窗口边界」并**刻意推迟**——
+   *   `ended_at` 数据边界化正是触发它的条件。`(since, until]` 是**一致**的游标语义：
+   *   `since` = 最后一条**已**处理的事件，下一窗口从它**之后**开始。
    */
   getBySession(
     sessionId: string,
     opts?: { limit?: number; since?: Date; until?: Date },
   ): MemoryEvent[] {
     const limit = opts?.limit ?? 1000;
-    // ★ 9-26：`until` 用于**历史回填**——窗口是 [since, until]。
+    // ★ 9-26：`until` 用于**历史回填**——窗口是 (since, until]。
     //   两端都必须下推到 SQL：若只约束 since，长会话里 `until` 之后的近期事件会占满
     //   LIMIT，把老窗口挤出去（与 fix-session-event-window-truncation 同源的坑）。
     const conds = ['session_id = ?'];
     const params: unknown[] = [sessionId];
-    if (opts?.since) { conds.push('created_at >= ?'); params.push(opts.since.toISOString()); }
+    if (opts?.since) { conds.push('created_at > ?'); params.push(opts.since.toISOString()); }
     if (opts?.until) { conds.push('created_at <= ?'); params.push(opts.until.toISOString()); }
     params.push(limit);
     const rows = this.db
@@ -105,8 +184,24 @@ export class EventStore {
     return rows.map(r => this.rowToEvent(r));
   }
 
-  countBySession(sessionId: string): number {
-    const row = this.db.prepare(
+  /**
+   * ★ 2026-10-16（change: `fix-summary-anchor-floor`，KI-26）：该会话**最早**一条事件的
+   * `created_at`（一条都没有则 `null`）。
+   *
+   * 用途：给「**从未摘要过**」的会话定摘要窗口下界 ——
+   * 那种会话应当**从头摘**，而不是从「现在 − 24h」开始（见 `MemoryManager.summaryAnchor`）。
+   *
+   * ⚠️ 取**全部**事件类型的最小值（不只 `message`）：这里只需要一个"最早"，
+   * 放宽只会让窗口更靠前、更完整，不会漏掉谁都该摘的消息。
+   */
+  getEarliestCreatedAt(sessionId: string): string | null {
+    const row = this.db
+      .prepare('SELECT MIN(created_at) AS t FROM events WHERE session_id = ?')
+      .get(sessionId) as { t: string | null } | undefined;
+    return row?.t ?? null;
+  }
+
+  countBySession(sessionId: string): number {    const row = this.db.prepare(
       'SELECT COUNT(*) as count FROM events WHERE session_id = ?'
     ).get(sessionId) as { count: number };
     return row.count;

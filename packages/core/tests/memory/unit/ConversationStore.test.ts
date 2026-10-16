@@ -21,6 +21,10 @@ describe('ConversationStore', () => {
     started_at: '2026-06-28T10:00:00Z',
     ended_at: null,
     embedding_id: null,
+    // ★ 2026-10-16 KI-17：`summary_status` 的默认值已从 'ok' 改为 **'failed'**
+    //   （漏传状态不许伪装成成功）。本文件的行都是「健康摘要」，
+    //   且 `getRecent` / `searchByText` 会**排除 failed 行**，所以必须显式声明。
+    summary_status: 'ok',
     ...overrides,
   });
 

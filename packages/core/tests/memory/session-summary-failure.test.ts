@@ -6,9 +6,10 @@
 //   2. 失败时**绝不写占位符**，而是留可见的失败标记
 //   3. 失败时**不生成 embedding**（垃圾向量比缺向量更糟——会被召回出来当真内容）
 //   4. 反例测试：库中永不出现 `Session <id> summary` 这种字面占位符
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { SessionEndProcessor } from '../../src/memory/processors/SessionEndProcessor.js';
 import type { MemoryEvent } from '../../src/memory/types.js';
+import { logger } from '../../src/utils/logger.js';
 
 const ev = (id: string, content: string): MemoryEvent => ({
   id,
@@ -102,7 +103,8 @@ describe('失败路径 — 绝不写占位符', () => {
   it('LLM 抛异常（如 API 报错）→ 同样记 failed，不炸掉整个会话归档', async () => {
     const h = makeHarness({ throws: new Error('LLM API error 429: rate limit') });
     // ★ 9-26：不再返回 void —— 失败要能被调用方识别（reason 与"无内容"区分开）
-    await expect(h.p.process('s1')).resolves.toEqual({
+    // ★ 2026-10-16 KI-15：结果另带 `vectorOutcome`，故只匹配本用例关心的字段
+    await expect(h.p.process('s1')).resolves.toMatchObject({
       summarized: false,
       reason: 'summary-failed',
     });
@@ -149,5 +151,64 @@ describe('★ 反例测试 —— 把事故固化成断言', () => {
     const h = makeHarness({ throws: new Error('boom') });
     await h.p.process('s1');
     expect(h.inserted[0].conv.summary).toBe('');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// ★ 2026-10-16 change: fix-store-write-trace（KI-17）
+//
+// `retryFailedSummary` 原先**不看 `changes`**：0 行更新时照样打
+// 「补处理成功」+ `return true` —— 与真正补处理**逐字相同**。
+// 调用方 `retryFailedSummaries` 据此 `ok++`，于是「什么都没改」被记成「补好了 N 条」。
+// ─────────────────────────────────────────────────────────────
+
+describe('★ 补处理：0 行更新不算成功（KI-17）', () => {
+  /** 只关心「补处理这一刀」的处理器；`updateSummaryResult` 的返回值由用例指定 */
+  function retryProc(updateResult: { rows: number; vector: string }) {
+    return new SessionEndProcessor(
+      {
+        getBySession: () => [ev('e1', '内容')],
+        markProcessed: () => {},
+        updateImportance: () => {},
+      } as any,
+      { insert: async () => {}, updateSummaryResult: async () => updateResult } as any,
+      { addFacts: () => {}, addCharacterFacts: () => {} } as any,
+      {} as any,
+      {} as any,
+      { extract: async () => ({ facts: [], characterFacts: [] }) } as any,
+      { processSignal: async () => null, apply: () => {} } as any,
+      { complete: async () => '{"summary":"补出来的真摘要"}' } as any,
+      { embed: async () => [0.1] } as any,
+      null,
+    );
+  }
+
+  const CONV = { id: 'c-missing', session_id: 's1' } as any;
+  const SINCE = new Date(Date.now() - 3600_000);
+
+  it('★★ rows=0 → 返回 false，且**不许**出现「补处理成功」', async () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    const info = vi.spyOn(logger, 'info').mockImplementation(() => {});
+    vi.spyOn(logger, 'error').mockImplementation(() => {});
+
+    const ok = await retryProc({ rows: 0, vector: 'no-vector' }).retryFailedSummary(CONV, SINCE);
+
+    expect(ok, '0 行更新被当成了成功').toBe(false);
+    expect(warn.mock.calls.map(c => String(c[0])).join('\n')).toMatch(/0 行|不存在/);
+    expect(info.mock.calls.map(c => String(c[0])).join('\n'), '不该宣布补处理成功')
+      .not.toMatch(/补处理成功/);
+
+    vi.restoreAllMocks();
+  });
+
+  it('rows=1 → 返回 true（真正的补处理照常成功）', async () => {
+    const info = vi.spyOn(logger, 'info').mockImplementation(() => {});
+    vi.spyOn(logger, 'warn').mockImplementation(() => {});
+
+    const ok = await retryProc({ rows: 1, vector: 'no-store' }).retryFailedSummary(CONV, SINCE);
+
+    expect(ok).toBe(true);
+    expect(info.mock.calls.map(c => String(c[0])).join('\n')).toMatch(/补处理成功/);
+    vi.restoreAllMocks();
   });
 });

@@ -2,10 +2,10 @@
 
 ## 元信息
 
-- **日期**: 2026-10-02（**已定名已久，首次落成 change 文件**）
+- **日期**: 2026-10-02（**2026-10-16 落地并归档**）
 - **类型**: MODIFY（停机清理）
-- **状态**: pending（**登记在案**）
-- **影响 spec**: `module-kernel`（§5.1 的停机面）、`memory-system`（§4.7 存储留痕契约的收尾）
+- **状态**: **archived**（2026-10-16 完成 propose → apply → archive；**一处验收未完成，见 tasks.md**）
+- **影响 spec**: `module-kernel` **§2.3 `stop()` 语义扩写**（§5.1 的停机面）、`memory-system`（§4.7 的收尾）
 - **来源**：`docs/KNOWN-ISSUES.md` **KI-6**；`modularize-core-assembly` proposal **决策 2** 预留
 
 ## 这条要解决什么

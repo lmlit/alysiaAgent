@@ -32,13 +32,31 @@ describe('summary_status 写入与查询', () => {
     store = new ConversationStore(db, null);
   });
 
-  it('默认写入 ok', async () => {
+  it('★ 默认写入 **failed**（不是 ok）—— 漏传状态必须"可见且可补"，不能伪装成成功', async () => {
+    // ★ 2026-10-16 KI-17：这条断言**过去是 `.toBe('ok')`**。
+    //   旧默认值的危害：任何新导入/迁移路径漏传 `summary_status`，就会写出
+    //   「空摘要 + 状态 ok」—— 那正是线上「22 天 100% 失败却全绿」的同款构造。
+    //   `failed` 会同时触发两件安全的事：`getRecent()` 不再注入空摘要、
+    //   `retryFailedSummaries()` 会把它捞出来补处理。
     await store.insert(makeConv());
+    expect(store.getById('conv-1')!.summary_status).toBe('failed');
+  });
+
+  it('★ 显式传 ok 仍然是 ok（默认值只影响漏传的路径）', async () => {
+    await store.insert(makeConv({ summary_status: 'ok' }));
     expect(store.getById('conv-1')!.summary_status).toBe('ok');
   });
 
+  it('★ 库里是 NULL → 读出来按 **failed**（宁可多补一次，不可伪装成成功）', () => {
+    db.prepare(
+      `INSERT INTO conversations (id, session_id, summary, message_count, started_at, ended_at, summary_status)
+       VALUES ('conv-null', 'sess-1', '文本', 1, '2026-09-01T10:00:00Z', '2026-09-01T11:00:00Z', NULL)`,
+    ).run();
+    expect(store.getById('conv-null')!.summary_status).toBe('failed');
+  });
+
   it('失败行可被 getFailed 捞出（这就是"缺失可见"）', async () => {
-    await store.insert(makeConv({ id: 'c-ok', summary: '真摘要' }));
+    await store.insert(makeConv({ id: 'c-ok', summary: '真摘要', summary_status: 'ok' }));
     await store.insert(makeConv({ id: 'c-bad', summary: '', summary_status: 'failed' }));
 
     const failed = store.getFailed();
@@ -49,7 +67,7 @@ describe('summary_status 写入与查询', () => {
   });
 
   it('★ getRecent 排除失败行（空摘要不进 prompt）', async () => {
-    await store.insert(makeConv({ id: 'c-ok', summary: '真摘要' }));
+    await store.insert(makeConv({ id: 'c-ok', summary: '真摘要', summary_status: 'ok' }));
     await store.insert(makeConv({ id: 'c-bad', summary: '', summary_status: 'failed' }));
 
     expect(store.getRecent(10).map(c => c.id)).toEqual(['c-ok']);
@@ -57,15 +75,15 @@ describe('summary_status 写入与查询', () => {
   });
 
   it('★ searchByText 排除失败行', async () => {
-    await store.insert(makeConv({ id: 'c-ok', summary: '讨论了 Rust 生命周期' }));
+    await store.insert(makeConv({ id: 'c-ok', summary: '讨论了 Rust 生命周期', summary_status: 'ok' }));
     await store.insert(makeConv({ id: 'c-bad', summary: '', summary_status: 'failed' }));
 
     expect(store.searchByText('Rust', 10).map(r => r.id)).toEqual(['c-ok']);
   });
 
   it('getPreviousEndedAt 取更早一条的 ended_at（窗口起点还原）', async () => {
-    await store.insert(makeConv({ id: 'c1', ended_at: '2026-09-01T11:00:00Z' }));
-    await store.insert(makeConv({ id: 'c2', ended_at: '2026-09-01T17:00:00Z' }));
+    await store.insert(makeConv({ id: 'c1', ended_at: '2026-09-01T11:00:00Z', summary_status: 'ok' }));
+    await store.insert(makeConv({ id: 'c2', ended_at: '2026-09-01T17:00:00Z', summary_status: 'ok' }));
     expect(store.getPreviousEndedAt('sess-1', '2026-09-01T17:00:00Z')).toBe('2026-09-01T11:00:00Z');
     // 没有更早的 → null
     expect(store.getPreviousEndedAt('sess-1', '2026-09-01T11:00:00Z')).toBeNull();

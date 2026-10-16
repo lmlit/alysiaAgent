@@ -81,6 +81,33 @@ export class AlysiaCore {
     this.eventBus.registerScheduler(name, scheduler ?? this.scheduler);
   }
 
+  /**
+   * ★ add-platforms-endpoint（2026-10-16）：平台接入状态**只读快照**（Web `GET /api/platforms`）。
+   *
+   * ⚠️ **这是 core 能给的最诚实的粒度**：它只知道自己收到了哪些 `registerPlatform()`，
+   *   即「**哪些平台 scope 已接到事件总线**」。
+   *   **连接层健康度**（WebSocket 是否连着、上次心跳/消息是什么时候）**不在 core 视野内** ——
+   *   那属于 adapter 侧运行时状态，而当前三个适配器都没有暴露这类信息。
+   *   ⇒ 所以这里**不编造** `connected: true` / `lastHeartbeat` 之类字段：
+   *     假字段比没有字段更糟（Web 端会把它当真）。
+   *   要真做「连接状态」，前置是**适配器先上报**（心跳/最近消息时间），那是独立的一块。
+   */
+  getPlatformStatus(): {
+    platforms: Array<{ name: string; scheduler: 'default' | 'custom' }>;
+    count: number;
+  } {
+    const rows = this.eventBus?.listSchedulers() ?? [];
+    return {
+      platforms: rows
+        .map(({ name, scheduler }) => ({
+          name,
+          scheduler: (scheduler === this.scheduler ? 'default' : 'custom') as 'default' | 'custom',
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+      count: rows.length,
+    };
+  }
+
   /** ★ 8-15 WebUI（webui-chat-endpoints）：会话是否有在途生成（Coalescer 打断注册表） */
   isGenerating(sessionId: string): boolean {
     return this.coalescer?.getAbortRegistry().isInFlight(sessionId) ?? false;

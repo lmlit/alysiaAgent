@@ -58,6 +58,23 @@ describe('validateIngestEvent / ★ 会话前缀是安全边界', () => {
   it('session_id 非字符串也拒绝', () => {
     expect(validateIngestEvent(valid({ session_id: 123 }))).not.toBeNull();
   });
+
+  /**
+   * ★ 第二道闸（KI-23，change: `fix-dsh-ingest-and-settlement` 契约 7）。
+   * 适配器已改成 fail closed（取不到 id 就不回传），这里防的是**上游契约再次变化**
+   * ——dsh 已换过一次插件机制，`Session` 形状一变，退化路径就会静默开启。
+   */
+  it('★ 拒收 dsh:unknown —— 它会把多个真实会话混成一个桶', () => {
+    const problem = validateIngestEvent(valid({ session_id: 'dsh:unknown' }));
+    expect(problem).not.toBeNull();
+    expect(problem).toContain('dsh:unknown');
+    expect(problem, '拒绝原因要说清为什么，不能只说「不合法」').toMatch(/身份不明|混/);
+  });
+
+  it('拒收 dsh:unknown 不误伤正常会话（前缀相同但 id 真实）', () => {
+    expect(validateIngestEvent(valid({ session_id: 'dsh:unknownish-1' }))).toBeNull();
+    expect(validateIngestEvent(valid({ session_id: 'dsh:session-abc' }))).toBeNull();
+  });
 });
 
 describe('validateIngestEvent / 反例', () => {
@@ -134,5 +151,18 @@ describe('批次上限', () => {
   it('是个正整数（路由按它做 413 判定）', () => {
     expect(Number.isInteger(MAX_INGEST_BATCH)).toBe(true);
     expect(MAX_INGEST_BATCH).toBeGreaterThan(0);
+  });
+
+  /**
+   * ★ 与适配器侧的**同一字面量**钉住（change: `fix-dsh-ingest-and-settlement` 契约 1）。
+   *
+   * 插件不能依赖 server 包，所以两边各有一份常量，只能靠测试对齐
+   * （与 `DSH_SESSION_PREFIX` 同一套手法）。漂移的后果不是静默：
+   * 适配器会按旧上限分片，超出的批次吃 413 → 被按**永久拒收**丢弃并响亮报警。
+   * 改这个数字时，`packages/dsh-adapter/src/delivery.ts` 的
+   * `SERVER_MAX_INGEST_BATCH` 必须一起改。
+   */
+  it('★ 值必须是 200（适配器侧 SERVER_MAX_INGEST_BATCH 与它逐字对齐）', () => {
+    expect(MAX_INGEST_BATCH).toBe(200);
   });
 });

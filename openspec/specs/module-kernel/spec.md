@@ -120,9 +120,22 @@ class ModuleHost {
 3. **循环依赖 → throw，错误信息含完整环路径**（`al:a → al:b → al:c → al:a`）
 4. 逐个 install 前校验 `inject` 全部就绪；未满足 → **throw 且不调用该模块的 `apply`**
    （错误信息点出提供者模块名）
-5. `critical: true`（默认）模块 `apply` 抛错 → **中止整树**，已装的**逆序回滚 + 清空服务表**
-6. `critical: false` 模块 `apply` 抛错 → `logger.error` + **把它声明的服务登记为 `undefined`**，
-   继续装后续模块。依赖方拿到 `undefined`（降级值）而不是整体中止
+5. `critical: true`（默认）模块 `apply` 抛错 → **先逆序回收该模块自己已注册的 effect**，
+   再**中止整树**，已装的**逆序回滚 + 清空服务表**
+6. `critical: false` 模块 `apply` 抛错 → 同样**先回收它自己的 effect**，
+   再 `logger.error` + **把它声明的服务登记为 `undefined`**，继续装后续模块。
+   依赖方拿到 `undefined`（降级值）而不是整体中止
+7. **失败模块自己创建的资源必须被回收**（2026-10-16，change: `reclaim-failed-module-resources`）。
+   回收用与 `stop()` **同一个** `disposeEntry()`（逆序 / await / 单个 disposer 抛错进 `logger.error`
+   且不中断其他），因此顺序语义与 `stop()` 一致。**回收必须留痕**（回收了几项）。
+   - **不得二次回收**：失败时已回收过的 effect，`stop()` / `rollback()` 不再跑第二遍
+     （disposer 不保证幂等）。故 `critical:false` 失败后以**空数组**登记该模块。
+   - **回收的是「资源」，不是「服务声明」**：`registerDegraded` 的降级语义不变
+     （依赖方仍拿到 `undefined`）。
+   - 依据：`installOne()` 原先只在 **apply 成功之后**才 `installed.push(...)`，
+     于是半途失败的模块**从未进登记表** ⇒ `rollback()` 收不到它
+     ⇒ 它开的定时器 / 挂的监听**继续在后台跑**，且没有任何机制会再回收
+     （`stop()` 也只遍历 `installed`）。这与 §5 那个「没人回收」的坑同源。
 
 > 第 6 条正是 alysia 现有语义：LanceDB 失败 → `vectorStore = null` → 文本检索兜底
 > （`index.ts:122-124`）。
@@ -134,6 +147,32 @@ class ModuleHost {
 4. **单个 disposer 抛错不中断其他**，错误进 `logger.error`
 5. 幂等：重复 `stop()` 不重复执行
 6. stop 后 `use` / `start` 一律 throw（**不支持重启，需要新实例**）
+
+★ **`stop()` 必须真的释放自己占用的资源**（2026-10-16，change: `unify-core-shutdown`）。
+内核只提供「逆序 + await + 逐个兜错」的**执行**机制；**释放什么由模块用 `ctx.effect` 声明**。
+此前 `core.stop()` **只停 EventBus**，SQLite 句柄与 LanceDB 目录都不释放 ——
+「优雅停机」名不副实，Windows 上临时目录因此删不掉（`EPERM`）。
+
+已落地的两个：
+
+| 模块 | 停机 effect | 释放性质 |
+|---|---|---|
+| `al:db` | `db.close()` | **确定性**（better-sqlite3 有明确 close 语义） |
+| `al:vector` | `LanceDBStore.close()` | 放掉包装持有的引用（napi 绑定没有明确的 close 原语） |
+
+**顺序不需要各模块自己排**：`al:db` 是**第一个装**的，逆序卸载使它**最后一个卸** ——
+此刻 `al:memory` / `al:tools` / `al:commands` / 各 processor 都已卸完。
+
+⚠️ **这是行为变更**：`stop()` 之后任何写入/读取**会抛错**
+（better-sqlite3：「The database connection is not open」）而不是静默成功。
+这就是「**关太早必须响亮**」——调用方若假设「stop 之后还能用」，会开始失败，
+而**那正是我们想让它暴露的假设**。
+
+✅ **验收已达成**（2026-10-16，真实 e2e，Windows）：`tests/memory/e2e/core-turn.test.ts`
+的 `afterAll` **去掉了 `EPERM` 变通**，改为**硬断言**「`stop()` 后临时目录必须能删掉」。
+实测：两个停机 effect 按**逆序**触发（日志 `[al:vector] 已释放…` → `[al:db] 已关闭…`）、
+临时目录残留 **0 个**、用例通过。
+⇒ 将来谁把停机 effect 弄丢，这一条会**直接红**（而不是像以前那样把异常咽掉、留给 OS 清理）。
 
 ### 2.4 依赖图必须是 DAG（不做双向依赖）
 

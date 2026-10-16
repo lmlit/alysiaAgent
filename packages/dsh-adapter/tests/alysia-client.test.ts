@@ -53,11 +53,13 @@ describe('★ 永不抛出（alysia 挂了 dsh 必须照常可用）', () => {
     ['连接被拒', new Error('fetch failed')],
     ['超时', Object.assign(new Error('aborted'), { name: 'AbortError' })],
     ['DNS 失败', new Error('getaddrinfo ENOTFOUND')],
-  ])('%s → 返回 null 而不是抛', async (_label, err) => {
+  ])('%s → 读路径返回 null / 回传标记可重试，都不抛', async (_label, err) => {
     fetchThrows(err);
     const c = new AlysiaClient({ baseUrl: 'http://127.0.0.1:1', logger: makeLogger() });
     await expect(c.getPersonaPrompt()).resolves.toBeNull();
-    await expect(c.ingest([{ id: 'x' } as never])).resolves.toBeNull();
+    // ★ 契约 3（fix-dsh-ingest-and-settlement）：回传**不再压成 null** ——
+    //   「连不上」（可重试）必须与服务端「拒收」（重试无用）区分开。
+    await expect(c.ingest([{ id: 'x' } as never])).resolves.toMatchObject({ kind: 'unreachable' });
     await expect(c.extractSession('dsh:s')).resolves.toBe(false);
   });
 
@@ -126,7 +128,7 @@ describe('ingest', () => {
     const spy = vi.fn();
     globalThis.fetch = spy as never;
     const c = new AlysiaClient({ baseUrl: 'http://127.0.0.1:1' });
-    await expect(c.ingest([])).resolves.toEqual({ accepted: 0, rejected: [] });
+    await expect(c.ingest([])).resolves.toEqual({ kind: 'ok', accepted: 0, rejected: [] });
     expect(spy).not.toHaveBeenCalled();
   });
 
@@ -141,14 +143,48 @@ describe('ingest', () => {
     expect(url).toBe('http://127.0.0.1:1/api/ingest');
     expect(init.method).toBe('POST');
     expect(JSON.parse(init.body).events).toHaveLength(2);
-    expect(r).toEqual({ accepted: 2, rejected: [] });
+    expect(r).toEqual({ kind: 'ok', accepted: 2, rejected: [] });
   });
 
   it('把服务端的 rejected 原样带回来（静默丢弃会让「回传成功」和「没进库」长得一样）', async () => {
     fetchReturns({ ok: true, accepted: 1, rejected: ['qq-bad: session_id 必须以 "dsh:" 开头'] });
     const c = new AlysiaClient({ baseUrl: 'http://127.0.0.1:1' });
     const r = await c.ingest([{ id: 'a' } as never]);
-    expect(r?.rejected[0]).toContain('dsh:');
+    expect(r.kind).toBe('ok');
+    expect(r.kind === 'ok' ? r.rejected[0] : '').toContain('dsh:');
+  });
+});
+
+/**
+ * ★ 契约 3：三类必须分得开。
+ *
+ * 旧契约把它们全压成 `null` ⇒ 上层只能把 413 也当「alysia 不可达」放回队列，
+ * 于是**同样的输入永远重复同一个 413**，队列永久卡死（KI-24 的邻居缺陷）。
+ */
+describe('★ ingest 的故障分类（契约 3）', () => {
+  const one = [{ id: 'a' } as never];
+
+  it('4xx → permanent（重试无用）', async () => {
+    fetchReturns({ error: 'events 必须是非空数组' }, 400);
+    const c = new AlysiaClient({ baseUrl: 'http://127.0.0.1:1', logger: makeLogger() });
+    const r = await c.ingest(one);
+    expect(r.kind).toBe('permanent');
+    expect(r.kind === 'permanent' ? r.reason : '').toContain('400');
+  });
+
+  it('★ 413（契约漂移：服务端上限被下调）→ permanent，不许当可重试', async () => {
+    fetchReturns({ error: '单批最多 200 条' }, 413);
+    const c = new AlysiaClient({ baseUrl: 'http://127.0.0.1:1', logger: makeLogger() });
+    const r = await c.ingest(one);
+    expect(r.kind, '413 被当成可重试 ⇒ 同样的输入会无限重复同一个 413').toBe('permanent');
+    expect(r.kind === 'permanent' ? r.reason : '').toContain('413');
+  });
+
+  it('5xx → unreachable（服务端暂时故障，可重试）', async () => {
+    fetchReturns({ error: 'internal' }, 503);
+    const c = new AlysiaClient({ baseUrl: 'http://127.0.0.1:1', logger: makeLogger() });
+    const r = await c.ingest(one);
+    expect(r.kind).toBe('unreachable');
   });
 });
 

@@ -71,6 +71,69 @@ describe('OpenAIProvider.textChat 超时与打断', () => {
     expect(resp.completionText).toBe('Request aborted');
   });
 
+  // ───────────────────────────────────────────────────────────
+  // ★ 第三批（2026-10-16）· 请求取消：超时后必须**回收**底层请求
+  //
+  // 旧实现：60s race 到点只 `reject(...)`，**从不调用 `controller.abort()`**
+  // ⇒ race 保证了「准时返回」，但**已建立的连接继续挂着**（后端继续生成、socket 不释放）。
+  // 这两件事**分工不同**：`abort` 到不了 DNS/连接建立阶段，所以「准时」只能靠 race；
+  // 而「回收」只能靠 abort。修的时候别把 race 删掉换 abort。
+  // ───────────────────────────────────────────────────────────
+  it('★★ 主症：超时后**必须 abort 底层请求**（否则连接不释放、后端继续跑）', async () => {
+    vi.useFakeTimers();
+    let captured: AbortSignal | undefined;
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((_url: string, opts: any) => {
+      captured = opts.signal;
+      return new Promise(() => {});   // 永久挂起（DNS/连接层，abort 传不到）
+    }));
+    const p = makeProvider();
+    const respPromise = p.textChat(makeReq());
+
+    await vi.advanceTimersByTimeAsync(61_000);
+    const resp = await respPromise;
+
+    expect(resp.completionText).toBe('Request timed out (60s)');
+    expect(captured, 'fetch 没拿到 signal').toBeDefined();
+    expect(captured!.aborted, '超时后没有 abort 底层请求 —— 连接与后端生成都还在跑').toBe(true);
+  });
+
+  // ───────────────────────────────────────────────────────────
+  // ★ 第三批 · 监听泄漏：`{ once: true }` 只在**触发时**自动摘除
+  //
+  // 外部 signal（Coalescer 的打断注册表）是**长寿命**对象，而**大多数请求正常跑完**
+  // （永远不会触发 abort）⇒ 每次请求都在它身上残留一个闭包，只增不减。
+  // ───────────────────────────────────────────────────────────
+  it('★★ 外部 signal 上的监听必须在请求结束后摘掉（长会话下不然会只增不减）', async () => {
+    const { getEventListeners } = await import('node:events');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockOkResponse()));
+    const outer = new AbortController();
+    // 长寿命信号：模拟 Coalescer 的打断注册表（跨很多次请求复用同一个 signal）
+    const before = getEventListeners(outer.signal, 'abort').length;
+
+    const p = makeProvider();
+    for (let i = 0; i < 5; i++) await p.textChat(makeReq({ signal: outer.signal }));
+
+    expect(
+      getEventListeners(outer.signal, 'abort').length,
+      '每次请求都在长寿命 signal 上残留了一个监听',
+    ).toBe(before);
+  });
+
+  it('回归：外部打断仍然生效（摘监听不能把打断功能也摘掉）', async () => {
+    let captured: AbortSignal | undefined;
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async (_url: string, opts: any) => {
+      captured = opts.signal;
+      return mockOkResponse();
+    }));
+    const outer = new AbortController();
+    const p = makeProvider();
+
+    await p.textChat(makeReq({ signal: outer.signal }));
+    // 请求已结束，此时外部 signal 上不该再挂着监听
+    outer.abort();
+    expect(captured!.aborted, '请求结束后外部 abort 不该再影响那次已完成的请求').toBe(false);
+  });
+
   it('API 非 200 → err（含状态码）', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: false,

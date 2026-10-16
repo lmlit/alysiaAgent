@@ -76,6 +76,45 @@ export class KnowledgeStore {
 
   // ── ★ 知识库导入支持 ──────────────────────────────
 
+  /**
+   * ★ 2026-10-16（change: `fix-store-write-trace`，KI-13）：
+   * 文档元数据与**全部 chunk 在同一个事务里**写入，`chunk_count` 用**实到块数**。
+   *
+   * 旧实现是「先 `insert(doc)` 声明 `chunk_count = chunks.length`、`status='active'`，
+   * 再在**事务外**循环 `insertChunk`」。中途失败会留下一颗
+   * 「**完全正常的活跃文档**」外壳：status 正常、`chunk_count` 是高位的承诺值、
+   * 实际只有前几个 chunk —— **零日志、永不自愈**；
+   * 而重试会被 `getByHash` 命中这颗残行 → 返回**从未兑现的块数**并宣布「已导入 N 块」。
+   *
+   * 事务保证「要么全都有、要么什么都没有」，于是残行**不可能存在**（原子性即契约）。
+   * 向量写入**不在**事务内（它是另一条链路、且失败不阻塞文本检索，见 KI-15）。
+   *
+   * @returns 实到的 chunk 数（= 事务里真正 INSERT 成功的条数）
+   */
+  insertDocWithChunks(doc: KnowledgeDoc, chunks: string[]): number {
+    const now = new Date().toISOString();
+    const tx = this.db.transaction((): number => {
+      this.db.prepare(`
+        INSERT INTO knowledge_docs (id, title, source, file_path, content_hash, chunk_count, status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(doc.id, doc.title, doc.source, doc.file_path, doc.content_hash, 0, doc.status, doc.created_at, doc.updated_at);
+
+      const stmt = this.db.prepare(`
+        INSERT OR REPLACE INTO knowledge_chunks (id, doc_id, chunk_index, content, created_at)
+        VALUES (?, ?, ?, ?, ?)
+      `);
+      let inserted = 0;
+      for (let i = 0; i < chunks.length; i++) {
+        stmt.run(`chunk_${doc.id}_${i}`, doc.id, i, chunks[i], now);
+        inserted++;
+      }
+      // ★ 用**实到块数**回填 —— 不许留下"先声明、后未必兑现"的块数
+      this.db.prepare('UPDATE knowledge_docs SET chunk_count = ? WHERE id = ?').run(inserted, doc.id);
+      return inserted;
+    });
+    return tx();
+  }
+
   insertChunk(chunk: { id: string; doc_id: string; chunk_index: number; content: string }): void {
     this.db.prepare(`
       INSERT OR REPLACE INTO knowledge_chunks (id, doc_id, chunk_index, content, created_at)

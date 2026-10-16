@@ -28,10 +28,30 @@ export interface IngestEvent {
   created_at: string;
 }
 
-export interface IngestResult {
-  accepted: number;
-  rejected: string[];
-}
+/**
+ * 一次回传的结果 —— **判别式联合，不压成 `null`**。
+ *
+ * ★ 2026-10-16（change: `fix-dsh-ingest-and-settlement`，契约 3）：
+ *   旧契约是 `IngestResult | null`，把「服务端明确拒收」和「根本连不上」压成同一个 `null`，
+ *   **信息在传输层就丢了**——上层只能把 413 也当成「alysia 不可达」放回队列，
+ *   于是**同样的输入永远重复同一个 413**，队列永久卡死（KI-24 的邻居缺陷）。
+ *
+ * 三类必须分开（契约 3）：
+ *   - `ok`          服务端受理了。`rejected[]` 是**逐条**永久拒收（部分成功）
+ *   - `permanent`   **4xx**：整批被拒，重试无用。**含 413** —— 它是**契约漂移**信号
+ *                   （服务端上限被下调 / 适配器版本旧），必须响亮上报，不许降级处理
+ *   - `unreachable` 连接失败 / 超时 / **5xx**：可重试，批次放回队列等下次触发
+ */
+export type IngestOutcome =
+  | { kind: 'ok'; accepted: number; rejected: string[] }
+  | { kind: 'permanent'; reason: string }
+  | { kind: 'unreachable'; reason: string };
+
+/** 内部：带失败分类的请求结果。`ok` 才带 data；其余两种情况由调用方各自映射 */
+type RawRequestResult =
+  | { kind: 'ok'; data: unknown }
+  | { kind: 'http'; status: number; body: string }
+  | { kind: 'transport'; reason: string };
 
 /** 一条召回的记忆（与 alysia 的 `SearchResult` 对齐） */
 export interface RetrievedMemory {
@@ -80,15 +100,32 @@ export class AlysiaClient {
     return typeof prompt === 'string' && prompt.length > 0 ? prompt : null;
   }
 
-  /** 回传一批会话事件。失败返回 null（调用方据此决定是否丢弃） */
-  async ingest(events: IngestEvent[]): Promise<IngestResult | null> {
-    if (events.length === 0) return { accepted: 0, rejected: [] };
-    const data = await this.request('POST', '/api/ingest', { events });
-    if (data === null) return null;
-    const r = data as { accepted?: unknown; rejected?: unknown };
+  /**
+   * 回传一批会话事件。
+   *
+   * ★ 仍**永不抛出**（见文件头）：失败只体现为 `unreachable` / `permanent`。
+   * ★ 分批**不在这里**：切批是投递队列的职责（它要逐批归因、逐批决定重试与否）。
+   *   调用方必须保证 `events.length` 不超过服务端单批上限（`MAX_INGEST_BATCH`，当前 200）。
+   */
+  async ingest(events: IngestEvent[]): Promise<IngestOutcome> {
+    if (events.length === 0) return { kind: 'ok', accepted: 0, rejected: [] };
+
+    const r = await this.requestRaw('POST', '/api/ingest', { events });
+
+    if (r.kind === 'transport') return { kind: 'unreachable', reason: r.reason };
+    if (r.kind === 'http') {
+      const reason = `HTTP ${r.status}: ${r.body.slice(0, 200)}`;
+      // 4xx = 永久拒收（含 413）；5xx = 服务端暂时故障，可重试
+      return r.status >= 400 && r.status < 500
+        ? { kind: 'permanent', reason }
+        : { kind: 'unreachable', reason };
+    }
+
+    const d = r.data as { accepted?: unknown; rejected?: unknown };
     return {
-      accepted: typeof r.accepted === 'number' ? r.accepted : 0,
-      rejected: Array.isArray(r.rejected) ? (r.rejected as string[]) : [],
+      kind: 'ok',
+      accepted: typeof d.accepted === 'number' ? d.accepted : 0,
+      rejected: Array.isArray(d.rejected) ? (d.rejected as string[]) : [],
     };
   }
 
@@ -129,8 +166,24 @@ export class AlysiaClient {
 
   // ── 内部 ────────────────────────────────────────────────────
 
-  /** 统一的请求入口。**任何失败都返回 null，绝不抛** */
+  /** 统一的请求入口。**任何失败都返回 `null`，绝不抛**（读路径用；写路径用 `requestRaw`） */
   private async request(method: 'GET' | 'POST', path: string, body?: unknown): Promise<unknown | null> {
+    const r = await this.requestRaw(method, path, body);
+    return r.kind === 'ok' ? r.data : null;
+  }
+
+  /**
+   * 带**失败分类**的请求入口。绝不抛。
+   *
+   * ★ 为什么不能只返回 `null`：`ingest` 必须区分「服务端拒收」（4xx，重试无用）
+   *   与「连不上」（可重试）。压成一个 `null` 就再也分不出来（change:
+   *   `fix-dsh-ingest-and-settlement` 契约 3）。
+   */
+  private async requestRaw(
+    method: 'GET' | 'POST',
+    path: string,
+    body?: unknown,
+  ): Promise<RawRequestResult> {
     const url = `${this.baseUrl}${path}`;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
@@ -144,15 +197,17 @@ export class AlysiaClient {
       if (!resp.ok) {
         // 把响应体读出来 —— 只说「HTTP 400」等于没说（本项目反复栽过的坑）
         const text = await resp.text().catch(() => '');
-        this.noteFailure(`${method} ${path} → HTTP ${resp.status}: ${text.slice(0, 200)}`);
-        return null;
+        const detail = `${method} ${path} → HTTP ${resp.status}: ${text.slice(0, 200)}`;
+        this.noteFailure(detail);
+        return { kind: 'http', status: resp.status, body: text };
       }
       this.failureStreak = 0;
-      return await resp.json();
+      return { kind: 'ok', data: await resp.json() };
     } catch (err: any) {
       // 连接被拒 / 超时 / 非 JSON 都归这里。ECONNREFUSED = alysia 没起，是常态不是异常
-      this.noteFailure(`${method} ${path} → ${err?.name === 'AbortError' ? `超时(${this.timeoutMs}ms)` : err?.message ?? err}`);
-      return null;
+      const reason = `${method} ${path} → ${err?.name === 'AbortError' ? `超时(${this.timeoutMs}ms)` : err?.message ?? err}`;
+      this.noteFailure(reason);
+      return { kind: 'transport', reason };
     } finally {
       clearTimeout(timer);
     }

@@ -55,14 +55,16 @@
 | 系统 | `GET /api/health` | 健康检查 | 🟢 core 已封装 |
 | 会话 | `GET /api/sessions` | 会话列表 | 🟢 core 已封装 |
 | 会话 | `POST /api/sessions/:id/extract` | 手动提取画像 | 🟢 core 已封装 |
-| 画像 | `GET /api/profile` | 画像快照 | 🟢 core 已封装 |
+| 画像 | `GET /api/profile` | 画像快照（`?includeSuperseded=1` 带已作废的） | 🟢 core 已封装 |
+| 画像 | `POST /api/profile/facts/correct` | **纠正**一条用户事实（旧的作废 + 写新的） | 🟢 core 已封装（2026-10-16） |
+| 画像 | `POST /api/profile/facts/confirm` | **失效**（或续期）一条事实 | 🟢 core 已封装（2026-10-16） |
 | 人格 | `GET /api/persona` | 人格状态 | 🟢 core 已封装 |
 | 人格 | `POST /api/persona/adjust` | 手动调整人格参数 | 🟢 core 已封装 |
 | Token | `GET /api/stats` | Token 用量统计 | 🟢 core 已封装 |
 | 知识库 | `GET /api/knowledge` | 知识文档列表 | 🟢 core 已封装 |
 | 知识库 | `POST /api/knowledge/import` | 导入知识（文本；PDF/URL 后续） | 🟢 core 已封装 |
 | 知识库 | `DELETE /api/knowledge/:id` | 删除知识文档 | 🟢 core 已封装 |
-| 平台 | `GET /api/platforms` | 平台连接状态 | ⬜ 未实现（backlog，见 openspec/changes/add-platforms-endpoint） |
+| 平台 | `GET /api/platforms` | 平台接入状态（**已接入事件总线的 scope**） | 🟢 core 已封装（2026-10-16） |
 | 角色 | `GET /api/roles` | 角色列表 | 🟢 core 已封装 |
 | 角色 | `GET /api/roles/active` | 当前激活角色 | 🟢 core 已封装 |
 | 角色 | `POST /api/roles/switch` | 切换角色 | 🟢 core 已封装 |
@@ -150,9 +152,9 @@ LLM 客户端，该客户端有 **120s 超时**。超时会让本请求以错误
 **Core 方法**: `MemoryManager.getProfileSnapshot()`
 
 ```typescript
-getProfileSnapshot(): {
+getProfileSnapshot(opts?: { includeSuperseded?: boolean }): {
   facts: Array<{ fact: string; confidence: number; source: string; status: string;
-                 updatedAt: string; validFrom: string; category: string }>;  // 已过滤 superseded
+                 updatedAt: string; validFrom: string; category: string }>;  // 默认已过滤 superseded
   characterFacts: Array<{ fact: string; confidence: number; source: string; status: string;
                           updatedAt: string; validFrom: string; category: string }>;  // ★ 8-28 角色事实（昔涟自己的事）
   basics: string;      // 深度画像摘要（自然语言）
@@ -163,6 +165,49 @@ getProfileSnapshot(): {
 **Web 用途**: 画像展示页。facts(用户)+ characterFacts(角色)并列 + 时间列 + 分类。
 
 **★ 8-28 补充**: `MemoryManager.ingest(event)` 支持 `event.perspective`('interaction' 默认 | 'self' 生活事件回写);`read({perspective})` 可按视角过滤召回。
+
+**★ 2026-10-16（记忆纠正首版）**：
+- `GET /api/profile?includeSuperseded=1` → `getProfileSnapshot({ includeSuperseded: true })`，
+  **连已作废的一起返回**。纠正页需要看到"被作废的"，否则用户无法确认「旧事实真的失效了」。
+  默认仍过滤（画像展示只要"她现在相信的"）。
+
+---
+
+### 2.3.1 `POST /api/profile/facts/correct` — 纠正一条用户事实
+
+**Core 方法**: `MemoryManager.correctProfileFact(oldFact, newFact)`
+
+```typescript
+correctProfileFact(oldFact: string, newFact: string): { superseded: boolean; added: boolean }
+```
+
+请求 `{ oldFact: string; newFact: string }` → 响应 `{ ok: true, superseded, added }`。
+
+- **语义 = 两步一起做**：先把旧事实按 `factKeyOf` 归一化后标记 `superseded`，
+  再写入新事实（`source: 'user'`）。
+- ⚠️ **为什么不能只 `addFacts([新])`**：冲突检测按 `normalizeKey` 的**文本相似**判定，
+  而「用户在长沙」→「用户在上海」**并不相似** ⇒ 不会互相 supersede ⇒
+  **两条同时 active** ⇒ 召回同时拿到，用户看到自相矛盾的她。
+- `source: 'user'` 是刻意的：`ProfileStore` 的既有规则是「用户声明不被 inferred 覆盖」，
+  所以手动纠正**不会被后续 LLM 提取顶掉**。
+- `superseded: false` = **没找到旧事实**（不是失败，旧文案可能已被改写过），新事实仍写入。
+- 参数缺失/为空 → **400 + 具体原因**；core 抛错 → 400（不吞）。
+- **Web 用途**: `/memory` 页的「纠正」按钮。
+- ⚠️ **首版只支持用户事实**（`facts`）。角色事实（`character_facts`）在页面上**只读** ——
+  `ProfileStore` 没有按 key 作废角色事实的方法，需要单独加，不在首版。
+
+### 2.3.2 `POST /api/profile/facts/confirm` — 失效 / 续期
+
+**Core 方法**: `MemoryManager.confirmProfileFact(fact, stillValid)`
+
+请求 `{ fact: string; stillValid: boolean }` → 响应 `{ ok, found }`。
+
+- `stillValid: false` → 作废（"使旧事实失效"的通道）；`true` → 按分类续期。
+- `ok/found` **两个字段都有意保留**：`false` = **没找到这条事实**，
+  与"操作失败"（HTTP 非 2xx）是**两回事**，前端据此给不同文案。
+- ⚠️ **这条路此前不存在**：`confirmProfileFact` 早就实现了，但全仓**没有任何调用方**
+  ⇒ 能力一直不可达（`/api/profile` 只能看、不能改）。2026-10-16 补上。
+- **Web 用途**: `/memory` 页的「忘掉」按钮。
 
 ---
 
@@ -375,7 +420,34 @@ app.delete('/api/knowledge/:id', async (req, reply) => {
 
 ### 3.4 `GET /api/platforms` — 平台状态
 
-**Core 需要**: `AlysiaCore.getPlatformStatus()` — 返回各 adapter 的连接状态。
+**Core 方法**: `AlysiaCore.getPlatformStatus()`
+
+```typescript
+getPlatformStatus(): {
+  platforms: Array<{
+    name: string;                     // 平台 scope，形如 'qq-official-1::private'
+    scheduler: 'default' | 'custom';  // 'default' = 用 core 默认调度器
+  }>;
+  count: number;
+}
+```
+
+**Web 用途**: 展示「哪些平台已接入」。
+
+**★ 2026-10-16 落地时的口径收敛（`add-platforms-endpoint`）—— 这条比接口本身更重要**：
+
+原 §3.4 写的是「各 adapter 的**连接状态**」，但 **core 看不到连接层**：
+
+- core 只知道 `registerPlatform(name)` 被调过 ⇒ 它能诚实回答的是
+  「**哪些平台 scope 已接到事件总线**」；
+- **WebSocket 是否连着 / 上次心跳或消息是什么时候** 属于 adapter 运行时状态，
+  而当前三个适配器（qq-official / qq-onebot / telegram）**都没有暴露这类信息**。
+
+⇒ 本接口**不编造** `connected` / `lastHeartbeat` 之类字段。
+**假字段比没有字段更糟**——Web 端会把它当真，而它永远恒为真。
+要真做「连接状态」，**前置是适配器先上报心跳**（独立的一块，不在本接口内）。
+
+**已接入 ≠ 连通**：返回里有名字只说明装配期注册成功，不代表此刻对端可用。
 
 ---
 

@@ -53,12 +53,21 @@ describe('EventStore.getBySession — 时间窗语义', () => {
 
     // 当前实现在这里是 0 条 —— 这就是管道空转的原因
     expect(got.length).toBeGreaterThan(0);
-    // ⚠️ 边界语义是 `>=`（**包含** anchor 那一条本身）——沿用 process() 里原有的过滤语义，
-    //    本 change 不顺手改成 `>`（那是另一个语义决策，会改变摘要窗口边界）。
-    //    所以 anchor=times[1415] → 取到 1415..1435 共 21 条。
-    expect(got.length).toBe(21);
-    expect(got[0].id).toBe('e-1415');
+    // ★ 2026-10-16（change: fix-summary-window-late-events）**边界语义已改**：
+    //   窗口从 `[since, until]` 收成 **`(since, until]`**（since 开区间）。
+    //   9-26 当时的注释把这件事标成「另一个语义决策，会改变摘要窗口边界」并刻意推迟——
+    //   而摘要行的 `ended_at` 现在是**数据边界**（= 窗口内最新事件的 created_at），
+    //   它就**恰好等于某条事件的 created_at**，于是闭区间会让**边界那条被摘两次**。
+    //   所以 anchor=times[1415] → 取到 1416..1435 共 20 条。
+    expect(got.length).toBe(20);
+    expect(got[0].id).toBe('e-1416');
     expect(got[got.length - 1].id).toBe('e-1435');
+  });
+
+  it('★ 游标语义 (since, until]：since 那条【不在】窗口内，until 那条【在】', () => {
+    const times = seed(5);
+    const got = store.getBySession(SID, { since: times[1], until: times[3] });
+    expect(got.map(e => e.id)).toEqual(['e-2', 'e-3']);   // e-1 被排除，e-3 保留
   });
 
   it('★ 无 since 时取【最近】N 条，而不是最旧的 N 条', () => {
@@ -145,12 +154,12 @@ describe('EventStore.getBySession — until（历史窗口上界）', () => {
     const since = times[100];
     const until = times[110];
 
-    const noUntil = store.getBySession(SID, { since });          // 最近 1000 条 ≥ since
+    const noUntil = store.getBySession(SID, { since });          // 最近 1000 条 > since
     const withUntil = store.getBySession(SID, { since, until }); // 真正的窗口
 
-    expect(withUntil).toHaveLength(11);              // 100..110（含两端）
-    expect(withUntil[0].id).toBe('e-100');
-    expect(withUntil[10].id).toBe('e-110');
+    expect(withUntil).toHaveLength(10);              // 101..110（since 开、until 闭）
+    expect(withUntil[0].id).toBe('e-101');
+    expect(withUntil[9].id).toBe('e-110');
     // 不给 until 时窗口内的事件一条都取不到 —— 这就是必须加 until 的原因
     expect(noUntil.some(e => e.id === 'e-105')).toBe(false);
   });

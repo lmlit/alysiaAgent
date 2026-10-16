@@ -65,6 +65,25 @@ ALTER TABLE worldbook_entries ADD COLUMN content_type TEXT DEFAULT 'text';  -- '
 
 激活角色存 **persona 表 is_active 字段**（单行 is_active=1）。切换角色 = 事务里清旧 + 设新。
 
+**契约：`is_active = 1` 是**不变量**，且必须由**写入侧**保证（2026-10-16，change: `fix-role-activation-invariant`，KI-22）。**
+
+- **`upsertRole(input.is_active: true)` 也必须「先清后置」**（与 `setActive` 同语义、同事务），
+  不得写成 `is_active = CASE WHEN ? = 1 THEN 1 ELSE is_active END` —— 那只置位、**不清别人**，
+  会留下**双激活行**。新建行一律先插 `is_active = 0`，需要激活时由同一事务内的两行
+  （`UPDATE … SET is_active = 0 WHERE is_active = 1` → `UPDATE … SET is_active = 1 WHERE role = ?`）统一置位。
+- **为什么必须建在写入侧**：8 个写点（`updateTone` / `updateMemoryConfig` / `addAdaptationHint` /
+  `appendOverlayNote` / `setName` / `updateSystemPrompt` / …）都是
+  `UPDATE persona … WHERE is_active = 1` **无 `LIMIT 1`**，而 `get()` 是
+  `… WHERE is_active = 1 LIMIT 1`（现加 `ORDER BY id`）。
+  ⇒ 双激活时**两行一起被改、读只认其中一行**：人格演化同时写进两个角色，
+  读却只认一个 —— 症状是「人格改了没生效 / 随机漂移」，**极难排查**。
+- **`get()` 加 `ORDER BY id`** 只是**兜底**（针对历史脏数据），不是不变量本身：
+  它让读**确定**（永远取 id 最小的激活行），但**不能**防止写入侧产生双激活。
+- ⚠️ **别靠调用顺序兜底**：此前之所以没爆，是因为 `upsertRole` 全仓只有一个调用方
+  `importRole`，而它约 50 行后紧跟 `setActive(pkg.role)`、中间全是同步代码
+  —— 双激活窗口在同一 tick 内被"顺手"修好。**那是巧合，不是契约**：
+  下一个调用方就会真的留下双激活行。
+
 ---
 
 ## 3. 角色包格式（JSON）

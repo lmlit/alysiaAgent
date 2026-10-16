@@ -2,6 +2,7 @@
 import type { MemoryEvent } from '../types.js';
 import { PROCESSED_PROFILE, PROCESSED_PERSONA, PROCESSED_KNOWLEDGE } from '../types.js';
 import { logger } from '../../utils/logger.js';
+import { warnThrottled } from '../../utils/write-trace.js';
 import type { EventStore } from '../stores/EventStore.js';
 import type { ProfileStore } from '../stores/ProfileStore.js';
 import type { WorldbookMatcher } from '../engines/WorldbookMatcher.js';
@@ -9,6 +10,15 @@ import type { PersonaAdapter } from '../engines/PersonaAdapter.js';
 import type { ProfileExtractor } from '../engines/ProfileExtractor.js';
 import type { IEmbedService } from '../interfaces/IEmbedService.js';
 import type { IVectorStore } from '../interfaces/IVectorStore.js';
+
+/**
+ * ★ KI-15：向量库缺失时**已跳过**的嵌入条数（模块级 = 进程内累计）。
+ *
+ * 用途只有一个：让「没有向量库」这件事**不再是静默的**，同时不刷屏 ——
+ * 首次跳过必报，此后每 100 条补报一次累计。
+ * 光靠启动时一行 warn 说不清「到底漏了多少条」（这正是 KI-15 的原话）。
+ */
+let skippedNoVectorStore = 0;
 
 /**
  * RealtimeProcessor handles per-event processing in the hot path:
@@ -45,6 +55,20 @@ export class RealtimeProcessor {
 
     if (skipProfile) {
       // NPC 消息：只匹配 Worldbook，不提取画像、不做嵌入
+      //
+      // ★ 2026-10-16（change: `filter-synthetic-context-inflow`，KI-20）：**合成注入
+      //   （dsh 的 runtime context 快照）走的是同一个闸**，但**必须留痕** ——
+      //   否则「滤掉了」与「本来就没采到」长得一样，而那正是这条回流闭环
+      //   能悄悄跑很久的原因。
+      //   ⚠️ 只对 `synthetic` 打日志：群聊 NPC 的 skip_profile 量很大，
+      //      一起打会把日志淹掉（本项目已因 96.6% QQ 噪声吃过一次亏）。
+      if (event.payload.synthetic) {
+        warnThrottled(
+          'realtime-synthetic',
+          `跳过学习：合成注入（${String(event.payload.synthetic)}）` +
+            ` —— 不算用户发言，不进画像/人格/嵌入`,
+        );
+      }
       this.eventStore.markProcessed(event.id, PROCESSED_KNOWLEDGE);
       return;
     }
@@ -99,6 +123,16 @@ export class RealtimeProcessor {
       } catch (err: any) {
         // Embedding failure is non-fatal — continue processing
         logger.warn(`[Realtime] embed failed (${event.id.slice(0, 24)}): ${err.message}`);
+      }
+    } else if (text) {
+      // ★ KI-15：向量库为 null 时**不再静默跳过**。
+      //   逐事件 warn 会刷屏（每条消息都走这里），所以首次必报 + 每 100 条补报累计 ——
+      //   「启动那一行 warn 不够」指的就是这种「跳过了多少条」说不清的状态。
+      skippedNoVectorStore++;
+      if (skippedNoVectorStore === 1 || skippedNoVectorStore % 100 === 0) {
+        logger.warn(
+          `[Realtime] 没有向量库：已跳过 ${skippedNoVectorStore} 条事件的嵌入（这些事件只进文本检索）`,
+        );
       }
     }
 

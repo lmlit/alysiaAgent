@@ -36,9 +36,27 @@ export const lifeApi = {
   companions: () => api.get<LifeCompanionsResponse>('/api/life/companions'),
 };
 
-// ── 画像 ──────────────────────────────────────────────
+// ── 画像 / 记忆纠正 ────────────────────────────────────
 export const profileApi = {
   get: () => api.get<ProfileResponse>('/api/profile'),
+  /**
+   * ★ 连**已作废**的事实一起取（2026-10-16，记忆纠正首版）。
+   *   纠正页需要看到"被作废的那条"，否则用户没法确认「旧事实真的失效了」。
+   *   ⚠️ 默认的 `get()` **不含**已作废的 —— 那是画像展示用的。
+   */
+  getAll: () => api.get<ProfileResponse>('/api/profile?includeSuperseded=1'),
+  /**
+   * ★ 纠正一条用户事实：旧的作废 + 写入新的。
+   *   `superseded=false` 表示**没找到旧事实**（不是失败）——旧文案可能已被改写过。
+   */
+  correctFact: (oldFact: string, newFact: string) =>
+    api.post<{ ok: boolean; superseded: boolean; added: boolean }>('/api/profile/facts/correct', {
+      oldFact,
+      newFact,
+    }),
+  /** ★ 让一条事实失效（`stillValid:false`）。`found=false` = 没找到这条。 */
+  confirmFact: (fact: string, stillValid: boolean) =>
+    api.post<{ ok: boolean; found: boolean }>('/api/profile/facts/confirm', { fact, stillValid }),
 };
 
 // ── 人格 ──────────────────────────────────────────────

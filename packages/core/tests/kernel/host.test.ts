@@ -165,6 +165,98 @@ describe('ModuleHost / 失败策略', () => {
   });
 });
 
+// ─────────────────────────────────────────────────────────────
+// ★ 第三批 · 模块回滚：**失败模块自己注册的资源必须被回收**
+//
+// 旧行为：`installOne()` 把 `ctx.effect()` 的 disposer 收集进局部 `effects`，
+// 但只在该模块 **apply 成功之后** 才 `installed.push({name, effects})`。
+// 于是**半个模块**抛错时那条记录从来没进登记表 ⇒ `rollback()` 只弹 `installed`，
+// **失败模块自己开的定时器 / 挂的监听永远留着**（一个"半启动"的模块在后台继续跑）。
+// ─────────────────────────────────────────────────────────────
+
+describe('ModuleHost / ★ 失败模块自身的资源回收（第三批）', () => {
+  /** 一个「初始化到一半抛错」的模块：先注册 effect，再炸 */
+  const halfModule = (trace: ReturnType<typeof makeTrace>, opts: { critical?: boolean } = {}): Module => ({
+    name: 'al:half',
+    inject: ['al:db'],
+    critical: opts.critical,
+    apply: (ctx) => {
+      trace.log.push('install:al:half');
+      ctx.effect(() => () => { trace.log.push('dispose:al:half#1'); });
+      ctx.effect(() => () => { trace.log.push('dispose:al:half#2'); });
+      throw new Error('half-apply boom');
+    },
+  });
+
+  it('★★ 主症：critical 模块到一半抛错 → 它注册的 effect 必须被回收（旧实现会泄漏）', async () => {
+    const trace = makeTrace();
+    const host = newHost();
+    host.use(dbModule(trace));
+    host.use(halfModule(trace));
+
+    await expect(host.start()).rejects.toThrow(/al:half" apply 失败/);
+
+    expect(trace.log, '失败模块自己注册的资源泄漏了（定时器/监听会在后台继续跑）')
+      .toContain('dispose:al:half#1');
+    expect(trace.log).toContain('dispose:al:half#2');
+    // 已装模块照旧要回滚
+    expect(trace.log).toContain('dispose:al:db');
+  });
+
+  it('★ 失败模块的清理是**逆序**的（与 stop 同一语义）', async () => {
+    const trace = makeTrace();
+    const host = newHost();
+    host.use(dbModule(trace));
+    host.use(halfModule(trace));
+
+    await expect(host.start()).rejects.toThrow();
+
+    const i1 = trace.log.indexOf('dispose:al:half#1');
+    const i2 = trace.log.indexOf('dispose:al:half#2');
+    expect(i1).toBeGreaterThan(-1);
+    expect(i2, 'effect 必须逆序清理（后注册的先清理）').toBeLessThan(i1);
+  });
+
+  it('★ critical:false 半途失败 → 它的资源也要回收（降级 ≠ 让半个模块继续跑），且 stop 不二次清理', async () => {
+    const trace = makeTrace();
+    const host = newHost();
+    host.use(dbModule(trace));
+    host.use(halfModule(trace, { critical: false }));
+
+    await host.start();   // 不中止整树
+
+    expect(trace.log, '降级模块的半个资源没被回收').toContain('dispose:al:half#1');
+    const before = trace.log.filter(l => l.startsWith('dispose:al:half#')).length;
+
+    await host.stop();
+
+    expect(
+      trace.log.filter(l => l.startsWith('dispose:al:half#')).length,
+      'stop 时被二次清理了（disposer 不该被跑两遍）',
+    ).toBe(before);
+  });
+
+  it('回归：apply 正常返回的模块**不受影响**（不在启动时就把它卸掉）', async () => {
+    const trace = makeTrace();
+    const host = newHost();
+    host.use(dbModule(trace));
+    host.use({
+      name: 'al:ok',
+      inject: ['al:db'],
+      apply: (ctx) => {
+        trace.log.push('install:al:ok');
+        ctx.effect(() => () => { trace.log.push('dispose:al:ok'); });
+      },
+    });
+
+    await host.start();
+    expect(trace.log).not.toContain('dispose:al:ok');
+
+    await host.stop();
+    expect(trace.log).toContain('dispose:al:ok');
+  });
+});
+
 describe('ModuleHost / 重复检测', () => {
   it('模块名重复 → use() 立刻抛错', () => {
     const host = newHost();

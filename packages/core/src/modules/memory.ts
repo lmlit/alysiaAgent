@@ -67,6 +67,16 @@ export const personaSeedModule: Module<PersonaSeedConfig> = {
     const memoryManager = ctx.get<MemoryManager>('al:memory')!;
     await seedPersona(memoryManager);
     await seedWorldbook(memoryManager);
+    // ★ 2026-10-16（KI-16）：**读路径不再回写默认值**，所以"人格曾被冲空"这件事
+    //   改由这里**显式**修复并留痕（`repairEmptyColumns()` 会 warn 被修的列名）。
+    //   放在 seed 之后：seed 可能刚建好行。
+    const fixedPersonaCols = memoryManager.repairPersonaDefaults();
+    if (fixedPersonaCols.length > 0) {
+      ctx.logger.warn(
+        `[al:persona-seed] 启动时修复了被冲空的人格列：${fixedPersonaCols.join(', ')}` +
+        `（读时兜底只影响内存，不再静默写回 —— 所以这里必须报出来）`,
+      );
+    }
     // 传 ctx.logger 而非模块级全局 logger —— 让本模块在隔离测试里可观测
     await loadRolePackages(memoryManager, config?.workspaceDir ?? process.cwd(), ctx.logger);
   },

@@ -2,6 +2,7 @@ import { readFileSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { logger } from '../utils/logger.js';
+import { warnThrottled } from '../utils/write-trace.js';
 import type { MemoryManager } from '../memory/MemoryManager.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -40,21 +41,41 @@ const FILE_META: Record<string, { content_type: 'text' | 'life_event' | 'image';
   'daily_life.md': { content_type: 'life_event', scope: 'both', priority: 8 },
 };
 
-/** Read a persona file, returns empty string if not found */
+/**
+ * 读一个角色文件；读不到返回空串，**但必须留痕**。
+ *
+ * ★ 2026-10-16（change: `fix-store-write-trace`，KI-5 剩余）：
+ *   这里原来是裸 catch —— 于是「`soul.md` 读不到」与「文件本来就是空的」
+ *   **完全同形**，而**人格核心静默缺失**正是本项目栽过的事故类型
+ *   （`fix-role-import-wipes-persona` 那次，`system_prompt` 被冲空同样无人知）。
+ *
+ *   仓库里 `PERSONA_FILES` 这 7 个文件都随包发布，因此任何读失败都是**真问题**，
+ *   不是"可选文件不存在"。热路径（每次组装 prompt）→ 按文件名限频。
+ */
 function readPersonaFile(filename: string): string {
   try {
     return readFileSync(resolve(PERSONA_DIR, filename), 'utf-8').trim();
-  } catch {
+  } catch (err: any) {
+    warnThrottled(
+      `persona-loader:${filename}`,
+      `[persona-loader] 读取角色文件失败，该段人格将**静默缺失**：${filename}` +
+      `（${err?.code ?? ''} ${err?.message ?? err}）`,
+    );
     return '';
   }
 }
 
 /** ★ 8-29 世界观底色（worldview-base-field）：统一底色字段——聊天与事件生成同一数据源。
- *  读 worldview.md；失败返回空串。 */
+ *  读 worldview.md；失败返回空串**但留痕**（同 `readPersonaFile`：静默缺失会伪装成"没有底色"）。 */
 export function readWorldviewBlock(): string {
   try {
     return readFileSync(resolve(PERSONA_DIR, 'worldview.md'), 'utf-8').trim();
-  } catch {
+  } catch (err: any) {
+    warnThrottled(
+      'persona-loader:worldview.md',
+      `[persona-loader] 读取世界观文件失败，底色块将**静默缺失**：worldview.md` +
+      `（${err?.code ?? ''} ${err?.message ?? err}）`,
+    );
     return '';
   }
 }
@@ -62,7 +83,12 @@ export function readWorldviewBlock(): string {
 function readWorldbookFile(filename: string): string {
   try {
     return readFileSync(resolve(PERSONA_DIR, 'worldbook', filename), 'utf-8').trim();
-  } catch {
+  } catch (err: any) {
+    warnThrottled(
+      `persona-loader:worldbook/${filename}`,
+      `[persona-loader] 读取世界书文件失败，该文件条目将**静默缺失**：worldbook/${filename}` +
+      `（${err?.code ?? ''} ${err?.message ?? err}）`,
+    );
     return '';
   }
 }

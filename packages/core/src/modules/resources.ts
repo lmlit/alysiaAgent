@@ -20,8 +20,15 @@ export interface DbConfig {
 /**
  * better-sqlite3（WAL）。对应 `index.ts:103-106`。
  *
- * ★ 不注册清理器（不 close）——见 change proposal 决策 2：
- *   现状 `stop()` 不关 DB，本 change 保持行为不变，关闭留作独立 change。
+ * ★ 2026-10-16（change: `unify-core-shutdown` 的落地）：**停机时关掉句柄**。
+ *
+ * 顺序**由内核保证、不需要在这里排**：`al:db` 是**第一个装**的模块，
+ * 而卸载是**严格逆序** ⇒ 它**最后一个卸**。此刻 `al:memory` / `al:tools` /
+ * `al:commands` / 各 processor 都已卸完，不会再有它们发起的写入。
+ *
+ * ⚠️ **这是行为变更**：`stop()` 之后任何写入/读取都会**抛错**
+ * （better-sqlite3：「The database connection is not open」）而不是静默成功 ——
+ * 这正是我们要的「关太早必须响亮」，但调用方若假设「stop 之后还能用」就会开始失败。
  */
 export const dbModule: Module<DbConfig> = {
   name: 'al:db',
@@ -33,6 +40,13 @@ export const dbModule: Module<DbConfig> = {
     db.pragma('journal_mode = WAL');
     initializeDatabase(db);
     ctx.provide('al:db', db);
+
+    // 不 catch：关闭失败交给内核的统一清理路径（`disposeEntry` 会 logger.error
+    // 并继续清理其余模块），避免这里再长出一套错误语义。
+    ctx.effect(() => () => {
+      db.close();
+      ctx.logger.info('[al:db] 已关闭 SQLite 句柄（停机）');
+    }, 'al:db.close');
   },
 };
 
@@ -63,6 +77,15 @@ export const vectorModule: Module<VectorConfig> = {
       const store = new LanceDBStore(config.dir, config.table, config.dimension);
       await store.initialize();
       ctx.provide('al:vector', store);
+      // ★ 2026-10-16（unify-core-shutdown）：停机时释放句柄（只在**真的建起来**时注册，
+      //   降级路径给的是 `null`，没有东西可关）。
+      //   ⚠️ LanceDB 是 napi 绑定，**没有确定性释放**（不像 better-sqlite3 的 `close()`）；
+      //      `LanceDBStore.close()` 只能放掉本包装持有的引用。Windows 上目录能否立刻删除
+      //      **未在本机验证**（需真实 e2e）——见该方法的注释。
+      ctx.effect(() => () => {
+        store.close();
+        ctx.logger.info('[al:vector] 已释放 LanceDB 句柄（停机，尽力而为）');
+      }, 'al:vector.close');
       ctx.logger.info('LanceDB vector store ready');
     } catch (err: any) {
       ctx.logger.warn(`LanceDB unavailable, using text search fallback: ${err.message}`);

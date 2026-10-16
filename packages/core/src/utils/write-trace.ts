@@ -29,3 +29,29 @@ export function traceZeroRows(tag: string, changes: number, context?: string): v
     `[WriteTrace] ${tag} 命中 0 行${context ? ` — ${context}` : ''}（观测中，勿据此报错；决策见 KI-11）`,
   );
 }
+
+/**
+ * 「前 N 次喊、之后静默」的 warn —— 给**热路径**上的失败用。
+ *
+ * ★ 2026-10-16（change: `fix-store-write-trace`，KI-5 剩余）：
+ *   KI-5 的方向是「能改探测式的改探测式，**改不了的至少喊一次**」。
+ *   但有些点在**每轮对话**上跑（`PromptAssembler` 组装、生活衔接块），
+ *   每次失败都喊会把日志淹掉——本项目已经因为日志被淹吃过一次亏
+ *   （`add-ops-health-report` 的前置就是「96.6% 是 QQ 噪声」）。
+ *
+ *   所以：喊够 `limit` 次就静默，但**事件本身仍在重试**（不缓存失败结果）。
+ *   与 `AlysiaClient.noteFailure` 同款思路。
+ */
+const throttledCounts = new Map<string, number>();
+
+export function warnThrottled(tag: string, message: string, limit = 3): void {
+  const n = (throttledCounts.get(tag) ?? 0) + 1;
+  throttledCounts.set(tag, n);
+  if (n > limit) return;
+  logger.warn(n === limit ? `${message}（同类失败此后静默）` : message);
+}
+
+/** 仅供测试：清掉限频计数，避免用例间互相影响 */
+export function __resetThrottledWarnings(): void {
+  throttledCounts.clear();
+}

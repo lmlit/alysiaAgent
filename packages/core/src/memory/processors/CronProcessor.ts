@@ -96,8 +96,10 @@ export class CronProcessor {
           this.knowledgeStore.archive(doc.id);
         }
       }
-    } catch {
-      // Cleanup failure is non-fatal
+    } catch (err: any) {
+      // ★ KI-5：原来是裸 catch。后果是「90 天该归档的文档一个没归档」，
+      //   而日志表现为「没有需要归档的文档」—— 两种完全不同的世界长得一样。
+      logger.warn(`[Cron] 知识库归档失败（本轮一个都没归档）: ${err?.message ?? err}`);
     }
   }
 }

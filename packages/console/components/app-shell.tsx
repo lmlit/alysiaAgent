@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import type { LucideIcon } from 'lucide-react'
 import {
+  Brain,
   Code2,
   LayoutDashboard,
   MessageCircleHeart,
@@ -42,6 +43,9 @@ const nav: NavItem[] = [
   //   人格与记忆的通道见 openspec/specs/dsh-adapter/spec.md（另一件事）。
   { href: '/code', label: '编程模式', icon: Code2 },
   { href: '/life', label: '我的生活', icon: Sparkles },
+  // ★ 记忆纠正（2026-10-16）：看事实 + 改事实。与「人格」分开 ——
+  //   那页讲的是**她是谁**（tone/speech/emotional），这页是**她记着什么**。
+  { href: '/memory', label: '记忆', icon: Brain },
   { href: '/personality', label: '人格', icon: Waypoints },
   { href: '/settings', label: '设置', icon: Settings },
 ]

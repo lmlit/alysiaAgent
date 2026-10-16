@@ -187,12 +187,26 @@ export class ModuleHost {
     try {
       await module.apply(ctx, this.configs.get(module.name));
     } catch (err) {
+      // ★ 第三批（2026-10-16）· 模块回滚：**先把失败模块自己建出来的东西收掉**。
+      //
+      //   它已经注册的 effect（定时器 / 监听 / 子资源）与「这个模块启动成功了吗」无关 ——
+      //   半个模块的东西**不该继续在后台跑**。
+      //   旧实现直接 throw，而 `installed.push(...)` 在 apply **成功之后**才执行，
+      //   所以这条记录从来没进登记表 ⇒ `rollback()` 只弹登记表、收不到它
+      //   ⇒ **失败模块自己开的定时器永远留着**（本项目 KI-6 记的就是同一类"没人回收"）。
+      const owned = effects.length;
+      await this.disposeEntry({ name: module.name, effects });
+      if (owned > 0) {
+        this.logger.warn(`${label} 半途失败，已回收它自己创建的 ${owned} 项资源（定时器/监听等）`);
+      }
       if (module.critical === false) {
         this.logger.error(`${label} apply 失败（critical:false，跳过，不中止整树）：`, err);
         // ★ 仍然登记它声明的服务（值为 undefined），让依赖方拿到"降级值"而不是整体中止。
         //   这正是 alysia 现有语义：LanceDB 失败 → vectorStore = null → 文本检索兜底。
         this.registerDegraded(module);
-        this.installed.push({ name: module.name, effects });
+        // effects 已在上面回收 ⇒ 用**空数组**登记，避免 stop/rollback 时二次清理
+        // （disposer 不保证幂等，跑两遍是 bug）。
+        this.installed.push({ name: module.name, effects: [] });
         return;
       }
       throw new Error(`${label} apply 失败：${err instanceof Error ? err.message : String(err)}`, { cause: err });

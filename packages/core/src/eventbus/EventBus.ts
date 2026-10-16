@@ -25,6 +25,17 @@ export class EventBus {
   }
 
   /**
+   * ★ add-platforms-endpoint（2026-10-16）：已注册的平台 scope **只读快照**。
+   *
+   * 返回 `{ name, scheduler }` 而不是只给名字：调用方（`getPlatformStatus()`）要能区分
+   * 「用 core 默认调度器」与「传了专属调度器」，而那个判断**只有这里知道**
+   *（`registerPlatform(name, scheduler?)` 里 `scheduler ?? this.scheduler` 的兜底发生在本类之外）。
+   */
+  listSchedulers(): Array<{ name: string; scheduler: PipelineScheduler }> {
+    return [...this.schedulerMap.entries()].map(([name, scheduler]) => ({ name, scheduler }));
+  }
+
+  /**
    * @param opts.priority 插队（unshift 到队首）——Coalescer flush 的合并事件用，
    *   优先于排队中的其他消息处理（不乱序、不延迟）
    */

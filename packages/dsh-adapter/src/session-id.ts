@@ -17,16 +17,30 @@
 export const DSH_SESSION_PREFIX = 'dsh:';
 
 /**
- * 取 dsh 会话 id。
+ * 取 dsh 会话 id；**取不到返回 `null`**，不再是 `'unknown'`。
  *
  * `session/event` 的第一个参数是 `Session` 实例（dsh 的 `callbackArgs = [this, event]`），
  * 它自带 `id` getter（读 `header.id`）。这里对两种形状都容错——
- * 本插件不控制 dsh 的实现，宁可退化到 `unknown` 也不要抛。
+ * 本插件不控制 dsh 的实现。
+ *
+ * ★★ 2026-10-16 行为变更（change: `fix-dsh-ingest-and-settlement`，契约 7；KI-23）：
+ *   原先取不到时返回**字面量** `'unknown'`（注释自陈「宁可退化到 unknown 也不要抛」），
+ *   调用方照常继续 ⇒ 多个**不同真实会话**的事件、摘要、画像全部落进 `dsh:unknown` 一个桶：
+ *     ① 跨会话内容混进同一份摘要与画像（等价于已修掉的「子 agent 污染」，但更难发现）；
+ *     ② `summaryAnchor()` 会拿该桶的**最新摘要**当锚点 ⇒ 窗口跨会话错乱；
+ *     ③ 子 agent 去重集也按 sid 去重 ⇒ 全塌成一条日志。
+ *
+ *   而且它与「子 agent 会话」的处理**不一致**：那一类 **fail closed**（跳过），
+ *   这一类却 **fail open**（照常写）。dsh 已换过一次插件机制，`Session` 形状一旦变化，
+ *   这条退化路径就会**静默开启**。
+ *
+ *   现在**没有 id 就是「没有 id」**：调用方必须显式处理 `null`（不回传、不结算 + 限频诊断）。
+ *   **禁止**临时生成随机 id 掩盖上游契约问题。
  */
-export function sessionIdOf(session: unknown): string {
+export function sessionIdOf(session: unknown): string | null {
   const s = session as { id?: unknown; header?: { id?: unknown } } | null | undefined;
   const id = s?.id ?? s?.header?.id;
-  return typeof id === 'string' && id ? id : 'unknown';
+  return typeof id === 'string' && id ? id : null;
 }
 
 /** 拼 alysia 侧的会话 id（回传与结算都用它） */

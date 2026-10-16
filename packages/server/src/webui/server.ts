@@ -312,8 +312,74 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
     return { context, retrieved: read.retrieved };
   });
 
+  // ── 平台 ──────────────────────────────────────────
+  /**
+   * ★ add-platforms-endpoint（2026-10-16）：平台接入状态。
+   *
+   * 契约见 `docs/Web-API-Design.md` §3.4（`AlysiaCore.getPlatformStatus()`）。
+   * ⚠️ 返回的是「**哪些平台 scope 已接到事件总线**」，**不是**连接健康度 ——
+   *   后者要适配器先上报心跳，见 `AlysiaCore.getPlatformStatus()` 的注释。
+   */
+  app.get('/api/platforms', async () => core.getPlatformStatus());
+
   // ── 画像 ──────────────────────────────────────────
-  app.get('/api/profile', async () => core.memoryManager.getProfileSnapshot());
+  /**
+   * 画像快照。
+   *
+   * ★ `?includeSuperseded=1` 时**连已作废的事实一起返回**（2026-10-16，记忆纠正首版）：
+   *   纠正页需要看到"被作废的"那条 —— 否则用户没法确认「旧事实真的失效了」。
+   *   默认仍过滤（画像展示只要"她现在相信的"）。
+   */
+  app.get('/api/profile', async (req) => {
+    const includeSuperseded = String((req.query as any)?.includeSuperseded ?? '') === '1';
+    return core.memoryManager.getProfileSnapshot({ includeSuperseded });
+  });
+
+  /**
+   * ★ 纠正一条用户事实：旧的作废 + 写入新的（2026-10-16，记忆纠正首版）。
+   *
+   * 为什么要有这个端点（而不是让前端调两次）：`correctProfileFact` 是
+   * **先失效旧、再写新**的一步语义，前端拆成两次会在中间态留下"两条都没有"或
+   * "两条都在"的窗口，而"两条都在"正是自相矛盾的来源（见 core 里的注释）。
+   */
+  app.post('/api/profile/facts/correct', async (req, reply) => {
+    const { oldFact, newFact } = (req.body ?? {}) as { oldFact?: unknown; newFact?: unknown };
+    if (typeof oldFact !== 'string' || !oldFact.trim()) {
+      return reply.code(400).send({ ok: false, error: 'oldFact 必须是非空字符串' });
+    }
+    if (typeof newFact !== 'string' || !newFact.trim()) {
+      return reply.code(400).send({ ok: false, error: 'newFact 必须是非空字符串' });
+    }
+    try {
+      const result = core.memoryManager.correctProfileFact(oldFact, newFact);
+      logger.info(`[profile] 纠正事实 superseded=${result.superseded} added=${result.added}（${newFact.slice(0, 30)}）`);
+      return { ok: true, ...result };
+    } catch (err: any) {
+      // 不吞：纠正失败要让调用方看见（含"新事实为空"这类调用错误）
+      logger.warn(`[profile] 纠正事实失败：${err?.message ?? err}`);
+      return reply.code(400).send({ ok: false, error: err?.message ?? String(err) });
+    }
+  });
+
+  /**
+   * ★ 让一条事实失效（不给替换）。`stillValid: true` 则相反 —— 按分类续期。
+   *
+   * 这条路由此前**不存在**：`MemoryManager.confirmProfileFact` 早就实现了，
+   * 但全仓没有调用方 ⇒ 能力一直不可达（`/api/profile` 只能看、不能改）。
+   */
+  app.post('/api/profile/facts/confirm', async (req, reply) => {
+    const { fact, stillValid } = (req.body ?? {}) as { fact?: unknown; stillValid?: unknown };
+    if (typeof fact !== 'string' || !fact.trim()) {
+      return reply.code(400).send({ ok: false, error: 'fact 必须是非空字符串' });
+    }
+    if (typeof stillValid !== 'boolean') {
+      return reply.code(400).send({ ok: false, error: 'stillValid 必须是布尔值' });
+    }
+    const ok = core.memoryManager.confirmProfileFact(fact, stillValid);
+    logger.info(`[profile] confirm fact stillValid=${stillValid} ok=${ok}（${fact.slice(0, 30)}）`);
+    // ok=false = 没找到这条事实；**这与"操作失败"不同**，如实返回让前端能区分
+    return { ok, found: ok };
+  });
 
   // ── 人格 ──────────────────────────────────────────
   app.get('/api/persona', async () => core.memoryManager.getPersonaSnapshot());

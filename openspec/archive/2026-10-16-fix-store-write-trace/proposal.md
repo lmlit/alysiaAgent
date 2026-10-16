@@ -2,10 +2,10 @@
 
 ## 元信息
 
-- **日期**: 2026-10-02
+- **日期**: 2026-10-02（**2026-10-16 全部 7 项落地并归档**）
 - **类型**: FIX（存储写入可观测性第二刀）
-- **状态**: pending（**登记在案**；第一刀与观测已落地，本刀等时机）
-- **影响 spec**: `memory-system`（§4.7 存储写入留痕契约）
+- **状态**: **archived**（7 项全部实现；合并记录见 `spec.md`）
+- **影响 spec**: `memory-system` **§4.7 新增契约 4～10**；`dsh-adapter` §2.5.1 契约 9（口径互引）
 - **前置**：`fix-migration-and-logger-silent-failure`（第一刀，已落地）、`observe-zero-row-writes`（观测，已落地）
 
 ## 这条要解决什么
@@ -17,13 +17,13 @@
 
 | # | 问题 | 危险度 |
 |---|---|---|
-| **KI-12** | `EventStore.insert` 是 `INSERT OR REPLACE`，**列单不含 `archived`**（而它是 `DEFAULT 0`）→ 同 id 重投（QQ 重连/重试）**静默复活软删除会话、把已摘要事件 `processed` 归 0、清掉 LLM 打的 `importance`** | 🔴 |
-| **KI-13** | 知识库「**半截文档 + hash 去重锁死**」：doc 与 chunk **不在一个事务里**，中途失败留下 `status='active'` + `chunk_count` 虚高的壳；重试被 `getByHash` 命中 → 返回**从未兑现的块数**并宣布"已导入 N 块"，**永不自愈** | 🔴 |
-| **KI-14** | `LanceDBStore.insert` **永不抛** → 上游所有 `try/catch` 是**死代码**；**2026-09-27 那次事故的同形代码今天仍然活着**（`scripts/backfill-life-importance.ts:118-138` 的 `done++` 计的是"没抛异常"） | 🟠 |
-| **KI-15** | `vectorStore` 为 null 时**静默跳过嵌入**（10 条路径）。最危险是 `SessionEndProcessor:160` —— **计数只数摘要、不数向量**，`archived N/M` 照打全绿；删除路径同理 → **孤儿向量继续被召回** | 🟠 |
-| **KI-16** | `PersonaStore.get()` 的「**读时回写默认值**」还在：把"人格被冲成空"整形成一组合法默认值（与 seed 逐字相同），**骗过数据层也骗过人工巡检**，且无日志 | 🟠 |
-| **KI-17** | `summary_status` 默认 `'ok'`（潜伏）；`updateSummaryResult` 0 行更新仍打「补处理成功」 | 🟡 |
-| **KI-5 剩余** | 9 处裸 catch：`CronProcessor:99` / `PromptAssembler:158` / `PersonaStore:33` / `LanceDBStore:59,96,160` / `MemoryManager:188,197,392,418` | 🟠 |
+| **KI-12** ✅ 已实现（2026-10-16） | `EventStore.insert` 是 `INSERT OR REPLACE`，**列单不含 `archived`**（而它是 `DEFAULT 0`）→ 同 id 重投（QQ 重连/重试）**静默复活软删除会话、把已摘要事件 `processed` 归 0、清掉 LLM 打的 `importance`** | 🔴 |
+| **KI-13** ✅ 已实现（2026-10-16） | 知识库「**半截文档 + hash 去重锁死**」：doc 与 chunk **不在一个事务里**，中途失败留下 `status='active'` + `chunk_count` 虚高的壳；重试被 `getByHash` 命中 → 返回**从未兑现的块数**并宣布"已导入 N 块"，**永不自愈** | 🔴 |
+| **KI-14** ✅ 已实现（2026-10-16） | `LanceDBStore.insert` **永不抛** → 上游所有 `try/catch` 是**死代码**；**2026-09-27 那次事故的同形代码今天仍然活着**（`scripts/backfill-life-importance.ts:118-138` 的 `done++` 计的是"没抛异常"） | 🟠 |
+| **KI-15** ✅ 已实现（2026-10-16） | `vectorStore` 为 null 时**静默跳过嵌入**（10 条路径）。最危险是 `SessionEndProcessor:160` —— **计数只数摘要、不数向量**，`archived N/M` 照打全绿；删除路径同理 → **孤儿向量继续被召回** | 🟠 |
+| **KI-16** ✅ 已实现（2026-10-16） | `PersonaStore.get()` 的「**读时回写默认值**」还在：把"人格被冲成空"整形成一组合法默认值（与 seed 逐字相同），**骗过数据层也骗过人工巡检**，且无日志 | 🟠 |
+| **KI-17** ✅ 已实现（2026-10-16） | `summary_status` 默认 `'ok'`（潜伏）；`updateSummaryResult` 0 行更新仍打「补处理成功」 | 🟡 |
+| **KI-5 剩余** ⚠️ 8/9 已实现（2026-10-16） | 9 处裸 catch：`CronProcessor:99` / `PromptAssembler:158` / `PersonaStore:33` / `LanceDBStore:59,96,160` / `MemoryManager:188,197,392,418`。★ **已销 8 处**；`server/src/life.ts` 的 `tick` catch **未动**（它记了 error，只是**粒度太粗**，属日志结构问题非静默吞错）。★ 另核查更正一处**落点**：`getWorldviewBlock` 那条描述不成立（callee 永不抛、`''` 是 falsy 故仍会重试），真正的吞错在 `persona/loader.ts` 的三个读函数，已补 warn | 🟠 |
 
 ## 为什么是第二刀（为什么不趁第一刀一起做）
 

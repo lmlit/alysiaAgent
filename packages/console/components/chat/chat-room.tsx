@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Archive,
   ChevronDown,
@@ -12,8 +12,10 @@ import {
   Trash2,
 } from 'lucide-react'
 import { XilianAvatar } from '@/components/xilian-avatar'
+import { MessageContent } from '@/components/chat/message-content'
 import { cn } from '@/lib/utils'
-import { chatApi, sessionApi } from '@/lib/api/modules'
+import { chatApi, sessionApi, stickerApi } from '@/lib/api/modules'
+import { useApi } from '@/lib/api/use-api'
 import { StreamAbortedError, streamChat } from '@/lib/api/stream'
 import type { SessionSummary } from '@/lib/api/types'
 
@@ -84,6 +86,18 @@ export function ChatRoom() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [historyLoading, setHistoryLoading] = useState(false)
+
+  // ★ change: improve-sticker-system —— 表情包名字清单，**整页只取一次**。
+  //   放在气泡里各取一次会变成"一条消息一个请求"（65 张图的清单 × N 条消息）。
+  //   拿不到就传 undefined ⇒ 渲染层不做"未知名字"判断，直接尝试加载（失败再回退），
+  //   而不是把所有表情包都误判成"服务端没有这个"。
+  const { data: stickerData } = useApi(() => stickerApi.list())
+  const stickerNames = useMemo(
+    () => (stickerData ? new Set(stickerData.stickers.map((s) => s.name)) : undefined),
+    [stickerData],
+  )
+  /** 流式只影响**最后一条**——历史消息里的半截标记早就不该被特殊对待了 */
+  const lastMessageId = messages.length ? messages[messages.length - 1].id : ''
 
   const abortRef = useRef<AbortController | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
@@ -415,6 +429,8 @@ export function ChatRoom() {
                 msg={m}
                 open={!!openThoughts[m.id]}
                 onToggle={() => setOpenThoughts((p) => ({ ...p, [m.id]: !p[m.id] }))}
+                stickerNames={stickerNames}
+                messageStreaming={streaming && m.id === lastMessageId}
               />
             ))}
             {showThinkingBar && <ThinkingBar line={thinkingLine} />}
@@ -516,12 +532,19 @@ function MessageBubble({
   msg,
   open,
   onToggle,
+  stickerNames,
+  messageStreaming = false,
 }: {
   msg: ChatMsg
   open: boolean
   onToggle: () => void
+  stickerNames?: Set<string>
+  /** 这条消息**正在流式接收**（只有最后一条可能是 true） */
+  messageStreaming?: boolean
 }) {
   if (msg.role === 'user') {
+    // ★ 用户气泡**不渲染** `[表情包:…]`：这是她发消息用的协议，
+    //   用户真打出这串字时，应当原样看到他打的东西（change: improve-sticker-system）
     return (
       <div className="flex justify-end">
         <div className="max-w-[78%] whitespace-pre-wrap rounded-3xl rounded-br-lg bg-primary px-4 py-2.5 text-sm leading-relaxed text-primary-foreground shadow-sm">
@@ -550,7 +573,11 @@ function MessageBubble({
         )}
         {msg.content && (
           <div className="whitespace-pre-wrap rounded-3xl rounded-bl-lg border border-border bg-card px-4 py-2.5 text-sm leading-relaxed">
-            {msg.content}
+            <MessageContent
+              text={msg.content}
+              streaming={messageStreaming}
+              stickerNames={stickerNames}
+            />
           </div>
         )}
       </div>

@@ -5,6 +5,7 @@ import { EventStore } from './stores/EventStore.js';
 import { ProfileStore } from './stores/ProfileStore.js';
 import { PersonaStore } from './stores/PersonaStore.js';
 import { ConversationStore } from './stores/ConversationStore.js';
+import type { VectorWriteOutcome } from './stores/ConversationStore.js';
 import { KnowledgeStore } from './stores/KnowledgeStore.js';
 import { WorldbookStore } from './stores/WorldbookStore.js';
 import { CodeContextStore } from './stores/CodeContextStore.js';
@@ -21,10 +22,11 @@ import { CronProcessor } from './processors/CronProcessor.js';
 import { PromptAssembler } from './PromptAssembler.js';
 import { filterPII } from './PIIFilter.js';
 import { logger } from '../utils/logger.js';
+import { warnThrottled } from '../utils/write-trace.js';
 import { formatLocalTime, localDateKey, localDateKeyFromISO } from '../utils/time.js';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { createHash } from 'crypto';
-import type { MemoryEvent, MemoryReadRequest, MemoryReadResult, MemoryConfig, KnowledgeDoc, SearchResult, WorldbookEntry } from './types.js';
+import type { MemoryEvent, MemoryReadRequest, MemoryReadResult, MemoryConfig, KnowledgeDoc, SearchResult, WorldbookEntry, ProfileFact } from './types.js';
 import { DEFAULT_MEMORY_CONFIG, FACT_CONFIRM_WINDOW_MS } from './types.js';
 import type { IVectorStore } from './interfaces/IVectorStore.js';
 import type { IEmbedService } from './interfaces/IEmbedService.js';
@@ -35,6 +37,23 @@ import type { SamplingConfig, SamplingSlot } from '../provider/sampling.js';
 // ── 知识库分块参数（参考 AstrBot：chunk 512 / overlap 50）──
 const KB_CHUNK_SIZE = 500;
 const KB_CHUNK_OVERLAP = 50;
+
+/**
+ * 世界书**采样**冷却下界（★ 2026-10-16，change: `worldbook-sampling-cooldown`）。
+ *
+ * 为什么不能直接用条目自带的 `cooldown_sec`（默认 **300 秒**）：
+ * 事件生成器是**每小时** tick（`server/src/life.ts` 的 `next_in_hours` 间隔 0.5~8h，默认 1h）。
+ * 5 分钟的冷却在小时级节奏上**等于没有** —— 下一轮照样抽到同一条，
+ * 而契约（`ai-life-system` §6/§7）声明的正是「cooldown 过滤」。
+ *
+ * 为什么取 6 小时：生成器绝大多数间隔 ≤ 6h（默认 1h）⇒ 6h 足以保证
+ * 「刚用过的那条不会在紧接着的下一轮又被递给她」。
+ *
+ * ⚠️ 与条目 `cooldown_sec` 的关系是 **max**（见 `getWorldbookSample` 的 SQL）：
+ * 条目显式声明了更长的冷却时，两个路径都尊重它 ——
+ * 这样 `bumpWorldbookHit()` 注释里那句「与对话触发**共用冷却**」才是真的。
+ */
+const WORLDBOOK_SAMPLE_COOLDOWN_MS = 6 * 3600 * 1000;
 
 // ★ 8-14 内容自进化校验器 prompt：判定该不该写入持久设定库。
 //  只给条目本身（不给对话上下文，防上下文污染判断）；输出 JSON 供解析。
@@ -185,7 +204,11 @@ export class MemoryManager {
           this.tokenStats.set(k, v as TokenStats);
         }
       }
-    } catch { /* ignore load errors */ }
+    } catch (err: any) {
+      // ★ KI-5：原先裸 catch。token 统计文件坏掉会让 `/api/stats` 从 0 开始，
+      //   而"文件坏了"与"从来没有过统计"在接口上完全同形。
+      logger.warn(`[Memory] token 统计**读取**失败（本次从 0 开始）: ${err?.message ?? err}`);
+    }
   }
 
   private saveTokenStats(): void {
@@ -194,7 +217,10 @@ export class MemoryManager {
       this.tokenStatsSaveTimer = null;
       try {
         writeFileSync(TOKEN_STATS_FILE, JSON.stringify(Object.fromEntries(this.tokenStats)));
-      } catch { /* ignore save errors */ }
+      } catch (err: any) {
+        // ★ KI-5：写入失败被吞 ⇒ token 统计**静默停摆**（喂 `/api/stats`）。
+        logger.warn(`[Memory] token 统计**写入**失败（统计已停摆）: ${err?.message ?? err}`);
+      }
     }, 5000);
   }
 
@@ -389,10 +415,18 @@ export class MemoryManager {
     if (!this._worldviewBlock) {
       try {
         this._worldviewBlock = readWorldviewBlock();
-      } catch {
-        this._worldviewBlock = '';
+      } catch (err: any) {
+        // ★ KI-5 点名的那一处：原实现 `catch { this._worldviewBlock = '' }` ——
+        //   把失败**永久缓存成空**：此后每轮 prompt 都少一段，而原因再也拿不回来
+        //   （下次调用因为已经"有值"了，直接返回空串，连重试都没有）。
+        //   现在：喊（限频，因为这是每轮调用的热路径）+ **不缓存**，下次调用会重试。
+        warnThrottled(
+          'MemoryManager.worldview',
+          `[MemoryManager] 读取世界观文件失败（本轮不注入；**不缓存失败**，下次重试）: ${err?.message ?? err}`,
+        );
       }
     }
+    if (!this._worldviewBlock) return '';
     if (section === 'all') return this._worldviewBlock;
     // 按 `## ` 分节提取（节内含使用引导行）
     const sectionOf = (title: string): string => {
@@ -415,7 +449,13 @@ export class MemoryManager {
       if (events.length === 0) return '';
       const last = events[events.length - 1];
       return `你刚才在: ${last.content.slice(0, 60)}（${formatLocalTime(new Date(last.createdAt)).slice(-5)}）`;
-    } catch {
+    } catch (err: any) {
+      // ★ KI-5：原先裸 catch + 返回空串 ⇒「生活衔接块没了」和「她最近确实没有生活事件」
+      //   在 prompt 上完全同形。热路径（每条用户消息）→ 限频。
+      warnThrottled(
+        'MemoryManager.lifeContinuity',
+        `[MemoryManager] 生活衔接块构建失败（本轮不注入）: ${err?.message ?? err}`,
+      );
       return '';
     }
   }
@@ -567,18 +607,50 @@ export class MemoryManager {
    *    角色生活化条目优先于设定条目；limit 参数兼容旧调用（按分层比例分配）。
    *  ★ 8-27 digest 简介优先（worldbook-digest-summary）：text 条目 content 字段 =
    *    digest（LLM 生成的 120-150 字角色简介，scripts/digest-worldbook.ts 批量生成）
-   *    ?? 截断正文 200 字（无 digest 兜底，如新导入条目） */
+   *    ?? 截断正文 200 字（无 digest 兜底，如新导入条目）
+   *
+   *  ★ 2026-10-16 冷却过滤（change: `worldbook-sampling-cooldown`）：契约
+   *    （`ai-life-system` §6/§7）声明「priority 加权 + **cooldown 过滤**」，
+   *    但**两条路径不一致** —— 对话触发（`WorldbookStore.match`）**有**冷却，
+   *    而这里（事件生成器采样）此前**只有 `ORDER BY RANDOM()`，从不看 `last_triggered`**。
+   *    而 `bumpWorldbookHit()` 的注释早已写着「与对话触发**共用冷却**」
+   *    ⇒ 属**声明了没接**（写入侧记了 `last_triggered`，读取侧不看）。
+   *
+   *    现在的判据（**两条 SQL 都要**，别只改一条）：
+   *      `last_triggered` 为空 → 可选；
+   *      否则要求 `now − last_triggered > max(采样窗口, 条目 cooldown_sec)`。
+   *
+   *    ⚠️ 两个实现细节：
+   *      ① 用 `NULLIF(last_triggered,'')` 兜空串 —— 否则 `julianday('')` 为 NULL，
+   *         比较恒为假，那条会被**永久**排除（比"忘了冷却"更难查）；
+   *      ② `julianday` 能正确解析 `recordTrigger` 写入的 `toISOString()`（带 Z）——
+   *         本仓 SQLite 3.53.2 实测过。若将来换了存储格式，这里会静默 fail-closed
+   *         （全部排除），**改动存储格式时必须回来看这一处**。
+   */
   getWorldbookSample(limit: number = 5): Array<{ id: string; content: string }> {
     const role = this.getActiveRoleId();
     // 分层：life_event 占 3/5，text 占 2/5（按 limit 等比，最小各 1）
     const lifeCount = Math.max(1, Math.round(limit * 3 / 5));
     const textCount = Math.max(1, limit - lifeCount);
+
+    // 冷却条件（两条 SQL 共用同一段，避免只有一条被改到）
+    const cd = [
+      "AND (last_triggered IS NULL OR NULLIF(last_triggered,'') = ''",
+      '     OR (julianday(?) - julianday(last_triggered)) * 86400.0 > MAX(?, cooldown_sec))',
+    ].join(' ');
+    const nowIso = new Date().toISOString();
+    const cdSec = WORLDBOOK_SAMPLE_COOLDOWN_MS / 1000;
+
     const lifeRows = this.db.prepare(
-      "SELECT id, content FROM worldbook_entries WHERE role = ? AND scope IN ('chat', 'both') AND content_type = 'life_event' ORDER BY RANDOM() LIMIT ?"
-    ).all(role, lifeCount) as Array<{ id: string; content: string }>;
+      `SELECT id, content FROM worldbook_entries
+        WHERE role = ? AND scope IN ('chat', 'both') AND content_type = 'life_event' ${cd}
+        ORDER BY RANDOM() LIMIT ?`
+    ).all(role, nowIso, cdSec, lifeCount) as Array<{ id: string; content: string }>;
     const textRows = this.db.prepare(
-      "SELECT id, content, digest FROM worldbook_entries WHERE role = ? AND scope IN ('chat', 'both') AND content_type = 'text' ORDER BY RANDOM() LIMIT ?"
-    ).all(role, textCount) as Array<{ id: string; content: string; digest: string | null }>;
+      `SELECT id, content, digest FROM worldbook_entries
+        WHERE role = ? AND scope IN ('chat', 'both') AND content_type = 'text' ${cd}
+        ORDER BY RANDOM() LIMIT ?`
+    ).all(role, nowIso, cdSec, textCount) as Array<{ id: string; content: string; digest: string | null }>;
     return [
       ...lifeRows.map(r => ({ id: r.id, content: r.content.slice(0, 200) })),
       ...textRows.map(r => {
@@ -588,7 +660,9 @@ export class MemoryManager {
     ];
   }
 
-  /** ★ 世界书命中统计（spec §7 ②）：事件引用条目 → hit_count+1 + last_triggered（与对话触发共用冷却） */
+  /** ★ 世界书命中统计（spec §7 ②）：事件引用条目 → hit_count+1 + last_triggered（与对话触发共用冷却）
+   *  ⚠️ 2026-10-16 起「共用冷却」才**真的**成立：此前这里记了 `last_triggered`，
+   *     而 `getWorldbookSample` 不看它（change: `worldbook-sampling-cooldown`）。 */
   bumpWorldbookHit(id: string): void {
     this.worldbookStore.recordTrigger(id);
   }
@@ -1046,7 +1120,7 @@ export class MemoryManager {
   }
 
   /**
-   * 会话摘要的窗口锚点 = 该会话**最新一条摘要的 ended_at**；无历史摘要 → 24h 前。
+   * 会话摘要的窗口锚点 = 该会话**最新一条摘要的 ended_at**；无历史摘要 → 见下。
    *
    * ★ 2026-10-11（fix-session-end-window）：`MemoryManager` 有三个 SessionEnd 入口
    *   （`onSessionEnd` / `extractProfile` / `archiveStaleSessions`），**锚点规则只能有
@@ -1056,13 +1130,65 @@ export class MemoryManager {
    *   线上实测 76% 的摘要窗口跨度 > 24h，29 条恰好 1000 条消息、跨度 46~61 天，
    *   同一段历史被反复摘要（45 秒内连摘三次），摘要槽稳定失败（8 天 10 次空响应）。
    *
+   * ★ 2026-10-16（change: `fix-summary-anchor-floor`，KI-26）：**无历史摘要**那条分支
+   *   由「现在 − 24h」改为「**该会话最早的事件**（并以 7 天为上限）」：
+   *
+   *   - 旧兜底（`now − 24h`）会让**消息全部早于 24h 的会话一条都摘要不出来**，
+   *     而且**永远够不着** —— 下一次的锚点是「上一份摘要的 `ended_at`」，
+   *     可上一份根本不存在，于是每回都退回 `now − 24h`，而 now 还在往前跑。
+   *     真实场景：会话开着超过 24h 才结束、或进程停过之后由 cron 归档。
+   *   - ⚠️ 旧兜底是 `now − 24h`（2026-10-11 事故后加的），现已去掉 ——
+   *     它的代价是**永久丢掉**更早那段，而事故的真机制（反复摘要同一段历史）
+   *     已经被"锚点只此一处 + 摘完就前进"堵死。详见分支内的注释。
+   *
    * ⚠️ 不要与 `archiveStaleSessions` 里 `getActiveSessions(since)` 的那个 `since` 混用：
    *   那个是「24h 内有过活跃」的**筛选门槛**，与本锚点是两个不同语义——
    *   合并成一个变量会漏掉「很久没说话的会话」。
    */
   private summaryAnchor(sessionId: string): Date {
     const last = this.conversationStore.getLatestBySession(sessionId);
-    const anchor = last?.ended_at
+
+    if (!last) {
+      // ★ **从未摘要过** ⇒ 从头摘（**不设时间上限**，理由见"为什么无界是安全的"）。
+      //
+      //   ⚠️ **为什么"从头摘"不会造成二次摘要**：
+      //       `getBySession` **不按 `processed` 过滤**，所以窗口锚点是唯一的闸；
+      //       而这里的前提是「一条会话记录都没有」⇒ 这个会话**从来没被摘过** ⇒
+      //       从头摘正是它该做的事。一旦摘过一次，下面就走 `ended_at` 分支。
+      //
+      //   ⚠️ **为什么"无界"是安全的**（2026-10-16 重新判断过，推翻了我自己前一刻的 7 天上限）：
+      //       2026-10-11 那次事故的**真机制**是「三个 SessionEnd 入口都没传锚点 ⇒
+      //       落到 `getBySession` 缺省的全历史 ⇒ **同一段历史被反复摘要**」
+      //       （45 秒内连摘三次）—— 坏窗口（46~61 天 / 1000 条）是它的**症状**。
+      //       那个机制已被"锚点只此一处 + 摘完就前进"堵死：从头摘只会发生**一次**。
+      //       而当初为它加的 `now − 24h` 兜底代价是**永久丢掉**更早那段（KI-26），
+      //       且**永远够不着**（下一次锚点 = 新摘要的 `ended_at`，那条再也进不来）。
+      //       权衡：一次**可见且可重试**的大窗口（失败写成 `summary_status='failed'`，
+      //       `retryFailedSummaries()` 会补）**优于**静默且不可恢复的丢失。
+      //       ⚠️ 残留风险：单次窗口仍受 `getBySession` 的 `LIMIT 1000` 截断 ——
+      //          从未摘过且超过 1000 条的会话，最老那批这次仍够不到。
+      //          彻底做法是**分块回填**（Backlog「历史画像回填」），不在本 change 内。
+      const earliest = this.eventStore.getEarliestCreatedAt(sessionId);
+      if (!earliest) {
+        // 连事件都没有：保持旧兜底（行为与以前一致）
+        return new Date(Date.now() - 24 * 3600 * 1000);
+      }
+
+      // ⚠️ **减 1ms**：窗口下界是**排他**的（`getBySession` 用 `created_at > since`，
+      //    见 `memory-system` §5.4.1 契约 4b）。若把下界设成"最早事件自己的时间戳"，
+      //    那第一条会被 `>` **正好排除掉** —— "从头摘"反而漏掉开头（红测抓到过：
+      //    新鲜会话因此一条摘要都不产）。
+      const anchor = new Date(new Date(earliest).getTime() - 1);
+      logger.debug(`[Memory] summary anchor（从未摘要→从头）for ${sessionId.slice(-24)}: ${anchor.toISOString()}`);
+      return anchor;
+    }
+
+    // 有历史摘要 → 从它之后继续。`ended_at` 是**数据边界**（§5.4.1 契约 4）。
+    // ⚠️ 有记录却 `ended_at` 为空 → **保守到底，就是旧的 24h**（**不要**跟着放宽）：
+    //    那个分支**没有已知边界**（正常写入路径一定会填 `ended_at`），
+    //    而 `getBySession` 不按 `processed` 过滤 ⇒ 窗口放宽多少就可能重摘多少。
+    //    宁可漏（它至少还会被下一次的窗口重新考虑），也不要回头重摘已学过的历史。
+    const anchor = last.ended_at
       ? new Date(last.ended_at)
       : new Date(Date.now() - 24 * 3600 * 1000);
     logger.debug(`[Memory] summary anchor for ${sessionId.slice(-24)}: ${anchor.toISOString()}`);
@@ -1102,14 +1228,21 @@ export class MemoryManager {
       //   （线上表现为 `archived 1/1` 而库里 0 条新摘要，持续 18 小时无人发现）。
       let skipped = 0;
       let failed = 0;
+      // ★ KI-15：摘要与向量**分开计数**。旧日志 `archived N/M` 只数摘要，
+      //   于是「摘要全成、向量一条没写」也报全绿 —— 2026-09-27 回填事故同形。
+      const vectorCounts: Record<VectorWriteOutcome, number> = {
+        stored: 0, 'no-store': 0, 'no-vector': 0, failed: 0,
+      };
       for (const sid of active) {
         try {
           // ★ 2026-10-11 fix-session-end-window：锚点改走共用 helper
           //   （行为不变：无历史摘要仍回退 24h 前）。
           const anchor = this.summaryAnchor(sid);
           const r = await this.sessionEndProcessor.process(sid, anchor);
-          if (r.summarized) archived++;
-          else if (r.reason === 'summary-failed') failed++;
+          if (r.summarized) {
+            archived++;
+            if (r.vectorOutcome) vectorCounts[r.vectorOutcome]++;
+          } else if (r.reason === 'summary-failed') failed++;
           else {
             skipped++;
             logger.info(`[Memory] 跳过 ${sid.slice(-24)}（${r.reason}，无新内容可摘要）`);
@@ -1119,10 +1252,16 @@ export class MemoryManager {
         }
       }
       if (archived > 0 || skipped > 0 || failed > 0) {
+        // 只有「全部 stored」才不加尾巴 —— 任何降级都要在这行里看得见
+        const allStored = vectorCounts.stored === archived;
+        const vectorNote = allStored
+          ? ''
+          : `（向量：成功 ${vectorCounts.stored} / 无库 ${vectorCounts['no-store']} / 失败 ${vectorCounts.failed}）`;
         logger.info(
           `[Memory] archived ${archived}/${active.length} sessions` +
           (skipped > 0 ? `（跳过 ${skipped}：无新内容）` : '') +
-          (failed > 0 ? `（失败 ${failed}）` : ''),
+          (failed > 0 ? `（失败 ${failed}）` : '') +
+          vectorNote,
         );
       }
     } catch (err: any) {
@@ -1168,6 +1307,17 @@ export class MemoryManager {
    *  由 LifeService.updateMoodValue 极性跨阈值时调用。 */
   adjustPersonaFromMood(moodValue: number): boolean {
     return this.personaAdapter.adjustFromMood(moodValue);
+  }
+
+  /**
+   * ★ 2026-10-16（KI-16）：**显式**修复被冲空的人格列，返回被修复的列名。
+   *
+   * 读路径（`PersonaStore.get()`）**不再**自动把默认值写回库 ——
+   * 否则「人格被冲成空」会被整形成一组合法出厂默认值，既骗过数据层也骗过巡检。
+   * 因此需要有人**在启动时显式**做一次修复并把结果喊出来；由 `al:persona-seed` 调用。
+   */
+  repairPersonaDefaults(): string[] {
+    return this.personaStore.repairEmptyColumns();
   }
 
   /** ★ 手动调整人格参数（Web 端滑条/按钮）。
@@ -1279,7 +1429,7 @@ export class MemoryManager {
   }
 
   /** ★ 获取当前画像快照（Web 端画像展示）。 */
-  getProfileSnapshot(): {
+  getProfileSnapshot(opts: { includeSuperseded?: boolean } = {}): {
     facts: Array<{ fact: string; confidence: number; source: string; status: string; updatedAt: string; validFrom: string; category: string }>;
     characterFacts: Array<{ fact: string; confidence: number; source: string; status: string; updatedAt: string; validFrom: string; category: string }>;
     basics: string;
@@ -1297,11 +1447,13 @@ export class MemoryManager {
       category: f.category ?? 'general',
     });
     const facts = (JSON.parse(profile.facts) as Parameters<typeof toView>[0][])
-      .filter(f => f.status !== 'superseded')
+      // ★ 2026-10-16：默认仍过滤 superseded（画像展示只要"她现在相信的"）；
+      //   但**记忆纠正页需要看到"被作废的"** —— 否则用户没法确认"旧事实真的失效了"。
+      .filter(f => opts.includeSuperseded || f.status !== 'superseded')
       .map(toView);
     // ★ 8-28 角色事实（memory-character-perspective）：昔涟自己的事，Web 画像页并列展示
     const characterFacts = (JSON.parse(profile.character_facts || '[]') as Parameters<typeof toView>[0][])
-      .filter(f => f.status !== 'superseded')
+      .filter(f => opts.includeSuperseded || f.status !== 'superseded')
       .map(toView);
     return {
       facts,
@@ -1335,6 +1487,47 @@ export class MemoryManager {
       logger.warn(`[Profile] fact confirm failed: ${err.message}`);
       return false;
     }
+  }
+
+  /**
+   * ★ 手动纠正一条**用户事实**：让旧的失效，并写入新的（`source: 'user'`）。
+   *
+   * ★ 为什么不能只 `addFacts([新])`：冲突检测是按 `normalizeKey` 的**文本相似**做的，
+   *   而「用户在长沙」→「用户在上海」两条**并不相似** ⇒ 不会相互 supersede
+   *   ⇒ **两条同时 active** ⇒ 召回会同时拿到，用户看到的是**自相矛盾的她**。
+   *   所以「纠正」必须显式做两步，且**先失效旧、再写新**。
+   *
+   * `source: 'user'` 是关键：`ProfileStore` 的既有规则是
+   * 「用户主动声明不可被 inferred 覆盖」，所以手动纠正**不会被后续 LLM 提取顶掉**。
+   *
+   * ⚠️ 首版**只支持用户事实**（`facts`）。角色事实（`character_facts`）当前只读 ——
+   *   `ProfileStore` 没有按 key supersede 角色事实的方法，那需要单独加（见 change 记录）。
+   *
+   * @returns `superseded`：旧事实是否真的被找到了并失效（false = 没找到，但新事实仍会写入）
+   */
+  correctProfileFact(oldFact: string, newFact: string): { superseded: boolean; added: boolean } {
+    const text = newFact.trim();
+    if (!text) throw new Error('新事实不能为空');
+    const now = new Date().toISOString();
+
+    const superseded = this.profileStore.confirmFact(this.profileStore.factKeyOf(oldFact), false);
+    const added = this.profileStore.addFacts([{
+      fact: text,
+      confidence: 1.0,
+      evidence: `用户手动纠正「${oldFact}」`,
+      source_event: 'manual-correction',
+      updated_at: now,
+      source: 'user',
+      valid_from: now,
+      valid_until: null,
+      status: 'active',
+      category: 'general',
+    } as ProfileFact]).length > 0;
+
+    logger.info(
+      `[Profile] 手动纠正：superseded=${superseded} added=${added}（${text.slice(0, 30)}）`,
+    );
+    return { superseded, added };
   }
 
   /** ★ 获取人格快照（Web 端人格状态展示）。 */
@@ -1380,7 +1573,22 @@ export class MemoryManager {
     const hash = createHash('sha256').update(input.title + content).digest('hex');
     const existing = this.knowledgeStore.getByHash(hash);
     if (existing) {
-      return { docId: existing.id, chunks: existing.chunk_count, deduplicated: true };
+      // ★ 2026-10-16（KI-13）：**hash 命中不等于完整**。
+      //   旧实现直接 `return { chunks: existing.chunk_count, deduplicated: true }`，
+      //   把一颗"上次半途失败"的残行当成了事实 —— 返回**从未兑现的块数**并宣布已导入。
+      //   现在必须核对：① 状态仍是 active（归档的不算已导入）；
+      //   ② 实际块数与声明块数一致。
+      const actual = this.knowledgeStore.getChunksByDoc(existing.id).length;
+      const complete = existing.status === 'active' && actual > 0 && actual === existing.chunk_count;
+      if (complete) {
+        return { docId: existing.id, chunks: existing.chunk_count, deduplicated: true };
+      }
+      logger.warn(
+        `[Knowledge] hash 命中但文档**不完整**（status=${existing.status}，` +
+        `chunk_count=${existing.chunk_count}，实存=${actual}）→ 清掉残壳并重新导入 ${existing.id}`,
+      );
+      // 残壳彻底清掉再重建（docId 由 hash 决定 → 向量 id 不变，重建时会被覆盖）
+      this.knowledgeStore.deleteDoc(existing.id);
     }
 
     // 2. 分块
@@ -1388,28 +1596,26 @@ export class MemoryManager {
     const now = new Date().toISOString();
     const docId = `kb-${hash.slice(0, 16)}`;
 
-    // 3. 插入文档元数据
+    // 3. 事务内落 doc + 全部 chunk（★ KI-13：中途失败不留残壳）
     const doc: KnowledgeDoc = {
       id: docId,
       title: input.title,
       source,
       file_path: null,
       content_hash: hash,
-      chunk_count: chunks.length,
+      // 占位：真实值由 `insertDocWithChunks` 在事务内用**实到块数**回填 ——
+      // KI-13 的要点就是**不许先声明一个尚未兑现的块数**。
+      chunk_count: 0,
       status: 'active',
       created_at: now,
       updated_at: now,
     };
-    await this.knowledgeStore.insert(doc);
+    const storedChunks = this.knowledgeStore.insertDocWithChunks(doc, chunks);
 
-    // 4. 插入 chunks（向量化待 LanceDB 部署后启用）
+    // 4. 向量化（**不在**事务内：另一条链路，失败不阻塞文本检索；KI-15 逐 chunk 留痕）
+    // ★ KI-15：没有向量库时**不再静默** —— 逐 chunk 报会刷屏，故末尾报总账
+    let vectorsSkipped = 0;
     for (let i = 0; i < chunks.length; i++) {
-      this.knowledgeStore.insertChunk({
-        id: `chunk_${docId}_${i}`,
-        doc_id: docId,
-        chunk_index: i,
-        content: chunks[i],
-      });
       if (this.vectorStore) {
         try {
           const vector = await this.embedService.embed(chunks[i]);
@@ -1421,10 +1627,18 @@ export class MemoryManager {
         } catch (err: any) {
           logger.warn(`[Knowledge] chunk embed failed (${docId} #${i}): ${err.message}`);
         }
+      } else {
+        vectorsSkipped++;
       }
     }
+    if (vectorsSkipped > 0) {
+      logger.warn(
+        `[Knowledge] 没有向量库：${vectorsSkipped}/${chunks.length} 个 chunk **只进了文本检索**` +
+        `（向量检索取不到它们，导入返回的 chunks 数不代表已被向量化）`,
+      );
+    }
 
-    return { docId, chunks: chunks.length, deduplicated: false };
+    return { docId, chunks: storedChunks, deduplicated: false };
   }
 
   /** 知识文档列表（Web 展示） */

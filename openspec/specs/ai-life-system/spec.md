@@ -296,7 +296,23 @@ LLM 可选 `continuation_of`（防幻觉：须命中今天事件 ID 集合）。
 | 6 | 不引用对话 | content 不含引号包裹的直接引用（"你说…"/"你刚才…"） |
 | 7 | 不在场角色不出现 | content 中出现的配角名必须在【在场角色】列表内 |
 
-**世界书采样**：激活角色 worldbook 条目中采样 N=5 条（priority 加权 + cooldown 过滤），作为「人设背景」。被事件引用的条目 `hit_count+1` 并记录 `wb_entry_id`。
+**世界书采样**：激活角色 worldbook 条目中采样 N=5 条，作为「人设背景」。被事件引用的条目 `hit_count+1` 并记录 `wb_entry_id`。
+
+- **挑选方式**（★ 2026-10-16 更正陈旧描述）：**分层随机**，不是 priority 加权 ——
+  `life_event` 取 3 条 + `text` 取 2 条，各池内 `ORDER BY RANDOM()`
+  （2026-08-27 change: `life-worldbook-layered-sample` 刻意从「按 priority 排序」改为随机，
+  此处当时漏改；§15 与 §6 现已一致）。
+- **cooldown 过滤**（★ 2026-10-16 补齐，change: `worldbook-sampling-cooldown`）：
+  `last_triggered` 非空的条目，要求 `now − last_triggered > max(6h, 条目的 cooldown_sec)`。
+
+  | 为什么 | 依据 |
+  |---|---|
+  | **不能只用条目的 `cooldown_sec`**（默认 **300 秒**） | 事件生成器是**每小时** tick（间隔 0.5~8h，默认 1h）⇒ 5 分钟冷却在小时级节奏上**等于没有**，下一轮照样抽到同一条 |
+  | **取 max 而不是覆盖** | 条目显式声明更长冷却时，两个路径都要尊重它 —— 这样「与对话触发**共用冷却**」才是真的 |
+  | ⚠️ 空串 `last_triggered` 要按「未用过」处理 | 否则 `julianday('')` 为 NULL、比较恒假 ⇒ 那条**永久**进不了采样（比"忘了冷却"更难查） |
+
+  **两条路径必须一致**：对话触发走 `WorldbookStore.match()`（用条目 `cooldown_sec`），
+  采样走 `MemoryManager.getWorldbookSample()`（上面这套）。**改一条要想到另一条。**
 
 **失败回落**：LLM 失败 → 从通用模板池随机取一条（`data/life-templates.json`），`type=internal`
 （8-09 修复：原实现回落 `t.type` 可能为 chat 导致模板推送、剧情链断裂——模板强制 internal 只入库不推送）。

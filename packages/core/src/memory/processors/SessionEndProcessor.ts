@@ -4,7 +4,7 @@ import { PROCESSED_SUMMARY } from '../types.js';
 import { logger } from '../../utils/logger.js';
 import { parseLLMJson } from '../../utils/llm-json.js';
 import type { EventStore } from '../stores/EventStore.js';
-import type { ConversationStore } from '../stores/ConversationStore.js';
+import type { ConversationStore, VectorWriteOutcome } from '../stores/ConversationStore.js';
 import type { ProfileStore } from '../stores/ProfileStore.js';
 import type { PersonaStore } from '../stores/PersonaStore.js';
 import type { WorldbookStore } from '../stores/WorldbookStore.js';
@@ -26,6 +26,14 @@ export interface SessionEndResult {
   summarized: boolean;
   /** 未产生摘要的原因 */
   reason?: 'no-events' | 'no-messages' | 'no-dialogue' | 'summary-failed';
+  /**
+   * ★ KI-15：**向量的**落库结果，与摘要分开。
+   *
+   * 为什么必须分开：`summarized` 只说明摘要行写成了。向量是另一条独立链路，
+   * 它失败时行仍是 `summary_status='ok'`，调用方若只数 `summarized`，
+   * 就会把「摘要在、向量全没」报成「全绿」——那正是 2026-09-27 回填事故的形态。
+   */
+  vectorOutcome?: VectorWriteOutcome;
 }
 
 /** LLM 摘要的结构化输出（成功路径） */
@@ -95,7 +103,15 @@ export class SessionEndProcessor {
     if (messageEvents.length === 0) return { summarized: false, reason: 'no-messages' };
 
     // ★ 8-09 摘要含 assistant：带角色标记的完整对话（回写后 AI 发言也进摘要）
+    //
+    // ★ 2026-10-16（change: `filter-synthetic-context-inflow`，KI-20）：**合成注入不进摘要**。
+    //   第三条泄漏路径：摘要会被召回、并回灌进她下一轮的上下文 ——
+    //   把 runtime context 快照摘要进去，等于让它**换个形式**继续留在记忆里，
+    //   还会挤掉本该属于真实对话的摘要预算。
+    //   ⚠️ 只过滤 `synthetic`，**不**过滤 `skip_profile`：群聊 NPC 消息进摘要是
+    //      既有行为，本 change 不动它（换 `skip_profile` 过滤会静默改变群聊摘要）。
     const dialogue = messageEvents
+      .filter(e => !e.payload?.synthetic)
       .map(e => {
         const p = e.payload;
         if (!p?.content) return '';
@@ -137,6 +153,28 @@ export class SessionEndProcessor {
     //    摘要失败时**仍然插行**：保留 message_count / 时间 / 事件关联，
     //    这样失败窗口不会随 PROCESSED_SUMMARY 标记一起消失，后续可回填。
     const now = new Date().toISOString();
+    // ★ 2026-10-16 fix-summary-window-late-events（spec §5.4.1 **契约 4**）：
+    //   窗口**右边界取数据边界，不取墙钟**。
+    //
+    //   为什么：`process()` 的窗口只有下界（`getBySession(sid, {since})`，无上界），
+    //   而下一步的锚点 = 本条摘要的 `ended_at`（`MemoryManager.summaryAnchor`）。
+    //   若这里写墙钟 `now`，则**任何入库晚于其 `created_at` 的事件**
+    //   （dsh 在途消息 / QQ 重连补发 / Web 批量导入）在下一次都会落在
+    //   `created_at >= anchor` 的**窗口之外，永远不被摘要** ——
+    //   而这条摘要是 `summary_status='ok'`，`retryFailedSummaries()` 不会补。
+    //
+    //   取「窗口内最新事件的时间」即可：已入库事件是会话流的**前缀**
+    //   （dsh 侧由 FIFO 保证），所以迟到事件必然晚于它 ⇒ 一定落进下一窗口。
+    //   顺带获得**幂等性**：同一批数据重跑摘要不会跳过任何东西。
+    //
+    //   ⚠️ 必须**不晚于此刻**：来源时钟偏移（事件时间在未来）时，
+    //      一条未来的 `ended_at` 会把 (now, 未来] 之间的事件全挡在窗口外 ⇒ 丢数据。
+    const newestAt = events[events.length - 1]?.created_at;
+    const newestMs = newestAt ? Date.parse(newestAt) : NaN;
+    const endedAt =
+      Number.isFinite(newestMs) && newestMs <= Date.now()
+        ? new Date(newestMs).toISOString()
+        : now;
     const conv: Conversation = {
       id: `conv-${sessionId}-${Date.now()}`,
       session_id: sessionId,
@@ -146,7 +184,7 @@ export class SessionEndProcessor {
       key_decisions: JSON.stringify(ok ? summaryData!.key_decisions : []),
       message_count: messageEvents.length,
       started_at: events[0]?.created_at || now,
-      ended_at: now,
+      ended_at: endedAt,
       embedding_id: null,
       // ★ 8-28 角色视角（memory-character-perspective）
       character_perspective: ok ? summaryData!.character_perspective : '',
@@ -154,18 +192,38 @@ export class SessionEndProcessor {
     };
 
     let embedVector: number[] | undefined;
+    // ★ KI-15：摘要与向量**分别**记录状态。
+    //   旧实现在这里是一个不返回任何东西的 `if (ok && this.vectorStore)` ——
+    //   摘要在写、向量静默不写，行仍是 `summary_status='ok'`，
+    //   调用方日志 `archived N/M` 照打全绿（★ 最危险的一处：计数只数摘要、不数向量）。
+    //   现在四种情况都可判：no-vector（摘要本身失败，本就不该 embed）/
+    //   no-store（没有向量库）/ failed（嵌入或写入失败）/ stored。
+    let vectorOutcome: VectorWriteOutcome = 'no-vector';
     // ★ 只在成功时 embed。失败时 summary 为空，嵌入它等于往 LanceDB 里塞垃圾向量——
     //   而垃圾向量**会被召回出来当真内容用**，比"缺一条向量"危险得多
     //   （还会污染相似度分布，干扰召回系数调参）。
-    if (ok && this.vectorStore) {
-      try {
-        embedVector = await this.embedService.embed(conv.summary);
-      } catch {
-        // Embedding failure is non-fatal
+    if (ok) {
+      if (!this.vectorStore) {
+        vectorOutcome = 'no-store';
+        // 逐次可区分：「启动那一行 warn 不够」（库里 0 条向量、日志全绿的那几天）
+        logger.warn(
+          `[SessionEnd] 摘要已生成但**没有向量库**，${sessionId.slice(-24)} 不会被向量召回（仅文本检索）`,
+        );
+      } else {
+        try {
+          embedVector = await this.embedService.embed(conv.summary);
+        } catch (err: any) {
+          // ★ §5.5.3 要求「embed 失败必须 logger.warn」——原来这里是裸 catch
+          vectorOutcome = 'failed';
+          logger.warn(`[SessionEnd] 摘要嵌入失败（不写向量）${sessionId.slice(-24)}: ${err?.message ?? err}`);
+        }
       }
     }
 
-    await this.conversationStore.insert(conv, embedVector);
+    // 写入结果由 store 如实返回（'stored' / 'failed'）；没给向量时保留上面判定的原因
+    const writeOutcome = await this.conversationStore.insert(conv, embedVector);
+    // 万一注入的 store 没按契约返回，按 failed 记 —— 「宁可报坏」好过让向量状态悄悄变空
+    if (embedVector) vectorOutcome = writeOutcome ?? 'failed';
 
     // 4. Extract profile facts from session events (v2: 使用 addFacts 自动处理冲突)
     //    ★ 8-28 角色视角（memory-character-perspective）：同一次提取双输出——用户事实 +
@@ -188,7 +246,9 @@ export class SessionEndProcessor {
       this.eventStore.markProcessed(event.id, PROCESSED_SUMMARY);
     }
 
-    return ok ? { summarized: true } : { summarized: false, reason: 'summary-failed' };
+    return ok
+      ? { summarized: true, vectorOutcome }
+      : { summarized: false, reason: 'summary-failed', vectorOutcome };
   }
 
   /** ★ 9-26：`since`/`until` 透传到 SQL（窗口过滤下推，不受"最旧 1000 条"截断影响） */
@@ -297,9 +357,12 @@ export class SessionEndProcessor {
         //   2026-09-27 回填时就踩了（40 条垃圾向量一条没换，日志却全绿）。
         logger.warn(`[SessionEnd] 补处理：摘要已更新但向量重建失败 (${conv.id.slice(0, 30)}): ${err?.message ?? err}`);
       }
+    } else {
+      // ★ KI-15：无向量库也要**逐次**可见（补处理路径原先静默跳过）
+      logger.warn(`[SessionEnd] 补处理：没有向量库，${conv.id.slice(0, 30)} 不会重建向量`);
     }
 
-    await this.conversationStore.updateSummaryResult(
+    const updated = await this.conversationStore.updateSummaryResult(
       conv.id,
       {
         summary: data.summary,
@@ -310,7 +373,16 @@ export class SessionEndProcessor {
       },
       vector,
     );
-    logger.info(`[SessionEnd] 补处理成功: ${conv.id.slice(0, 30)}`);
+    // ★ KI-17：0 行更新 = 目标行不存在 ⇒ **不是成功**。
+    //   旧实现在这里无论 `changes` 是多少都打「补处理成功」+ `return true`，
+    //   与真正补成功**逐字相同** —— 调用方（`retryFailedSummaries`）据此 `ok++`，
+    //   于是「什么都没改」被记成「补好了 N 条」。
+    if (updated.rows === 0) {
+      logger.warn(`[SessionEnd] 补处理**失败**：目标摘要行不存在（0 行更新） ${conv.id.slice(0, 30)}`);
+      return false;
+    }
+    // ★ KI-15：摘要补成功 ≠ 向量补成功，分开报（后者失败时上面已 warn，这里报总账）
+    logger.info(`[SessionEnd] 补处理成功: ${conv.id.slice(0, 30)}（向量 ${updated.vector}）`);
     return true;
   }
 
@@ -349,6 +421,8 @@ export class SessionEndProcessor {
   ): Promise<number> {
     if (moments.length === 0) return 0;
     let applied = 0;
+    /** ★ KI-15：向量**没**跟上 importance 的条数（无库或写失败）——末尾报总账，不逐条刷屏 */
+    let vectorStale = 0;
     for (const { quote, importance } of moments) {
       const norm = (s: string) => s.replace(/\s+/g, '');
       const q = norm(quote);
@@ -375,13 +449,21 @@ export class SessionEndProcessor {
             importance,
           });
         } catch (err: any) {
+          vectorStale++;
           logger.warn(`[SessionEnd] importance 回填向量失败 (${hit.id.slice(0, 20)}): ${err.message}`);
         }
+      } else {
+        vectorStale++;
       }
       applied++;
     }
     if (applied > 0) {
-      logger.info(`[SessionEnd] important_moments 回填 ${applied}/${moments.length} 条`);
+      // ★ KI-15：importance 写进了 `events` 表，但**召回读的是向量 metadata** ——
+      //   向量没跟上时这条 importance 事实上不生效，必须说出来。
+      const staleNote = vectorStale > 0
+        ? `（⚠️ ${vectorStale} 条的**向量 metadata 未刷新**：召回读的是向量，旧 importance 仍生效）`
+        : '';
+      logger.info(`[SessionEnd] important_moments 回填 ${applied}/${moments.length} 条${staleNote}`);
     }
     return applied;
   }

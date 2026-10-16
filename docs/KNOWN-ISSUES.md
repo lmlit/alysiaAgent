@@ -119,17 +119,36 @@
 
 **⬜ 仍未修（已定名，按危险度排序）**
 
+> ★ **2026-10-16 销账 8/9**（change: [`fix-store-write-trace`](../openspec/archive/2026-10-16-fix-store-write-trace/proposal.md)）：
+> `CronProcessor`、`PromptAssembler:158`、`PersonaStore:33-37`（**方法已删**）、
+> `LanceDBStore:59`（带出真原因）、`:96`（留痕 warn）、`:160-162`（失败改抛）、
+> `MemoryManager:197`（token 统计写入）、`:188/392/418`（令牌读取 / 世界观 / 生活衔接）。
+> **剩 1 条**：`server/src/life.ts` 的 `tick` catch —— 它**记了 error**，只是**粒度太粗**，
+> 属**日志结构**问题而非静默吞错（拆它要重划 tick 的三个阶段，宜与 `add-ops-health-report` 一起做）。
+>
+> ★ **同时更正了本表的一处落点**（核查得出的结论，避免后人被误导）：
+> 原表把 `MemoryManager` 的 `getWorldviewBlock` 记成「会把失败**永久缓存成空**」——**不成立**：
+> ① `readWorldviewBlock()` 自己就有裸 catch、**永不抛**，故 MemoryManager 那个 catch 是**死代码**；
+> ② 旧代码 `catch { this._worldviewBlock = '' }` 里 `''` 是 **falsy**，下次调用仍会重试。
+>
+> **真正的静默吞错在 `packages/core/src/persona/loader.ts`**（原表未收录）：
+> `readPersonaFile` / `readWorldviewBlock` / `readWorldbookFile` 三个读函数全部裸 catch 返回空串
+> ⇒ 「`soul.md` 读不到」与「文件本来就是空的」**完全同形**，
+> 而**人格核心静默缺失**正是本项目栽过的事故类型（同 `fix-role-import-wipes-persona`）。
+> 这 13 个文件都随包发布（已核实）⇒ 任何读失败都是**真问题**。**已全部补 warn（按文件名限频）**。
+
 | 位置 | 吞掉了什么 | 后果 |
 |---|---|---|
-| `packages/server/src/life.ts`（`tick` 的 catch） | 无——**它记了 error** | 但**粒度太粗**：生成失败/存储失败/推送未发生混在同一条，日志上像是"这一轮什么都没发生" |
-| `CronProcessor.ts:99` | 知识库归档失败 | 90 天该归档的文档一个没归档，日志表现为"没有需要归档的文档" |
-| `PromptAssembler.ts:158` | `expireStaleFacts` 的**写**失败 | 过期事实永不清理，且是唯一自动调用点 → 端到端静默 |
-| `PersonaStore.ts:33-37`（`migrateMemoryConfig`） | `ALTER TABLE` 失败 | 人格 `memory_config` 列没加上也无人知 |
-| `LanceDBStore.ts:59` | `openTable` 的**所有**失败都被当作"表不存在" | 最终 warn 里的报错是**误导性的** |
-| `LanceDBStore.ts:96` | 删旧行失败 | 同 id 两条向量并存 → 召回里同一条记忆重复出现，无痕 |
-| `LanceDBStore.ts:160-162`（`count`） | 读失败 → 返回 `0` | 「库是空的」与「库读不了」完全同形 |
-| `MemoryManager.ts:197`（`saveTokenStats`） | **写**统计文件失败 | token 统计静默停摆（喂 `/api/stats`） |
-| `MemoryManager.ts:188 / 392 / 418` | 读失败 → 默认值 / `''` | 其中 `getWorldviewBlock` 会把失败**永久缓存成空**（每轮 prompt 少一段） |
+| `packages/server/src/life.ts`（`tick` 的 catch） | 无——**它记了 error** | 但**粒度太粗**（★ 2026-10-16 核对机制）：`tick()` 是**一条线性链**（每日摘要 → 每日反思 → 亲密度 → 意图扫描 → 余波 → 事件生成），任一阶段抛出即**中断后续全部**，而外层 catch **不说是哪一阶段** ⇒ 生成失败/存储失败/推送未发生混在同一条，且后半段阶段**静默没跑**。属**行为问题（阶段隔离）**非吞错；修它是**行为变更**，宜与 `add-ops-health-report` 一起做 |
+| ~~`CronProcessor.ts:99`~~ | ✅ **2026-10-16 已销**（归档失败 → warn：不再与"没有要归档的"同形） | — |
+| ~~`PromptAssembler.ts:158`~~ | ✅ **2026-10-16 已销**（`[待确认的事实]` 块构建失败 → 限频 warn；它内部含 `expireStaleFacts` 的**写**） | — |
+| ~~`PersonaStore.ts:33-37`（`migrateMemoryConfig`）~~ | ✅ **2026-10-16 已销**（方法删除，迁移由 `initializeDatabase()` 集中做） | — |
+| ~~`LanceDBStore.ts:59`~~ | ✅ **2026-10-16 已销**（`openTable` 失败改为把**真原因**带出来） | — |
+| ~~`LanceDBStore.ts:96`~~ | ✅ **2026-10-16 已销**（前置删除失败改为**留痕 warn**，不再无痕） | — |
+| ~~`LanceDBStore.ts:160-162`（`count`）~~ | ✅ **2026-10-16 已销**（失败**改抛**，`0` 只表示"库真的是空的"） | — |
+| ~~`MemoryManager.ts:197`（`saveTokenStats`）~~ | ✅ **2026-10-16 已销**（写失败 → warn，不再静默停摆） | — |
+| ~~`MemoryManager.ts:188 / 392 / 418`~~ | ✅ **2026-10-16 已销**（`loadTokenStats` / `getWorldviewBlock` / `getLifeContinuityBlock` 全部补 warn，热路径点限频） | — |
+| 🆕 `persona/loader.ts` 三个读函数（**原表漏收，见上文更正**） | ✅ **2026-10-16 已销**（`soul.md` 等读不到 → 带 EACCES/ENOENT 真原因 warn，按文件名限频） | — |
 
 - **建议方向**：上面 9 条按同一手法处理——**能改探测式的改探测式，改不了的至少喊一次**。
   合并成第二刀（`fix-store-write-trace`），与下一条 KI-11 一起做。
@@ -172,6 +191,12 @@
 
 ### KI-12 🔴 `EventStore.insert` 的 `INSERT OR REPLACE` 列单不含 `archived`
 
+> ★ **2026-10-16 已修**（change: [`fix-store-write-trace`](../openspec/archive/2026-10-16-fix-store-write-trace/proposal.md)，该刀其余 4 项仍待做）。
+> `insert` 不再用 `INSERT OR REPLACE`：**同 id 同内容 = 幂等空转**（一个列都不动），
+> **同 id 异内容 = 不覆盖**（Event Log 不可变）+ `logger.warn` 响亮报冲突。
+> 契约见 `openspec/specs/dsh-adapter/spec.md` §2.5.1 **契约 9**。
+> 下面保留原始记录作为依据。
+
 - **现象**：列单缺 `archived`，而它是 `DEFAULT 0`。同 id 重投（**QQ 重连 / 重试**）→
   **静默复活软删除的会话**、把已摘要事件的 `processed` 归 0（**再摘要 + 再画像提取**）、
   清掉 LLM 打的 `importance`、改写 `created_at`（可能挪出摘要窗口）。
@@ -179,6 +204,21 @@
 - **方向**：改 `INSERT … ON CONFLICT DO UPDATE`（只更新 payload），或列单覆盖全部状态列。
 
 ### KI-13 🔴 知识库「半截文档 + hash 去重锁死」
+
+> ★ **2026-10-16 已修**（change: [`fix-store-write-trace`](../openspec/archive/2026-10-16-fix-store-write-trace/proposal.md)）。
+> - **事务化**：新增 `KnowledgeStore.insertDocWithChunks(doc, chunks)` —— doc 与**全部 chunk
+>   在同一事务里**写（`db.transaction()`，抛错整体回滚）⇒ **残壳不可能存在**。
+> - **`chunk_count` 用实到块数**：doc 传入 `chunk_count: 0` 占位，
+>   由事务内真正 INSERT 成功的条数回填（**不许先声明一个尚未兑现的块数**）。
+> - **重试路径校验完整性**：`getByHash` 命中后核对 ① `status === 'active'`
+>   ② 实际 chunk 数 > 0 且 `=== chunk_count`；不完整则 **warn + 清残壳 + 重新导入**
+>   （docId 由 hash 决定 ⇒ 向量 id 不变，重建即覆盖）。
+> - 复现证据：新用例修前报 `留下了伪装完整的文档壳: expected 1 to be +0`
+>   与残行场景 `expected true to be false`。
+>   ★ 测试用 **SQLite 触发器 `RAISE(ABORT)`** 制造**确定性**的「第 N 块写失败」——
+>   比 mock 更接近真实失败（真在 INSERT 上炸），且可精确控制炸在哪一片。
+> - 向量化**留在事务外**（另一条链路、失败不阻塞文本检索，见 KI-15）。
+> 下面保留原始记录作为依据。
 
 - **现象**：先落 doc（`chunk_count = chunks.length`、`status='active'`）再循环落 chunk，
   **两者不在一个事务里**。中途失败留下一个"完全正常的活跃文档"外壳；重试被 `getByHash`
@@ -188,6 +228,18 @@
 - **方向**：包事务；`chunk_count` 用实到块数；重试路径校验 chunk 实存数。
 
 ### KI-14 🟠 `LanceDBStore.insert` 永不抛 → 上游所有 try/catch 是**死代码**
+
+> ★ **2026-10-16 已修**（change: [`fix-store-write-trace`](../openspec/archive/2026-10-16-fix-store-write-trace/proposal.md)，该刀其余 4 项仍待做）。
+> `insert` / `delete` / `search` / `count` 四个方法改为 **log warn + rethrow**；
+> 库不可用抛 `VectorStoreUnavailableError`（与「单次操作失败」区分）。
+> 契约写进 `packages/core/src/memory/interfaces/IVectorStore.ts`：
+> **`search` 的 `[]` 只表示「确实没匹配」，`count` 的 `0` 只表示「库真的是空的」**。
+> 复现证据：新用例修前是 `promise resolved "undefined" / "[]" / "+0" instead of rejecting`（6 红）。
+> ✅ 已确认「死代码复活」：`MemoryManager:291/1466` 的 `Promise.allSettled` 失败计数
+> 与 `:543` 的 `.catch` 现在才**第一次真正会触发**。
+> ⚠️ upsert 的**前置 delete** 仍不抛（LanceDB 在「谓词没匹配到」时是否抛无法在本仓证实），
+> 但已改为**留痕 warn** —— 它会造成同 id 重复行（仍记在 KI-5 名下）。
+> 下面保留原始记录作为依据。
 
 - **现象**：`insert` catch 后只 warn、**不 rethrow**。于是上游每一处
   `try { insert } catch { warn('...向量失败') }` 的 warn **永远不会打印**，
@@ -201,6 +253,22 @@
 
 ### KI-15 🟠 `vectorStore` 为 null 时**静默跳过嵌入**（10 条路径，全部无痕）
 
+> ★ **2026-10-16 已修**（change: [`fix-store-write-trace`](../openspec/archive/2026-10-16-fix-store-write-trace/proposal.md)）。
+> - **摘要与向量分开记账**（点名「最危险」的那处）：`SessionEndResult` 新增 **`vectorOutcome`**
+>   （`stored` / `no-store` / `no-vector` / `failed`）；`ConversationStore.insert` /
+>   `updateSummaryResult` 如实返回该值；`archiveStaleSessions` 的日志改为
+>   `archived N/M …（向量：成功 X / 无库 Y / 失败 Z）` —— **全部 stored 才不加尾巴**。
+> - **写路径逐次可区分**：`RealtimeProcessor` 无库时首次必报 + 每 100 条补报累计；
+>   `importKnowledge` 末尾报「N/M 个 chunk 只进了文本检索」；
+>   `applyImportantMoments` 末尾报「N 条的向量 metadata 未刷新」
+>   （importance 写进了 events 表，但**召回读的是向量** —— 不刷新等于不生效）；
+>   补处理路径（`retryFailedSummary`）无库时也留痕。
+> - 顺带修了 §5.5.3 要求的裸 catch：`process()` 的 embed 失败原本是 `catch {}`。
+> - ⚠️ **读路径的 `[]` 未改**（`EventStore:45` / `ConversationStore:169` / `KnowledgeStore:41`）：
+>   那是**已知降级**，且 `MemoryManager.read` 已在 `!vectorStore` 时提前分流到文本检索，
+>   改它们要动读路径契约 —— 留待 KI-13 / KI-16 一起评估。
+> 下面保留原始记录作为依据。
+
 - **路径**：`RealtimeProcessor.ts:85` / `MemoryManager.ts:542` / `:1378` / `:290` / `:1417` /
   `SessionEndProcessor.ts:160 / :291 / :366` / `ConversationStore.ts:17 / :61`。
 - **最危险的**：`SessionEndProcessor.ts:160` 的 `if (ok && this.vectorStore)`——
@@ -212,6 +280,20 @@
 - **方向**：降级要**逐次可区分**（启动那一行 warn 不够）；`count()` 纳入健康检查。
 
 ### KI-16 🟠 `PersonaStore.get()` 的「读时回写默认值」**还在**
+
+> ★ **2026-10-16 已修**（change: [`fix-store-write-trace`](../openspec/archive/2026-10-16-fix-store-write-trace/proposal.md)）。
+> **兜底与回写分离**：`get()` 只把默认值填进**返回值**（新私有 `withDefaults()`），一个列都不写库；
+> 真要修库里走**显式**入口 `PersonaStore.repairEmptyColumns()`（会 `warn` 出被修的列名），
+> 启动期由 `al:persona-seed` 调 `MemoryManager.repairPersonaDefaults()` 触发。
+> 复现证据：新用例修前报 `读操作把默认值写回库了 ⇒ 「被冲空」被伪装成「出厂默认」`。
+> ✅ **顺带销掉 KI-5 一条**：`migrateMemoryConfig()`（裸 catch，`PersonaStore:33`）**整个方法已删** ——
+> 它是**写探针**（每次 `get()` 都 `ALTER TABLE`），而同一列的迁移早已由
+> `initializeDatabase()` 集中做（探测式 `addColumnIfMissing`）；全仓无其他调用方。
+> **公开面变化**：删除 `migrateMemoryConfig()`；新增 `repairEmptyColumns()` 与
+> `MemoryManager.repairPersonaDefaults()`（启动期用，Web 不需要，未登记进 Web-API 契约）。
+> 📌 **同族的 `ProfileStore.migrateFact` 核查后不属同一缺陷**：它是**纯函数**、不写库；
+> 「回写存量」发生在显式写入路径的 JSON blob 整体重写（该列存 JSON 数组，设计使然）。
+> 下面保留原始记录作为依据。
 
 - **现象**：检测到空的 `tone`/`speech_style`/`emotional_range` 就**填回结构默认值并写回 DB**
   （`PersonaStore.ts:21-28`）——这**本身是一次静默写操作**，且**无日志**。
@@ -225,6 +307,23 @@
 
 ### KI-17 🟡 `summary_status` 默认 `'ok'`；`ConversationStore.updateSummaryResult` 0 行也算成功
 
+> ★ **2026-10-16 已修**（change: [`fix-store-write-trace`](../openspec/archive/2026-10-16-fix-store-write-trace/proposal.md)）。
+> - **写入默认值改 `'failed'`**（`ConversationStore.insert` 的 `?? 'failed'`）：
+>   漏传状态的路径现在会「可见且可补」——`getRecent()` 不再注入空摘要、
+>   `retryFailedSummaries()` 会把它捞出来。
+> - **读侧 NULL → `'failed'`**。⚠️ 已核实**实际不会出现 NULL**：该列是
+>   `ALTER TABLE … ADD COLUMN … DEFAULT 'ok'` 加的（SQLite 用默认值回填存量行），
+>   所以此改动**零迁移风险**。
+> - **`updateSummaryResult` 返回值改为 `{ rows, vector }`**，0 行 = 目标行不存在 ⇒ **不是成功**；
+>   `retryFailedSummary` 据此 `return false` + 明确 warn，不再宣布「补处理成功」。
+> - 复现证据：**测试本身编码了旧默认值** —— `conversation-summary-status.test.ts`
+>   原有一句 `it('默认写入 ok')`，改动后立刻红（`expected 'ok' to be 'failed'`）。
+> - ⚠️ **连带后果**：`getRecent` / `searchByText` **排除 failed 行**，
+>   所以任何 fixture 里「代表健康摘要」的行必须**显式** `summary_status: 'ok'`
+>   （已更新 3 个测试文件的 fixture）。这也提醒：**别的地方若隐式依赖旧默认值，会同样暴露**。
+> - `retryFailedSummary` 此前**没有任何测试**覆盖，本次补了 2 条（rows=0 → false；rows=1 → true）。
+> 下面保留原始记录作为依据。
+
 - `ConversationStore.ts:15` 的 `?? 'ok'` 与 `:164` 的 NULL→`'ok'`：当前唯一调用方显式传值，
   属**潜伏**；将来任何新导入/迁移路径漏传就会写出"空摘要 + 状态 ok"= **22 天全绿的同款构造**。
   → 建议默认改 `'failed'`。
@@ -236,6 +335,24 @@
 ## 🟡 结构性技术债
 
 ### KI-6 🟡 `core.stop()` 不关闭 SQLite / LanceDB
+
+> ★ **2026-10-16 已修**（change: [`unify-core-shutdown`](../openspec/archive/2026-10-16-unify-core-shutdown/proposal.md)，已归档）。
+> - `al:db` 注册停机 effect → `db.close()`（**确定性**释放）；
+>   `al:vector` → `LanceDBStore.close()`（⚠️ **尽力而为**：napi 无确定性释放原语，只放掉包装引用）。
+> - **顺序不需要各模块自己排**：`al:db` 第一个装 ⇒ 逆序卸载时**最后一个卸**，此刻其余模块都已卸完。
+>   契约写进 `module-kernel` §2.3：内核只提供「逆序 + await + 逐个兜错」的**执行**机制，
+>   **释放什么由模块用 `ctx.effect` 声明**。
+> - ★ **行为变更**：`stop()` 后读写**会抛错**（better-sqlite3「connection is not open」）——
+>   这正是「关太早必须响亮」。
+> - ⚠️ **一处验收已完成**（2026-10-16 晚，真实 e2e）：原验收是「E2E 的 `afterAll`
+>   能真删掉临时目录」。已跑通——`core-turn.test.ts` 的 afterAll **去掉了 `EPERM` 变通**、
+>   改为**硬断言**，实测临时目录残留 **0 个**、停机 effect 按逆序触发
+>   （日志 `[al:vector] 已释放…` → `[al:db] 已关闭…`）。
+>   ⚠️ 注意这**不等于**「LanceDB 原生句柄被确定性释放」——
+>   只等于 **Windows 文件锁已放开到能删除**，而那正是当初的问题。
+> - ✅ **原提醒的 KI-16 交互风险已自然消解**：`PersonaStore.get()` 读路径**不再回写**
+>   （`fix-store-write-trace`）⇒ 停机后一次「读」不会再触发写入。
+> 下面保留原始记录作为依据。
 
 - **现象**：`stop()` 只停 EventBus，DB 句柄与 LanceDB 目录不释放 →
   Windows 上删临时目录 `EPERM`。
@@ -325,8 +442,51 @@
 - **残留（未闭环）**：本 change 修的是**锚点缺失**。「两个触发方在同一窗口内并发调用
   `process()`」是否还需要**显式幂等**（例如按 session 加锁），
   等部署后用 §5.4.1 的验证口径观察一轮再定。
+- ★ **2026-10-16 补记（本项的一个加重后果，新发现，尚未修）**：
+  `SessionEndProcessor` 落行用的主键是 **`conv-${sessionId}-${Date.now()}`**
+  （`SessionEndProcessor.ts` 的 `const conv: Conversation = { id: ... }`）。
+  ⇒ 「同一会话、**同一毫秒**内跑两次 `process()`」会命中
+  `UNIQUE constraint failed: conversations.id`，`onSessionEnd` 捕获后 **rethrow**
+  ⇒ **后一条摘要整条丢失**（事件也不会被标记处理）。
+  这不是理论：它是在 `fix-summary-window-late-events` 的幂等用例里**实测撞到**的。
+  与「重复摘要」是一体两面 —— 同一根因（缺并发幂等）的两种后果：
+  **窗口有内容时丢一条 / 窗口为空时白摘一次**。
+  修法提示：id 加随机/序号后缀，或按 session 加锁（后者同时解决本项）。
+  该 change **刻意未修**（不夹带），故仍留在此处。
 
 ### KI-20 🟠 dsh 的「runtime context 快照」被当用户消息回传入库（回流闭环）
+
+> ★ **2026-10-16 取证已定案：`dsh 合成注入`，不是真实用户输入 ⇒ 该滤。**
+> （本条原来挂着「先确认是合成注入还是真实用户输入」的注意项，现已回答。）
+>
+> **决定性证据**：在 dsh 自己的产物 `E:\dsh\resources\app.asar` 里搜那句话，
+> **恰好命中 1 次**，全文为
+> `` return `Current runtime context. This snapshot supersedes earlier runtime-context snapshots.\n\n${body}`; ``
+> —— **前缀是 dsh 的字面量，`body` 是变量**。同一轮对话里 dsh **当前版本仍在这么做**
+> （它注入的 body 是「文件策略 / 审批策略」，与用户发言完全无关）。
+>
+> **机制因此也解释得通**：注入的是会话里的**一条 user 角色消息** ⇒
+> adapter 的「用户消息」监听器照样捕获回传 ⇒ 所以**主会话也有**（不是子 agent 专属）、
+> 单会话能出现 35 次。
+>
+> ⚠️ **边界**：验证的是**前缀的产生者**，不是那 116 条的完整 payload 形态；
+> `body` 是变量 ⇒ 过滤要按**前缀包裹整体**判定，且前缀只是**兜底**判据
+> （dsh 改文案即失效），主判据仍应是事件类型与来源标记。
+>
+> 实现登记在 change [`filter-synthetic-context-inflow`](../openspec/archive/2026-10-16-filter-synthetic-context-inflow/proposal.md)
+> （**2026-10-16 已实现并归档**）。
+>
+> **实现要点**（原提案里被证据改掉的两处，都记在这里）：
+> - **判据只认结构化来源，不认文本前缀**：适配器把 dsh 的 `source.kind` 透传成
+>   `payload.dsh_source`，服务端据此打 `skip_profile` + `synthetic`。
+>   原提案写「前缀只作兜底判据」——**已改为不作判据**，因为它与
+>   「用户自己粘贴类似文本不得被误判」直接冲突，而结构化判据按定义不会误伤。
+> - **多堵了一条泄漏路径**：原提案只提画像与人格；实现时发现**摘要**也用全部
+>   messageEvents（不看 `skip_profile`）⇒ 合成文本会进摘要、日后被召回。
+>   已让 `SessionEndProcessor` 排除 `synthetic`（**只排 synthetic**，不动群聊 NPC 的既有行为）。
+>
+> 存量 116 条事件与由它们产出的 facts 仍需单独的数据修复方案（**未做**）。
+> 下面保留原始记录作为依据。
 
 - **现象**：全库 **116 条** events 的 payload 以
   `Current runtime context. This snapshot supersedes earlier runtime-context snapshots.` 开头，
@@ -430,6 +590,18 @@
 
 ### KI-22 🟡 `PersonaStore.upsertRole` 激活新角色时**不清旧主动行**（写侧会同步改两行）
 
+> ★ **2026-10-16 已修**（change: [`fix-role-activation-invariant`](../openspec/archive/2026-10-16-fix-role-activation-invariant/proposal.md)，已归档）。
+> `upsertRole` 的激活改为与 `setActive` **同语义**（同事务内**先清后置**）；
+> 新建行一律先插 `is_active = 0`；`get()` 加 `ORDER BY id` 作**兜底**（针对历史脏数据）。
+> 契约写进 `role-system` §2.3。
+> ★ 复核时确认了下面「为什么现在没爆」的判断**仍然成立**：
+> 当时之所以观测不到双激活，是因为唯一调用方 `importRole` 在约 50 行后顺手调了 `setActive`
+> —— **那是调用顺序的巧合，不是不变量**，所以本项仍按缺陷修（不因"不可达"而放过）。
+> ⚠️ **未做**：8 个写点仍是不带 `LIMIT 1` 的 `UPDATE … WHERE is_active = 1`。
+> 写入侧已保证单一激活，故**不需要**给它们打补丁；若将来又出现双激活，
+> 应先查是哪条写入路径破坏了不变量，而不是给读侧加 `LIMIT`。
+> 下面保留原始记录作为依据。
+
 > **核验结论：代码属实，但当前「不可达持久双激活」** —— 见下面的「为什么现在没爆」。
 
 - **现象（代码属实）**：`upsertRole` 用
@@ -458,6 +630,14 @@
 
 ### KI-23 🟠 dsh 拿不到 `session.id` 时退化成 `dsh:unknown`，**多个真实会话挤进同一个桶**
 
+> ★ **2026-10-16 已修**（change: [`fix-dsh-ingest-and-settlement`](../openspec/archive/2026-10-16-fix-dsh-ingest-and-settlement/proposal.md)，已归档）。
+> `sessionIdOf()` 返回类型改为 `string | null`（**删掉 `'unknown'` 字面量**），
+> 取不到 id 时**不回传、不结算** + 限频诊断（每类事件首次一行 warn，其后静默计数）。
+> **第二道闸**：服务端 `/api/ingest` 同步拒收字面量 `dsh:unknown`
+> （`packages/server/src/ingest.ts` 的 `UNKNOWN_SESSION_ID`），拒绝原因具体。
+> 契约见 `openspec/specs/dsh-adapter/spec.md` §2.5.1 **契约 7**。
+> 下面保留原始记录作为依据。
+
 > **核验结论：成立，无任何守卫。**
 
 - **现象**：`session-id.ts:29` 的 `sessionIdOf()` 在取不到 id 时返回字面量 `'unknown'`
@@ -478,6 +658,16 @@
   与子 agent 同一条纪律；或至少在 `installBridge` 入口 `throw`（响亮失败优于静默混桶）。
 
 ### KI-24 🔴 dsh `turn/end` 的 flush 还在飞，`session/disposed` 的 flush+结算就抢跑 —— 会话末条**永久不进摘要**
+
+> ★ **2026-10-16 已修**（change: [`fix-dsh-ingest-and-settlement`](../openspec/archive/2026-10-16-fix-dsh-ingest-and-settlement/proposal.md)，已归档）。
+> 投递队列新增 `packages/dsh-adapter/src/delivery.ts`：`drain()` 返回一条**覆盖在途批次**的
+> promise 链（串行化），`session/disposed` 改为 `drainThenSettle`——
+> **排空成功才结算**，回传失败则**挂起**（不写假的完成态），
+> 并在**下一次成功排空后自动补做**（再次结算入口，同会话去重、尝试次数上限 3）。
+> 契约见 `openspec/specs/dsh-adapter/spec.md` §2.5.1 **契约 2 / 5 / 6**。
+> ⚠️ **已知边界**：若插件实例在排空成功前就卸载，重试链随之消失——
+> 此时只保证「不结算 + 响亮失败」，不保证补上。
+> 下面保留原始记录作为依据。
 
 > **核验结论：成立，且后果是永久性的（本轮最严重的一条）。**
 
@@ -522,6 +712,12 @@
   （`EventStore.ts:29`）——**列单不含 `archived`** ⇒ 冲突时该列**回落默认 0**，
   于是一条软删除（`archived=1`）的事件会被**复活**，且内容被新事件覆盖。
   这正是已登记的 **KI-12**，本项是它的**dsh 侧触发路径**。
+- ★ **2026-10-16 后果已变（KI-12 修复后）**：不再覆盖、不再复活软删行，改为
+  **保留原事件 + `logger.warn` 报冲突**。所以 `seq` 真重数的后果从
+  「**旧事件被改写/复活**」变成「**新事件被丢弃**」——即那几轮对话**进不了记忆**
+  （日志有 warn，但不再是数据被污染）。⇒ 未证实的那一点**仍然必须查**：
+  两种后果都不可接受，只是形态不同。另注：现在**没有任何自动重试**会补上被丢弃的新事件
+  （该 id 已存在，`insert` 只会幂等空转）。
 - **未证实的关键点**：`seq` 的语义（是否跨 restart/resume 单调）。
   ⚠️ 本仓**没有任何地方记录它**——`openspec/specs/dsh-adapter/spec.md` 里
   `seq` **零命中**，测试只硬编码 `seq: 1 / 7`。dsh 实现打包在 `app.asar` 里，
@@ -535,9 +731,60 @@
 
 ---
 
+### KI-26 🟠 「没有历史摘要 + 消息全部早于 24h」⇒ 那批消息**永远进不了摘要**
+
+> **发现方式**：2026-10-16 跑真实 e2e 时，`cron.test.ts` / `real-api.test.ts`
+> 各挂 1 条（`basics` 没被重写、**facts 一条没提出来**）。核实后确认
+> **不是当轮那批改动的回归**（baseline `HEAD` 的 `summaryAnchor()` 与工作区逐字相同、
+> 这两个用例一行没动），而是暴露了这个既有行为问题。
+>
+> ★ **2026-10-16 已修**（change: [`fix-summary-anchor-floor`](../openspec/archive/2026-10-16-fix-summary-anchor-floor/proposal.md)，已归档）。
+> 无历史摘要时下界改为「**该会话最早的事件 − 1ms**」，**不设时间上限**。
+> 真实 e2e **用例一行未改**即转绿（`cron` / `real-api` 由挂转过）。
+>
+> **决定性的判断（记下来防止后人重走）**：`now − 24h` 兜底是 **2026-10-11 事故的对策**，
+> 不是疏忽；但那次事故的**病因**是「三个入口都没传锚点 ⇒ **同一段历史被反复摘要**」
+> （45 秒内连摘三次），**坏窗口 46~61 天只是症状**。病因已被"锚点只此一处 + 摘完就前进"堵死
+> ⇒ 加上限反而是把**静默永久丢失**换回来。
+> ⚠️ **我一度实现了"7 天有界版"并跑通 core 757 绿，随后自己推翻**：
+> 上限无法覆盖事故自己的症状场景（e2e fixture 距今三个半月，任何有限上限都挡在外面，
+> 实测仍是 3/5），且它把"永久丢失"换成了"**小声的**永久丢失"，而本项的教训恰恰是静默最危险。
+> ⚠️ **残留风险（未解决）**：从未摘过且超过 `LIMIT 1000` 条的会话，最老那批仍够不到
+> —— 彻底做法是**分块回填**（见下表「历史画像回填」）。
+
+- **现象**：`MemoryManager.summaryAnchor(sessionId)`（`MemoryManager.ts:1086`）在
+  「**这个会话还没有上一份摘要**」时，用 **`Date.now() − 24h`** 作窗口下界：
+
+  ```ts
+  const last = this.conversationStore.getLatestBySession(sessionId);
+  const anchor = last?.ended_at ? new Date(last.ended_at)
+                                : new Date(Date.now() - 24 * 3600 * 1000);
+  ```
+
+  ⇒ 只要该会话的**消息都早于「现在 − 24h」**，下界就把它们全部排除
+  ⇒ `process()` 走到 `no-events` 直接返回 ⇒ **既不产摘要、也不产 facts**。
+- **为什么是"永远"**：这些事件**没有被标记 `processed`**，看似"下次还有机会"；
+  但下一次的锚点是「上一份摘要的 `ended_at`」——而**上一份摘要根本不存在**，
+  于是每回都退回 `now − 24h`，而"now"还在往前跑 ⇒ **越等越够不着**。
+- **可复现的真实场景**：会话开着超过 24 小时才结束（dsh 的长会话、
+  QQ 群里持续几天的会话），或进程停过一段时间后由 `archiveStaleSessions` 归档 ——
+  首批消息（最老那一段）**永久不进摘要**。属 KI-24「永久不进摘要」同一族。
+- **为什么现在没爆**：常见路径是「会话结束时就摘要」——那一刻消息都是新鲜的，
+  `now − 24h` 全都包含在内。**只有"结束得太晚"才漏**，而那一刻通常没人盯。
+- **取证**：e2e 里把事件 `created_at` 写死成 `2026-06-28`（比 `now − 24h` 早三个多月）
+  即**稳定复现**；对照 `full-session.test.ts` 用 `new Date()`，同一套代码 facts 正常提取。
+- **建议方向**（**未动手**）：兜底下界不该用「现在」，而应当用
+  「**该会话最早事件的 `created_at`**」（没有历史摘要时的语义 = 从头摘要）；
+  或退一步用会话的 `started_at`。⚠️ 改之前要评估**重摘要风险**：
+  下界放宽到"从头"会让任何未标记 `processed` 的旧事件重新进入摘要，
+  需要确认不会与 `processed` 位形成二次摘要（KI-19 同族风险）。
+- **优先级**：🟠（是**静默丢失**，且丢了以后无法从摘要恢复；但触发条件是"结束得太晚"，
+  不是每条消息都受影响）。修它应走独立 change（本项只登记）。
+
+---
+
 ## 📌 已定名但未开 change
 
 | 名字 | 内容 | 出处 |
 |---|---|---|
-| `unify-core-shutdown` | 统一停机清理（= KI-6） | `modularize-core-assembly` proposal 决策 2 |
 | 历史画像回填 | 线上 `basics`/`facts` 长期稀疏，修复只保证从此往后；回填需重跑历史 `onSessionEnd`，成本与副作用待评估 | `fix-profile-extract-empty-response` tasks 遗留 |
