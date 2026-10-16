@@ -487,6 +487,26 @@ TS 不报错（少形参可赋给多形参签名），但槽位会被静默丢�
 `PersonaAdapter` 都已改用共用解析器。**新增任何 LLM 结构化消费方都必须照办**，
 不要再抄一份 `JSON.parse`。
 
+**契约 5：记忆必须有**显式渠道字段**（`channel`），且**写入时**落库**
+（2026-10-16，change: `add-memory-channel-field`）。
+
+背景：后续要让昔涟**从 QQ 侧调用 dsh 编程工具** ⇒ QQ 日常对话与 dsh 编程会话在同一套库里
+并存，且**将来要特殊处理**（差异化召回 / 注入策略）。
+
+| 规则 | 为什么 |
+|---|---|
+| `events.channel` / `conversations.channel`：`'qq'\|'dsh'\|'webui'\|'unknown'` | 渠道必须是字段，不是"猜出来的" |
+| **写入时**落库（`insert` 里算），不靠事后反推 | 否则要等下次启动的回填兜底 = "看起来对、其实靠重启" |
+| 判不出来写 **`'unknown'`**；`''` 只表示"还没回填" | 两者语义不同，混起来就分不清"判不出"与"没跑迁移" |
+| 派生判据只在 `utils/channel.ts`（一处，有测试锁） | 判据分叉就是这个仓库反复栽的坑 |
+| ⚠️ **`events.source` 不是渠道**：它是 `chat`/`code`（事件性质） | 实测 730 条 dsh 事件里 **28 条**是 `source='chat'`（用户消息）—— 用 `source='code'` 判 dsh **会漏 28 条** |
+| ⚠️ 也不要把 `session_id` 前缀当作**唯一**渠道来源 | 前缀是脆的：dsh 拿不到 `session.id` 时退化成 `dsh:unknown`，多会话挤一个桶（KI-23） |
+
+⏳ **未完成部分**（同一 change）：`facts` / `character_facts` / `adaptation_hints` 的条目
+还没有 `channel` 字段 —— 这三层**目前仍无法可靠区分渠道**
+（`facts.source` 是 `user`/`inferred` ＝提取方式，不是渠道；只能从 `source_event` 的 id 形态反推，
+而本仓已有契约：`source_event` 会造**合成 id**（如 `reflection-<日期>`），**不可用于溯源**）。
+
 语义是**替换**默认槽，不是合并（否则调用方无法摆脱默认槽的字段，例如去掉 `json_object`）。
 
 **契约 4：这条链路上禁止裸 `catch {}`。**

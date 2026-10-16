@@ -4,6 +4,8 @@ import type { MemoryEvent, SearchResult } from '../types.js';
 import type { IVectorStore } from '../interfaces/IVectorStore.js';
 import { traceZeroRows } from '../../utils/write-trace.js';
 import { logger } from '../../utils/logger.js';
+// ★ add-memory-channel-field：渠道派生（写入时落库，不事后反推）
+import { channelOfSession } from '../../utils/channel.js';
 
 /** ★ 2026-10-16 KI-12：payload 在库里是 JSON **字符串**，键序取决于写库时的对象插入序。
  *  ⚠️ 注意 `JSON.stringify(JSON.parse(raw))` **不排序**——它保留原串键序，因此
@@ -92,8 +94,8 @@ export class EventStore {
     // ③ 新 id → 正常插入（列单与旧实现一致；archived 走表默认 0，这是对的）
     // ★ 8-28 perspective 列（memory-character-perspective）
     this.db.prepare(`
-      INSERT INTO events (id, session_id, source, type, payload, importance, created_at, processed, perspective)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO events (id, session_id, source, type, payload, importance, created_at, processed, perspective, channel)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       event.id,
       event.session_id,
@@ -103,7 +105,11 @@ export class EventStore {
       event.importance,
       event.created_at,
       event.processed,
-      event.perspective ?? 'interaction'
+      event.perspective ?? 'interaction',
+      // ★ 2026-10-16（add-memory-channel-field）：渠道**写入时**就记下来。
+      //   显式给了就用给的；没给则从 session_id 派生（判据在 utils/channel.ts，有测试锁）。
+      //   ⚠️ 不写这一格的话，行会以 '' 落库，要等**下次启动**的初始化回填才补齐。
+      event.channel ?? channelOfSession(event.session_id),
     );
   }
 

@@ -4,6 +4,8 @@ import type { Conversation, SearchResult } from '../types.js';
 import type { IVectorStore } from '../interfaces/IVectorStore.js';
 import { traceZeroRows } from '../../utils/write-trace.js';
 import { logger } from '../../utils/logger.js';
+// ★ add-memory-channel-field：渠道派生（写入时落库）
+import { channelOfSession } from '../../utils/channel.js';
 
 /**
  * 向量写入结果 —— 摘要与向量必须**分别**可判（KI-15）。
@@ -45,9 +47,11 @@ export class ConversationStore {
     // ★ 8-28 character_perspective 列（memory-character-perspective）
     // ★ 9-25 summary_status 列（fix-session-summary-silent-failure）：'ok' | 'failed'
     this.db.prepare(`
-      INSERT INTO conversations (id, session_id, summary, participants, topics, key_decisions, message_count, started_at, ended_at, embedding_id, character_perspective, summary_status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(conv.id, conv.session_id, conv.summary, conv.participants, conv.topics, conv.key_decisions, conv.message_count, conv.started_at, conv.ended_at, conv.embedding_id, conv.character_perspective ?? '', conv.summary_status ?? 'failed');
+      INSERT INTO conversations (id, session_id, summary, participants, topics, key_decisions, message_count, started_at, ended_at, embedding_id, character_perspective, summary_status, channel)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(conv.id, conv.session_id, conv.summary, conv.participants, conv.topics, conv.key_decisions, conv.message_count, conv.started_at, conv.ended_at, conv.embedding_id, conv.character_perspective ?? '', conv.summary_status ?? 'failed',
+      // ★ add-memory-channel-field：渠道写入时落库（不传则由 session_id 派生，派生不出记 'unknown'）
+      conv.channel ?? channelOfSession(conv.session_id));
 
     if (!vector) return 'no-vector';
     if (!this.vectorStore) return 'no-store';

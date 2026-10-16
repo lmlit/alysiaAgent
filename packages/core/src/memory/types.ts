@@ -1,4 +1,6 @@
 // src/memory/types.ts
+// ★ add-memory-channel-field：渠道类型（channel.ts 无依赖，不会成环）
+import type { MemoryChannel } from '../utils/channel.js';
 
 export type EventSource = 'chat' | 'tool' | 'system' | 'code';
 
@@ -21,6 +23,12 @@ export interface MemoryEvent {
   processed: number; // bitmask: 1=profile, 2=summary, 4=persona, 8=knowledge
   /** ★ 8-28 视角标记（memory-character-perspective）：'interaction'(与用户互动) | 'self'(昔涟自己的生活) */
   perspective?: 'interaction' | 'self';
+  /**
+   * ★ 2026-10-16（change: `add-memory-channel-field`）：**记忆渠道**。
+   * 不传则由 `session_id` 派生（`utils/channel.ts`）；派生不出来记 `'unknown'`，**不许猜**。
+   * 用途：QQ 日常对话与 dsh 编程会话并存时做**差异化处理**。
+   */
+  channel?: MemoryChannel;
 }
 
 export interface UserProfile {
@@ -83,6 +91,8 @@ export interface Conversation {
   started_at: string;
   ended_at: string | null;
   embedding_id: string | null;
+  /** ★ 2026-10-16（add-memory-channel-field）：记忆渠道（不传则由 session_id 派生） */
+  channel?: MemoryChannel;
   /** ★ 8-28 角色视角（memory-character-perspective）：昔涟在这段对话中的感受/变化 */
   character_perspective?: string;
   /** ★ 9-25 fix-session-summary-silent-failure：摘要生成状态。

@@ -273,6 +273,40 @@ export function initializeDatabase(db: Database.Database): void {
   addColumnIfMissing(db, 'conversations', 'summary_status',
     `ALTER TABLE conversations ADD COLUMN summary_status TEXT DEFAULT 'ok'`);
 
+  // ★ 2026-10-16（change: `add-memory-channel-field`）：**记忆渠道**显式字段。
+  //   背景：后续要让她**从 QQ 侧调用 dsh 编程工具** ⇒ QQ 日常对话与 dsh 编程会话
+  //   在同一套库里并存，且将来要**特殊处理**（差异化召回/注入）。
+  //   此前渠道只能靠 `session_id` 前缀猜，而前缀是脆的（dsh 拿不到 id 时退化成
+  //   `dsh:unknown`，会挤成一个桶）；`events.source` 也**不能**当渠道用
+  //   （它是 chat/code，而 dsh 会话里两者都有，实测 730 条里 28 条是 chat）。
+  //   ⇒ 写入时显式记，不再事后反推。
+  //   默认值 **''** 而不是 'unknown'：'' 表示"本列之前不存在、还没回填"，
+  //   回填后统一为四值之一（qq/dsh/webui/unknown），两者语义不同，不许混。
+  for (const table of ['events', 'conversations'] as const) {
+    addColumnIfMissing(db, table, 'channel', `ALTER TABLE ${table} ADD COLUMN channel TEXT DEFAULT ''`);
+  }
+
+  // 回填：只填**还没填过**的行（`channel = ''`），且只按前缀判得出来的填，
+  // 判不出来就**如实**写 'unknown' —— 不许猜（比如 `dsh:unknown` 本身就是退化 id，
+  // 归到 dsh 是安全的，因为它确实来自 dsh 通道）。
+  // ⚠️ 判据顺序必须与 `utils/channel.ts` 的 `channelOfSession` 一致（有测试锁）。
+  db.exec(`
+    UPDATE events SET channel = CASE
+      WHEN session_id LIKE 'dsh:%'   THEN 'dsh'
+      WHEN session_id LIKE 'qq%'     THEN 'qq'
+      WHEN session_id LIKE 'webui:%' THEN 'webui'
+      ELSE 'unknown' END
+    WHERE channel = '' OR channel IS NULL
+  `);
+  db.exec(`
+    UPDATE conversations SET channel = CASE
+      WHEN session_id LIKE 'dsh:%'   THEN 'dsh'
+      WHEN session_id LIKE 'qq%'     THEN 'qq'
+      WHEN session_id LIKE 'webui:%' THEN 'webui'
+      ELSE 'unknown' END
+    WHERE channel = '' OR channel IS NULL
+  `);
+
   // ★ 8-27 叙事化重构（life-system-narrative-refactor）迁移——全部探测式幂等，不 DROP
   // 1) ai_life_state.mood_value：情绪累积值 -100..100（同向加成/反向衰减/8h 回归 0）
   addColumnIfMissing(db, 'ai_life_state', 'mood_value',
