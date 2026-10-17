@@ -258,3 +258,36 @@ describe('★ 续作（新 revision）', () => {
     expect(s.store.addRevision('pt-nope', 'x', at(1))).toBeNull();
   });
 });
+
+// ★ 2026-10-18 真机撞出来的：runner 按项目起服务 ⇒ 新登记的项目**永远没人认领**
+//   （任务一路 queued，静默）。修法：一个 runner 服务所有项目，
+//   由服务端问这里「谁还有最老的活」。
+describe('★ 谁还有活（nextQueuedProject）', () => {
+  let s: ReturnType<typeof makeStore>;
+  beforeEach(() => { s = makeStore(); });
+
+  it('没有排队任务 → null（空闲是常态，不是错误）', () => {
+    expect(s.store.nextQueuedProject()).toBeNull();
+  });
+
+  it('★ 取**最老**的排队任务所属项目（不饿死后登记的项目）', () => {
+    s.store.create({ ...base, projectId: 'b', requestKey: 'rb' }, at(0));
+    s.store.create({ ...base, projectId: 'a', requestKey: 'ra' }, at(5));
+    expect(s.store.nextQueuedProject()).toBe('b');
+  });
+
+  it('★ 最老的那个已被认领（running）→ 轮到下一个项目', () => {
+    s.store.create({ ...base, projectId: 'b', requestKey: 'rb' }, at(0));
+    s.store.create({ ...base, projectId: 'a', requestKey: 'ra' }, at(5));
+    expect(s.store.claimNext('b', at(6))).not.toBeNull();
+    expect(s.store.nextQueuedProject()).toBe('a');
+  });
+
+  it('全部终态 → null', () => {
+    const t = s.store.create({ ...base, projectId: 'x', requestKey: 'rx' }, at(0));
+    const claimed = s.store.claimNext('x', at(1))!;
+    s.store.submitResult(claimed.taskId, { status: 'needs_review' }, at(2));
+    expect(t.kind).toBe('created');
+    expect(s.store.nextQueuedProject()).toBeNull();
+  });
+});

@@ -232,8 +232,32 @@ iframe 在滚动/深链/移动端都别扭，还要和 `X-Frame-Options` 打架�
 **契约 37（边界不破）**：她仍只能写自己工作区的 `public/`；**碰不到基站**（生成器与链接都是 root 的）。
 基站样式 v1 不归她（统一卡片墙）—— 这是刻意的：展示层要稳，才能可靠地反映"她做了什么"。
 
-**契约 38（`publicUrl` 指具体页面）**：`projects.<id>.publicUrl = <basе>/p/<id>/`。
+**契约 38（`publicUrl` 指具体页面）**：`projects.<id>.publicUrl = <base>/p/<id>/`。
 回执与推送带的是**她刚做的那个页面**，不是基站根 —— 用户问"给我链接"时要一步到位。
+
+## 12. 认领模型：一个 runner 服务所有项目（2026-10-18，change: `claim-across-projects`）
+
+**为什么改**：为了验证基站会长卡片，登记了第二个项目 `alysia-toys` 并提交任务 ——
+**任务停在 `queued`，580 秒没人认领**。原因：runner 是按项目起服务的
+（`--project alysia-blog` 写死）⇒ 每加一个项目就得再加一个服务，**漏了就静默排队**。
+这比"要多起一个服务"更糟：**它是静默的**。
+
+**契约 39（一个 runner 服务所有登记项目）**：`GET /api/project-tasks/next` 的 `projectId` **可选**。
+不带 ⇒ 由服务端决定；带 ⇒ 只认领该项目（隔离/调试用），未知则 400 并**列出已登记**。
+
+**契约 40（取最老的活，不饿死后登记者）**：不带 `projectId` 时先 `nextQueuedProject()`
+（`SELECT project_id ... WHERE status='queued' ORDER BY created_at ASC LIMIT 1`），
+再 `claimNext(那个项目)`。
+★ **认领本身仍原子**：这一步只**读**不改状态，真正的"找最老 → 标 running"仍在
+`claimNext` 的**单事务**里 ⇒ 两个 runner 并发也不会双认领（契约 5 未被削弱）。
+
+**契约 41（注销的项目不许静默丢活）**：排队任务所属项目已从登记表移除 ⇒ **不执行**、
+**留痕 warn**、返回空 —— 不许"看起来在跑"。
+
+**契约 42（失败要响亮）**：runner 的 `--project` 由必填改为可选时，必须同时改掉
+代码里的硬校验（`if (!cfg.project) exit(2)`），不能只改 usage 文案。
+⚠️ 我第一次就漏了这条，结果服务 `activating`、日志刷满帮助文本 —— 记在案。
+
 
 
 

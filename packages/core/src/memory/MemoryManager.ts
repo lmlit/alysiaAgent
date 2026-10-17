@@ -1474,13 +1474,24 @@ export class MemoryManager {
     return this.projectTaskStore.claimNext(projectId);
   }
 
+  /**
+   * 还有活可干的、**最老**的那个项目 id（没有则 `null`）。
+   *
+   * ★ 2026-10-18（真机撞出来的）：runner 原先按项目起服务（`--project alysia-blog`），
+   *   新登记的项目**永远没人认领**，任务一路 `queued` 而且**静默**（我实测等了 580 秒）。
+   *   改成"一个 runner 服务所有项目"：认领方不指定项目时，由这里决定先做谁的活。
+   *   取最老而不是第一个项目，是为了**不饿死**后登记的项目。
+   */
+  nextQueuedProject(): string | null {
+    return this.projectTaskStore.nextQueuedProject();
+  }
+
   /** runner 回传结果；不在 `running` 的任务不接受（迟到的回传不许覆盖） */
   submitProjectTaskResult(taskId: string, input: SubmitResultInput): ProjectTask | null {
     return this.projectTaskStore.submitResult(taskId, input);
   }
 
-  /** 追加修改意见 ⇒ 新 revision、回 `queued`、**沿用同一个工程会话** */
-  addProjectTaskRevision(taskId: string, feedback: string): ProjectTask | null {
+  /** 追加修改意见 ⇒ 新 revision、回 `queued`、**沿用同一个工程会话** */  addProjectTaskRevision(taskId: string, feedback: string): ProjectTask | null {
     return this.projectTaskStore.addRevision(taskId, feedback);
   }
 

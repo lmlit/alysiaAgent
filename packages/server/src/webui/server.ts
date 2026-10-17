@@ -491,13 +491,32 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
    */
   app.get('/api/project-tasks/next', async (req, reply) => {
     const q = req.query as { projectId?: unknown } | undefined;
-    const project = projectOr(q?.projectId);
-    if (!project) {
-      return reply.code(400).send({
-        ok: false,
-        error: `未知项目 ${typeof q?.projectId === 'string' ? q.projectId : '(空)'}（已登记：${registered()}）`,
-      });
+    const asked = typeof q?.projectId === 'string' ? q.projectId : '';
+
+    // ★ 2026-10-18（真机撞出来的）：`projectId` 现在**可选**。
+    //   起因：runner 按项目起服务（`--project alysia-blog`）⇒ 新登记的项目**永远没人认领**，
+    //   任务一路 `queued` 且**静默**（实测等了 580 秒才发现）。
+    //   现在：一个 runner 服务所有项目，不指定就让服务端挑「还有活的最老的项目」。
+    let project: { id: string; workspace: string; profile: string; publicUrl?: string } | null = null;
+    if (asked) {
+      project = projectOr(asked);
+      if (!project) {
+        return reply.code(400).send({
+          ok: false,
+          error: `未知项目 ${asked}（已登记：${registered()}）`,
+        });
+      }
+    } else {
+      const pid = core.memoryManager.nextQueuedProject();
+      if (!pid) return { ok: true, task: null };
+      project = projectOr(pid);
+      if (!project) {
+        // 有排队任务但项目已从登记表移除 ⇒ 不执行（且要留痕，不能静默）
+        logger.warn(`[project-task] 有排队任务的项目 "${pid}" 未登记 —— 跳过（请清理或重新登记）`);
+        return { ok: true, task: null };
+      }
     }
+
     const task = core.memoryManager.claimNextProjectTask(project.id);
     if (!task) return { ok: true, task: null };
     logger.info(`[project-task] 被认领：${task.taskId}（revision ${task.revision}，第 ${task.attempts} 次）`);

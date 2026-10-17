@@ -33,6 +33,8 @@ function makeHarness(overrides: Record<string, unknown> = {}) {
     recordProjectTaskResult: vi.fn(async () => true),
     /** 让**她自己**说那句话（失败回落模板） */
     composeProjectTaskNotice: vi.fn(async () => '页面弄好啦，你看看顺不顺眼～'),
+    /** ★ 2026-10-18：不指定项目时，由服务端挑"还有活的最老的项目" */
+    nextQueuedProject: vi.fn(() => 'alysia-blog'),
     ...overrides,
   };
   const push = { available: true, sendProactive: vi.fn(async () => true) };
@@ -396,6 +398,49 @@ describe('★ 结果回送原会话（return-project-task-result）', () => {
     expect(res.statusCode).toBe(409);
     expect(h.mm.recordProjectTaskResult).not.toHaveBeenCalled();
     expect(h.push.sendProactive).not.toHaveBeenCalled();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// ★ 2026-10-18 真机撞出来的：runner 按项目起服务 ⇒ 新登记的项目**永远没人认领**，
+//   任务一路 queued 且静默（实测 580 秒）。修法：projectId 变可选，服务端挑最老的活。
+// ─────────────────────────────────────────────────────────────
+describe('★ 认领不指定项目（一个 runner 服务所有项目）', () => {
+  it('★ 不带 projectId → 先问"谁有最老的活"，再认领那个项目', async () => {
+    const h = makeHarness({ nextQueuedProject: vi.fn(() => 'alysia-blog') });
+    const app = await buildApp(h.core);
+    const res = await app.inject({ method: 'GET', url: '/api/project-tasks/next' });
+    expect(res.statusCode).toBe(200);
+    expect(h.mm.nextQueuedProject).toHaveBeenCalled();
+    expect(h.mm.claimNextProjectTask).toHaveBeenCalledWith('alysia-blog');
+    expect(res.json().project.id).toBe('alysia-blog');
+    expect(res.json().project.workspace).toBe('/srv/blog');
+  });
+
+  it('没有排队的活 → 200 + task:null（空闲是常态，不是错误）', async () => {
+    const h = makeHarness({ nextQueuedProject: vi.fn(() => null) });
+    const app = await buildApp(h.core);
+    const res = await app.inject({ method: 'GET', url: '/api/project-tasks/next' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true, task: null });
+    expect(h.mm.claimNextProjectTask).not.toHaveBeenCalled();
+  });
+
+  it('★ 排队任务的项目已被注销 → 不执行、也不静默（留痕后返回空）', async () => {
+    const h = makeHarness({ nextQueuedProject: vi.fn(() => 'ghost-project') });
+    const app = await buildApp(h.core);
+    const res = await app.inject({ method: 'GET', url: '/api/project-tasks/next' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true, task: null });
+    expect(h.mm.claimNextProjectTask).not.toHaveBeenCalled();
+  });
+
+  it('显式指定未知项目 → 仍然 400 并列出已登记（错误信息要能照着改）', async () => {
+    const h = makeHarness();
+    const app = await buildApp(h.core);
+    const res = await app.inject({ method: 'GET', url: '/api/project-tasks/next?projectId=nope' });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toContain('alysia-blog');
   });
 });
 

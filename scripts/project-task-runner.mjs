@@ -66,8 +66,11 @@ function parseArgs(argv) {
 }
 
 function printHelp() {
-  console.log(`用法：node project-task-runner.mjs --project <id> [--once] [--dry-run]
-  --project <id>    必须是 alysia config.yml 里 projects 登记过的 id
+  console.log(`用法：node project-task-runner.mjs [--project <id>] [--once] [--dry-run]
+  --project <id>    可选。**不传 = 服务所有项目**（由服务端挑"还有活的最老的项目"）
+                    ★ 2026-10-18：原先必须传，且 runner 是按项目起服务的 ⇒
+                      新登记的项目永远没人认领，任务一路 queued 而且是**静默**的。
+                    传了则只认领该项目的任务（用于隔离/调试）。
   --base <url>      alysia 基址（默认 http://127.0.0.1:6186）
   --interval <sec>  轮询间隔（默认 10）
   --timeout <sec>   单任务执行上限（默认 1800）
@@ -198,8 +201,22 @@ function runDsh({ workspace, profile, task, timeoutSec }) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * 认领请求的 URL。
+ *
+ * ★ 2026-10-18：`project` 为空 ⇒ **不带查询参数** ⇒ 服务端挑"还有活的最老的项目"。
+ *   起因：runner 按项目起服务时，新登记的项目永远没人认领（任务静默排队）。
+ */
+export function nextUrl(project) {
+  return project
+    ? `/api/project-tasks/next?projectId=${encodeURIComponent(project)}`
+    : '/api/project-tasks/next';
+}
+
 async function tick(cfg, log) {
-  const claimed = await api(cfg, 'GET', `/api/project-tasks/next?projectId=${encodeURIComponent(cfg.project)}`);
+  // ★ 不传 --project ⇒ 不带查询参数 ⇒ 服务端挑"还有活的最老的项目"（一个 runner 服务所有项目）
+  const url = nextUrl(cfg.project);
+  const claimed = await api(cfg, 'GET', url);
   if (!claimed.ok) {
     log(`认领失败（HTTP ${claimed.status}）：${claimed.json?.error ?? claimed.text?.slice(0, 200)}`);
     return { didWork: false };
@@ -248,14 +265,15 @@ async function main() {
   const cfg = parseArgs(process.argv.slice(2));
   const log = (m) => console.log(`[${new Date().toISOString()}] ${m}`);
 
-  if (!cfg.project) { console.error('缺 --project（或 PROJECT_TASK_PROJECT）'); printHelp(); process.exit(2); }
+  // ★ 2026-10-18：`--project` 不再是必填。不传 = 服务所有项目（服务端挑"还有活的最老的项目"）。
+  //   起因：按项目起服务时，新登记的项目永远没人认领（任务静默排队，实测 580 秒才发现）。
   if (!cfg.token) { console.error('缺 ALYSIA_WEBUI_TOKEN —— 服务器上 alysia 的 /api/* 强制鉴权'); process.exit(2); }
   if (!process.env.DEEPSEEK_API_KEY) {
     // ⚠️ 只警告不退出：dry-run 与调试时不需要模型凭据
     log('警告：环境里没有 DEEPSEEK_API_KEY —— 真跑任务会 MISSING_CREDENTIAL（见 /root/.dsh-web.env）');
   }
 
-  log(`runner 启动：project=${cfg.project} base=${cfg.base} interval=${cfg.intervalSec}s ` +
+  log(`runner 启动：project=${cfg.project || '(全部登记项目)'} base=${cfg.base} interval=${cfg.intervalSec}s ` +
       `timeout=${cfg.timeoutSec}s${cfg.dryRun ? ' [dry-run]' : ''}`);
 
   for (;;) {

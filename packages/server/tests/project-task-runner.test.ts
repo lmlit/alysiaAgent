@@ -8,7 +8,7 @@
 // ⚠️ 真正的**副作用**（spawn dsh、HTTP 轮询）不在这里测 —— 那是真机验收的事。
 import { describe, it, expect } from 'vitest';
 // @ts-expect-error —— 宿主脚本是 .mjs，没有类型声明（故意的：它要能被 node 直跑）
-import { buildDshArgs, buildTaskText, parseRunEvents, mapOutcome } from '../../../scripts/project-task-runner.mjs';
+import { buildDshArgs, buildTaskText, parseRunEvents, mapOutcome, nextUrl } from '../../../scripts/project-task-runner.mjs';
 
 const task = {
   taskId: 'pt-1', goal: '做一个关于我页面', acceptanceCriteria: '能构建', revision: 0, dshSessionId: null,
@@ -101,5 +101,23 @@ describe('★ 终态映射（runner 永远不写 completed）', () => {
     ]) {
       expect(mapOutcome(input).status).not.toBe('completed');
     }
+  });
+});
+
+// ★ 2026-10-18 真机撞出来的：runner 按项目起服务（`--project alysia-blog`）⇒
+//   新登记的项目**永远没人认领**，任务一路 queued 而且是静默的（实测等了 580 秒才发现）。
+//   改成：不传 project ⇒ 不带查询参数 ⇒ 服务端挑"还有活的最老的项目"。
+describe('★ 认领 URL（不指定项目 = 服务所有项目）', () => {
+  it('★ 不传 project → **不带**查询参数（交给服务端决定）', () => {
+    expect(nextUrl('')).toBe('/api/project-tasks/next');
+    expect(nextUrl(undefined as unknown as string)).toBe('/api/project-tasks/next');
+  });
+
+  it('传了 project → 带 projectId（隔离/调试用）', () => {
+    expect(nextUrl('alysia-blog')).toBe('/api/project-tasks/next?projectId=alysia-blog');
+  });
+
+  it('项目 id 要 encode（不能把特殊字符塞进 query）', () => {
+    expect(nextUrl('a b&c')).toBe('/api/project-tasks/next?projectId=a%20b%26c');
   });
 });

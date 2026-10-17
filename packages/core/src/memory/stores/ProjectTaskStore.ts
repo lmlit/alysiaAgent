@@ -234,6 +234,28 @@ export class ProjectTaskStore {
    *
    * @returns 没有可认领的任务时返回 `null`（**不是**错误：runner 空转是常态）
    */
+  /**
+   * 最老的、还有活可干的项目 id（没有则 `null`）。
+   *
+   * ★ 2026-10-18（真机撞出来的）：runner 原先**按项目**起服务（`--project alysia-blog`），
+   *   于是新登记的项目**永远没人认领**——任务一路 `queued` 到天荒地老，而且是**静默**的。
+   *   改成「一个 runner 服务所有项目」后，认领方不再指定项目，由服务端决定：
+   *   先问这里「谁有最老的活」，再去 `claimNext(那个项目)`（认领本身仍是原子的）。
+   *
+   * 取"最老"而不是"第一个项目"，是为了**不饿死**后登记的项目。
+   */
+  nextQueuedProject(): string | null {
+    const row = this.db
+      .prepare(
+        `SELECT project_id FROM project_tasks
+         WHERE status = 'queued'
+         ORDER BY created_at ASC
+         LIMIT 1`,
+      )
+      .get() as { project_id?: string } | undefined;
+    return row?.project_id ?? null;
+  }
+
   claimNext(projectId: string, now = new Date()): ProjectTask | null {
     const ts = now.toISOString();
     const staleBefore = new Date(now.getTime() - this.claimedTimeoutMs).toISOString();
