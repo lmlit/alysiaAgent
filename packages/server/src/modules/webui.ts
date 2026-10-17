@@ -29,7 +29,7 @@ export interface WebuiModuleOptions {
 export const webuiModule: Module<WebuiModuleOptions> = {
   name: 'al:webui',
   provides: false,
-  inject: ['al:core', 'al:config', 'al:push'],
+  inject: ['al:core', 'al:config', 'al:push', 'al:vision'],
   async apply(ctx, opts) {
     const { config, isDesktop } = ctx.get<RuntimeConfig>('al:config')!;
     const core = ctx.get<AlysiaCore>('al:core')!;
@@ -38,6 +38,11 @@ export const webuiModule: Module<WebuiModuleOptions> = {
      * 无 QQ 官方适配器时 `al:push` 是 `available: false` 的空实现 ⇒ 消费方跳过，不是报错。
      */
     const push = ctx.get('al:push');
+    /**
+     * ★ 2026-10-18（change: `give-author-eyes`）：让**她**能"看"自己做的页面。
+     * 视觉只在她那边缺（她是文本模型）——服务端本来就有 VisionBridge（GLM-4V-Flash）。
+     */
+    const vision = ctx.get('al:vision');
 
     try {
       const { createWebuiApp } = await import('../webui/server.js');
@@ -74,6 +79,7 @@ export const webuiModule: Module<WebuiModuleOptions> = {
         staticDist,
         projects: config.projects,
         push: push as never,
+        vision: vision as never,
       });
       await webui.listen({ port: config.server.port, host: bindHost });
 

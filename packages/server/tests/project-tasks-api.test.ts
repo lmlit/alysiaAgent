@@ -13,7 +13,6 @@ import { describe, it, expect, vi } from 'vitest';
 import { createWebuiApp } from '../src/webui/server.js';
 
 const PROJECTS = { 'alysia-blog': { workspace: '/srv/blog', profile: 'alysia', publicUrl: 'http://example.test:3389/' } };
-
 const TASK = {
   taskId: 'pt-1', requestKey: 'req-1', projectId: 'alysia-blog',
   originSessionId: 'qq:owner', origin: 'user', goal: '做一个关于我页面',

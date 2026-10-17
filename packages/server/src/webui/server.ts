@@ -36,7 +36,9 @@ import { logger } from '@alysia/core';
 import { registerChatRoutes } from './chat.js';
 import { MAX_INGEST_BATCH, validateIngestEvent, normalizeIngestEvent } from '../ingest.js';
 import type { MemoryEvent } from '@alysia/core/memory';
-import { existsSync, readFileSync, statSync, writeFileSync, unlinkSync } from 'fs';
+import { existsSync, readFileSync, statSync, writeFileSync, unlinkSync, writeFileSync as writeFileSyncForVision } from 'fs';
+import { randomUUID } from 'crypto';
+import { tmpdir } from 'os';
 import { basename, dirname, join, resolve, sep } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -67,6 +69,12 @@ export interface WebuiAuthOptions {
     available: boolean;
     sendProactive(openid: string, message: string, opts?: { maxSegments?: number }): Promise<boolean>;
   };
+  /**
+   * 视觉桥（`al:vision`，GLM-4V-Flash）。★ 2026-10-18（change: `give-author-eyes`）：
+   * 委托方是**文本模型**，看不见自己做的页面 —— 给它一条"把图变成话"的通道。
+   * 缺省 = 没配视觉模型，此时 `/api/vision/describe` 返回 501（**明确不可用**，不是假装成功）。
+   */
+  vision?: { describe(imagePath: string, prompt?: string): Promise<string | null> };
 }
 
 export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
@@ -79,6 +87,8 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
   const projects = opts.projects ?? {};
   /** 主动推送通道（可能不存在 —— 桌面端/无 QQ 时是空实现） */
   const push = opts.push;
+  /** 视觉桥（可能不存在 —— 没配视觉模型时不可用） */
+  const vision = opts.vision;
   const app = Fastify({ logger: false });
 
   // ★ 8-29 cr-p0-webui-auth：auth 钩子（chat 路由 registerChatRoutes 同受保护）
@@ -104,6 +114,64 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
 
   // ── 系统 ──────────────────────────────────────────
   app.get('/api/health', async () => ({ status: 'ok', uptime: process.uptime() }));
+
+  // ─────────────────────────────────────────────────────────────
+  // ★ 2026-10-18（change: `give-author-eyes`）：看图说话
+  //
+  // 为什么需要：委托方是**文本模型** —— 她能 grep 出"零外链"、能 curl 出 200，
+  // 但**看不见页面长什么样**。布局塌了、字被裁了，她的自检照样全绿。
+  // 服务端本来就有 VisionBridge（GLM-4V-Flash），把它开成一条通道给她即可。
+  //
+  // 传输用 **base64 + 容器内临时文件**，不用 URL：服务端在容器里，
+  // 拿不到宿主路径，也不该依赖"容器能不能访问宿主的 3389"。
+  // ─────────────────────────────────────────────────────────────
+  app.post(
+    '/api/vision/describe',
+    { bodyLimit: 12 * 1024 * 1024 },
+    async (req, reply) => {
+      if (!vision) {
+        return reply.code(501).send({
+          ok: false,
+          error: '没有配置视觉模型（al:vision 不可用）—— 这条能力现在不存在，不是你的错',
+        });
+      }
+      const body = req.body as { imageBase64?: unknown; prompt?: unknown } | undefined;
+      const b64 = typeof body?.imageBase64 === 'string' ? body.imageBase64 : '';
+      if (!b64.trim()) return reply.code(400).send({ ok: false, error: '缺 imageBase64' });
+
+      // 调用方常常直接塞 dataURL —— 剥掉前缀再解码
+      const raw = b64.replace(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, '').replace(/\s+/g, '');
+      const buf = Buffer.from(raw, 'base64');
+      if (buf.length === 0) return reply.code(400).send({ ok: false, error: '图片解码后为空' });
+      if (buf.length > 8 * 1024 * 1024) {
+        return reply.code(413).send({ ok: false, error: `图片太大（${buf.length} 字节 > 8MB）` });
+      }
+
+      const prompt =
+        typeof body?.prompt === 'string' && body.prompt.trim()
+          ? body.prompt.trim()
+          : '这是一个网页截图。请用 3-6 句话描述：整体布局、配色、主要区块；' +
+            '并指出有没有明显的排版问题（文字溢出/重叠/大面积空白/图片缺失/对比度太低看不清）。' +
+            '只说你真的看见的，不要猜。';
+
+      const tmp = join(tmpdir(), `alysia-vision-${randomUUID()}.png`);
+      try {
+        writeFileSyncForVision(tmp, buf);
+        const text = await vision.describe(tmp, prompt);
+        if (!text || !text.trim()) {
+          return reply.code(502).send({ ok: false, error: '视觉模型没有返回描述（模型/配额问题）' });
+        }
+        logger.info(`[vision] describe ok：${buf.length} bytes → ${text.length} 字`);
+        return { ok: true, text, bytes: buf.length };
+      } catch (err: any) {
+        logger.warn(`[vision] describe 失败：${err?.message ?? err}`);
+        return reply.code(500).send({ ok: false, error: `视觉描述失败：${err?.message ?? err}` });
+      } finally {
+        try { unlinkSync(tmp); } catch { /* 临时文件删不掉不致命 */ }
+      }
+    },
+  );
+
 
   // ★ 8-15 昔涟形象位:图形化上传/读取(存 server data/portrait.<ext>,不被 build 覆盖)
   const portraitDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../data');
