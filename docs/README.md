@@ -28,7 +28,7 @@
 | [CODE_REVIEW_FIX_PLAN](CODE_REVIEW_FIX_PLAN.md) | 代码自检问题清单与修复记录（2026-07-30） |
 | [CODE_REVIEW_FIX_PLAN-2026-08-29](CODE_REVIEW_FIX_PLAN-2026-08-29.md) | 8-29 全面 CR：P0-P3 共 38 项待修复清单（P0 三件套已修） |
 | [KNOWN-ISSUES](KNOWN-ISSUES.md) | ★ 已知缺陷登记册（**triage 入口，非 spec**；修一条开一个 change） |
-| [HANDOFF](HANDOFF.md) | ★ 会话转接文档（当前状态/待观察/环境速查） |
+| [HANDOFF](HANDOFF.md) | ★ 会话转接文档（**2026-10-17 更新**：当前状态 / 验证边界 / KI-20 数据修复记录 / 新踩的坑 / 下一步） |
 
 ## 🗂 快速导航
 
