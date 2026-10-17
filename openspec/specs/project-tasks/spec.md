@@ -102,6 +102,37 @@ queued ──认领──▶ running ──回传──▶ needs_review ──�
 **契约 15（无取消）**：首版**不提供** cancel —— dsh 协议层没有取消（只能杀进程），
 「本地不再等待」不等于「远端已停止」，那种假照不能进工具。
 
+### 6.1 执行体的运行身份（2026-10-18，change: `harden-delegated-runtime`）
+
+**为什么先做这个、而不是先做审批**：「删库删表 / 暴露网关」这类动作，最可靠的处置**不是问她，
+而是根本做不到**。审批层只该处理「合理但需点头」的动作；能力边界让「不该做」的进不了门。
+（三层强度：**能力边界 > 审批 > 指令黑名单**。黑名单永远漏——`mv`/`dd`/`>`/`chmod`/`docker`/`systemctl`
+都能删东西；而且判据若来自模型自述，等于没有闸。）
+
+**契约 18（非 root）**：委托运行体以专用用户 `alysia-runner` 运行，**不得**以 root 跑。
+服务端进程是 root，但它**不执行**；执行方是宿主上的 `alysia-task-runner.service`。
+
+**契约 19（独立 `DSH_HOME`）**：`/srv/alysia-runner/.dsh`，与 root 的 `/root/.dsh` 完全隔离。
+理由：后者含 `.credentials.yaml` 与**全部 dsh 会话历史**（她与用户的对话），共享等于把它们交出去。
+
+**契约 20（读边界，实测 8/8 拒绝）**：`alysia-runner` 必须**读不到**
+`/root`、`/root/alysia`、`/root/alysia/data`、`alysia.db`、`.env`、`/root/.dsh`、`.credentials.yaml`。
+落实方式是**两道屏障**：`/root` 750 + `/root/alysia/data` 750、`/root/alysia/.env` 700
+（⚠️ 改的是 other 位，**不动 owner/group** —— `data` 属主是容器内用户，动了就断她的记忆写入）。
+
+**契约 21（工作区在 `/srv`）**：工作区 `= /srv/alysia-runner/blog`。**不得**放在 `/root` 下——
+`/root` 是 750，非 root 连穿越都不行。
+
+**契约 22（凭据经 `EnvironmentFile`）**：`/etc/alysia-runner.env`（`600 root:root`）；
+systemd 以 root 读该文件再降权 ⇒ 进程里有 token、**runner 用户自己读不到**。
+⚠️ 有意保留的取舍：进程仍持有**全权** token（否则回传不了）——
+「只许调 ingest / project-result 的受限令牌」是后续项。
+
+**契约 23（常驻）**：`alysia-task-runner.service`（`User=alysia-runner`、`Restart=always`、
+日志 append 落盘）。**契约**：轮询失败（含服务端 5xx）**不得**让 runner 退出——
+实测容器重建期间收到 `HTTP 500`，它按间隔重试并在容器就绪后正常认领。
+
+
 ## 7. 能力开关
 
 **契约 16**：`config.yml` 的 `projects:` 为空/缺省 ⇒ **三个工具都不注册**（配置即开关）。
@@ -116,3 +147,8 @@ queued ──认领──▶ running ──回传──▶ needs_review ──�
 - **`request_key` 用的是「会话 + 项目 + 目标正文」**，不是真正的调用 id（pipeline 目前不给）。
   够用是因为真正的并发保护是「同项目单在途」；同一轮网络重试正文相同 ⇒ 会被 deduped。
 - 首版只有**一个**登记项目、**单**项目串行；无并行调度、无定时/自主发起、无发布。
+- **出站网络未收窄**（博客构建要拉 npm / 字体）：她仍可出网，只是读不到凭据与记忆库。
+  「出站白名单」列为后续。
+- **没有人在环上的逐次审批**（`add-approval-gate`，pending）：需要人工点头的动作目前
+  要么被沙箱直接拒，要么就是放行 —— 中间没有"问她"这一档。
+- **未在运行中抓到 dsh 子进程的 uid**：只证明了父进程是 `alysia-runner`（非 root）。
