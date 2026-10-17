@@ -19,6 +19,8 @@ import type {
   CreateOutcome,
   SubmitResultInput,
 } from './stores/ProjectTaskStore.js';
+// ★ 2026-10-18（change: return-project-task-result）：结果 → 记忆事件的纯构造
+import { buildProjectTaskResultEvent } from './project-task-result.js';
 import { lifeEventImportance } from './importance.js';
 import { WorldbookMatcher } from './engines/WorldbookMatcher.js';
 import { PersonaAdapter } from './engines/PersonaAdapter.js';
@@ -1475,6 +1477,59 @@ export class MemoryManager {
   /** 追加修改意见 ⇒ 新 revision、回 `queued`、**沿用同一个工程会话** */
   addProjectTaskRevision(taskId: string, feedback: string): ProjectTask | null {
     return this.projectTaskStore.addRevision(taskId, feedback);
+  }
+
+  /**
+   * 把委托任务的**结果**记回发起它的那个聊天会话（★ 2026-10-18，change: `return-project-task-result`）。
+   *
+   * ★ 为什么要有这一步（这是"最后两米"里更重要的那一米）：
+   *   委托会话的事件被**整段排除**在记忆外（见 `dsh-adapter` §2.5.2），
+   *   于是「她做过」不会变成「她记得做过」——每次委托都像一次失忆的打工。
+   *   本方法写的是一条**类型化的结果记录**（不是原始对话），补上这个缺口。
+   *
+   * 落成什么样：原会话里一条 `role: 'assistant'` 的事件，带 `skip_profile` + `synthetic`：
+   *   - **进** `getRecentMessages`（她下一轮就能在「最近对话」里看到"我做过这件事"）
+   *   - **不进**画像 / 人格 / 嵌入（`skip_profile`）——不让它污染对她的认知
+   *   - **不进**摘要（`synthetic`）——v1 只保证近期可回忆；要长期记住得另立 change
+   *
+   * ⚠️ **幂等**：事件 id = `project-task:<taskId>:r<revision>`，
+   *   同一条结果重复回传只会命中既有 id（`EventStore.insert` 同 id 同内容 = 空转）。
+   *
+   * @returns 是否写入（`originSessionId` 为空/非法时返回 false —— **不猜**目标会话）
+   */
+  async recordProjectTaskResult(input: {
+    taskId: string;
+    projectId: string;
+    revision: number;
+    status: string;
+    /** 发起任务的聊天会话；空/非法 ⇒ 不写（宁可不记，也不往错误的会话里写） */
+    originSessionId: string;
+    dshSessionId?: string | null;
+    /** 执行端最后一段话（已截断） */
+    summary?: string;
+    /** 产物（工作区相对路径） */
+    artifacts?: unknown[] | null;
+    /** 该项目的对外地址（随回执给她 —— 她会用它回答"给我链接"） */
+    publicUrl?: string;
+  }): Promise<boolean> {
+    // 事件形状（幂等 id / 三个标记位 / 正文措辞）在纯函数里，测试直接钉它
+    const event = buildProjectTaskResultEvent(input);
+    if (!event) {
+      logger.warn(`[ProjectTask] ${input.taskId} 没有 originSessionId —— 结果无处可记（不猜会话）`);
+      return false;
+    }
+
+    try {
+      await this.ingest(event);
+      logger.info(
+        `[ProjectTask] 结果已记回原会话 ${event.session_id}（${input.taskId} r${input.revision} → ${input.status}）`,
+      );
+      return true;
+    } catch (err: any) {
+      // 记不进去不能反过来把任务判失败 —— 结果本身是好的
+      logger.warn(`[ProjectTask] 结果记回失败（${input.taskId}）：${err?.message ?? err}`);
+      return false;
+    }
   }
 
   listSessions(limit: number = 20): Array<{ sessionId: string; messageCount: number; lastActive: string }> {

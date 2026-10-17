@@ -43,7 +43,7 @@ export interface ServerConfig {
    * ⚠️ 这是**宿主侧**路径：alysia server 在容器里看不到它，它只被**宿主上的 runner**使用
    *    （runner 从认领响应里拿到它，见 webui 的 `/api/project-tasks/next`）。
    */
-  projects?: Record<string, { workspace: string; profile: string }>;
+  projects?: Record<string, { workspace: string; profile: string; publicUrl?: string }>;
   /** ★ 8-10 采样参数统一配置（7 槽位，缺省走 core DEFAULT_SAMPLING floor） */
   sampling?: DeepPartial<SamplingConfig>;
 }
@@ -121,14 +121,22 @@ export function loadConfig(path: string): ServerConfig {
  */
 function sanitizeProjects(
   raw: unknown,
-): Record<string, { workspace: string; profile: string }> | undefined {
+): Record<string, { workspace: string; profile: string; publicUrl?: string }> | undefined {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
-  const out: Record<string, { workspace: string; profile: string }> = {};
+  const out: Record<string, { workspace: string; profile: string; publicUrl?: string }> = {};
   for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
     const workspace = (value as { workspace?: unknown } | null)?.workspace;
     const profile = (value as { profile?: unknown } | null)?.profile;
+    const publicUrl = (value as { publicUrl?: unknown } | null)?.publicUrl;
     if (typeof workspace === 'string' && workspace !== '' && typeof profile === 'string' && profile !== '') {
-      out[id] = { workspace, profile };
+      out[id] = {
+        workspace,
+        profile,
+        // 地址是可选的；**给了就必须是 http(s)**，否则当没给（不猜、不拼）
+        ...(typeof publicUrl === 'string' && /^https?:\/\//.test(publicUrl.trim())
+          ? { publicUrl: publicUrl.trim() }
+          : {}),
+      };
     } else {
       logger.warn(
         `[Config] projects.${id} 形状不对（需要 workspace 与 profile 两个非空字符串），已忽略`,

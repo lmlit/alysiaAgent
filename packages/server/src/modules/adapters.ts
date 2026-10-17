@@ -73,6 +73,6 @@ export const adaptersModule: Module = {
 function wrapQqOfficial(qqOff: QQOfficialAgentAdapter): PushChannel {
   return {
     available: true,
-    sendProactive: (openid, message) => qqOff.sendProactive(openid, message),
+    sendProactive: (openid, message, opts) => qqOff.sendProactive(openid, message, opts),
   };
 }

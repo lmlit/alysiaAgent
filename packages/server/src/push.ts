@@ -13,8 +13,16 @@
 export interface PushChannel {
   /** 是否有可用的推送通道。无通道时消费方应**跳过**主动推送（不是报错） */
   readonly available: boolean;
-  /** 发送主动消息。返回是否成功（失败已由实现记日志） */
-  sendProactive(openid: string, message: string): Promise<boolean>;
+  /**
+   * 发送主动消息。返回是否成功（失败已由实现记日志）。
+   *
+   * ★ 2026-10-18（change: `return-project-task-result`）：新增可选 `opts`。
+   *   QQ 官方实现在**长文案或含换行**时会自动分段（≤3 段、段间 500-900ms 停顿，
+   *   见 `qq-official.ts` 的 8-09 设计）。那对"她说话"是好的（像打字），
+   *   对**通知**却是一条事拆成三条消息。工具类通知传 `maxSegments: 1` 即可。
+   *   ⚠️ 可选参数 ⇒ 生活/问候/提醒三条既有调用**无需改动**。
+   */
+  sendProactive(openid: string, message: string, opts?: { maxSegments?: number }): Promise<boolean>;
 }
 
 /** 无可用通道时的空实现 */

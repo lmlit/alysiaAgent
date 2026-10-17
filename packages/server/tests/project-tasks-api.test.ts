@@ -12,7 +12,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createWebuiApp } from '../src/webui/server.js';
 
-const PROJECTS = { 'alysia-blog': { workspace: '/root/alysia-blog', profile: 'alysia' } };
+const PROJECTS = { 'alysia-blog': { workspace: '/srv/blog', profile: 'alysia', publicUrl: 'http://example.test:3389/' } };
 
 const TASK = {
   taskId: 'pt-1', requestKey: 'req-1', projectId: 'alysia-blog',
@@ -29,9 +29,12 @@ function makeHarness(overrides: Record<string, unknown> = {}) {
     claimNextProjectTask: vi.fn(() => TASK),
     addProjectTaskRevision: vi.fn(() => ({ ...TASK, status: 'queued', revision: 1, dshSessionId: 'session-abc' })),
     submitProjectTaskResult: vi.fn(() => ({ ...TASK, status: 'needs_review' })),
+    /** ★ 2026-10-18（return-project-task-result）：结果回送原会话 */
+    recordProjectTaskResult: vi.fn(async () => true),
     ...overrides,
   };
-  return { mm, core: { memoryManager: mm } };
+  const push = { available: true, sendProactive: vi.fn(async () => true) };
+  return { mm, push, core: { memoryManager: mm } };
 }
 
 async function buildApp(core: any, opts: Record<string, unknown> = {}) {
@@ -39,6 +42,9 @@ async function buildApp(core: any, opts: Record<string, unknown> = {}) {
   await app.ready();
   return app;
 }
+
+/** 让 `void notifyProjectTaskResult(...)` 里的微任务跑完 */
+const flush = () => new Promise((r) => setTimeout(r, 20));
 
 const GOOD = {
   projectId: 'alysia-blog', goal: '做一个关于我页面', acceptanceCriteria: '能构建',
@@ -128,7 +134,13 @@ describe('GET /api/project-tasks/next — runner 认领', () => {
     const app = await buildApp(makeHarness().core);
     const res = await app.inject({ method: 'GET', url: '/api/project-tasks/next?projectId=alysia-blog' });
     expect(res.statusCode).toBe(200);
-    expect(res.json().project).toEqual({ id: 'alysia-blog', workspace: '/root/alysia-blog', profile: 'alysia' });
+    expect(res.json().project).toEqual({
+      id: 'alysia-blog',
+      workspace: '/srv/blog',
+      profile: 'alysia',
+      // ★ 2026-10-18：地址也随认领下发（runner / 回执都用得上）
+      publicUrl: 'http://example.test:3389/',
+    });
     expect(res.json().task.taskId).toBe('pt-1');
   });
 
@@ -240,8 +252,119 @@ describe('POST /api/project-tasks/:id/result — runner 回传', () => {
   });
 });
 
-describe('鉴权：新端点与既有端点同一套（不新开通道）', () => {
-  it('requireAuth + 无 token → 全部 401', async () => {
+// ─────────────────────────────────────────────────────────────
+// ★ 2026-10-18（change: `return-project-task-result`）
+//   「结果回送原会话」两件事：① 记进记忆（她下次自然知道）② 主动推一条（QQ，有配额）
+//   两条都必须**不能**反过来影响任务状态 —— 通知是增值项。
+// ─────────────────────────────────────────────────────────────
+describe('★ 结果回送原会话（return-project-task-result）', () => {
+  const QQ_TASK = { ...TASK, originSessionId: 'qq-official-1:private_ABC123DEF' };
+
+  async function postResult(
+    task: Record<string, unknown> = QQ_TASK,
+    mmOverrides: Record<string, unknown> = {},
+    opts: Record<string, unknown> = {},
+  ) {
+    const h = makeHarness({
+      submitProjectTaskResult: () => ({ ...task, status: 'needs_review', result: { final: '页面做好了' } }),
+      ...mmOverrides,
+    });
+    const app = await buildApp(h.core, { push: h.push, ...opts });
+    const res = await app.inject({
+      method: 'POST', url: '/api/project-tasks/pt-1/result', payload: { status: 'needs_review' },
+    });
+    await flush();
+    return { h, res };
+  }
+
+  it('★ 回传后 → 把结果记进**发起它的那个会话**（参数对得上）', async () => {
+    const { h } = await postResult();
+    expect(h.mm.recordProjectTaskResult).toHaveBeenCalledTimes(1);
+    expect(h.mm.recordProjectTaskResult).toHaveBeenCalledWith(expect.objectContaining({
+      taskId: 'pt-1',
+      projectId: 'alysia-blog',
+      revision: 0,
+      status: 'needs_review',
+      originSessionId: 'qq-official-1:private_ABC123DEF',
+      summary: '页面做好了',
+    }));
+  });
+
+  it('★ QQ 私聊会话 → 主动推送一次，openid 取得对、正文有状态', async () => {
+    const { h } = await postResult();
+    expect(h.push.sendProactive).toHaveBeenCalledTimes(1);
+    const [openid, text] = h.push.sendProactive.mock.calls[0] as unknown as [string, string];
+    expect(openid).toBe('ABC123DEF');
+    expect(text).toContain('needs_review');
+    expect(text).toContain('alysia-blog');
+  });
+
+  // ★ 2026-10-18 真机踩到的 bug：真实会话 id 是**三段** `qq-official-1:private:private_<openid>`，
+  //   旧正则最左匹配会把 `private_` 一起captured ⇒ QQ 返回 11255「请求的资源不存在」。
+  it('★★ 三段式真实会话 id → openid 只取最后一段的前缀之后（不许带 private_）', async () => {
+    const { h } = await postResult({ ...TASK, originSessionId: 'qq-official-1:private:private_ABC123DEF' });
+    const [openid] = h.push.sendProactive.mock.calls[0] as unknown as [string, string];
+    expect(openid, 'openid 多带了 private_ 前缀 → QQ 会报 11255').toBe('ABC123DEF');
+  });
+
+  it('★ 回执里带上**对外地址**（真机上用户问过「给我链接」，她答「我没存下地址」）', async () => {
+    const { h } = await postResult();
+    expect(h.mm.recordProjectTaskResult).toHaveBeenCalledWith(
+      expect.objectContaining({ publicUrl: 'http://example.test:3389/' }),
+    );
+    const [, text] = h.push.sendProactive.mock.calls[0] as unknown as [string, string];
+    expect(text).toContain('http://example.test:3389/');
+  });
+
+  // ★ 2026-10-18 真机撞出来的第二件事：QQ 实现会把「>60 字或含换行」的文本自动分段
+  //   （≤3 段 —— 那是为"她说话像打字"设计的）。任务通知是**一条事**，必须传 maxSegments=1，
+  //   否则用户会收到 3 条碎片消息。
+  it('★★ 通知必须传 maxSegments=1（否则长文案被拆成 3 条 QQ 消息）', async () => {
+    const { h } = await postResult();
+    const call = h.push.sendProactive.mock.calls[0] as unknown as [string, string, { maxSegments?: number }?];
+    expect(call[2]).toEqual({ maxSegments: 1 });
+  });
+
+  it('★ 非 QQ 会话（webui / 测试会话）→ **不推送**（不猜目标）', async () => {
+    const { h } = await postResult({ ...TASK, originSessionId: 'webui:private:console' });
+    expect(h.push.sendProactive, '往非 QQ 会话硬推了').not.toHaveBeenCalled();
+  });
+
+  it('★ 没有推送通道（桌面端）→ 不推、也不报错', async () => {
+    const { h, res } = await postResult(QQ_TASK, {}, { push: { available: false, sendProactive: vi.fn() } });
+    expect(res.statusCode).toBe(200);
+    expect(h.push.sendProactive).not.toHaveBeenCalled();
+  });
+
+  it('★★ 推送抛异常 → 任务结果**照样**是 200（通知失败不许改任务状态）', async () => {
+    const h = makeHarness({ submitProjectTaskResult: () => ({ ...QQ_TASK, status: 'needs_review' }) });
+    h.push.sendProactive = vi.fn(async () => { throw new Error('QQ 配额炸了'); });
+    const app = await buildApp(h.core, { push: h.push });
+    const res = await app.inject({ method: 'POST', url: '/api/project-tasks/pt-1/result', payload: { status: 'needs_review' } });
+    await flush();
+    expect(res.statusCode).toBe(200);
+    expect(res.json().task.status).toBe('needs_review');
+  });
+
+  it('★★ 记忆写入抛异常 → 不影响响应', async () => {
+    const { res } = await postResult(QQ_TASK, {
+      recordProjectTaskResult: vi.fn(async () => { throw new Error('db busy'); }),
+    });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('★ 回传被拒（409）时**不**触发回送（没写进去就别通知）', async () => {
+    const h = makeHarness({ submitProjectTaskResult: () => null });
+    const app = await buildApp(h.core, { push: h.push });
+    const res = await app.inject({ method: 'POST', url: '/api/project-tasks/pt-1/result', payload: { status: 'completed' } });
+    await flush();
+    expect(res.statusCode).toBe(409);
+    expect(h.mm.recordProjectTaskResult).not.toHaveBeenCalled();
+    expect(h.push.sendProactive).not.toHaveBeenCalled();
+  });
+});
+
+describe('鉴权：新端点与既有端点同一套（不新开通道）', () => {  it('requireAuth + 无 token → 全部 401', async () => {
     const app = await buildApp(makeHarness().core, { requireAuth: true, webuiToken: 'secret' });
     for (const [method, url] of [
       ['POST', '/api/project-tasks'],

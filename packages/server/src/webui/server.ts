@@ -58,7 +58,15 @@ export interface WebuiAuthOptions {
    * 见 `packages/server/src/config.ts` 的 `projects`。
    * ⚠️ 这是**宿主侧**路径/ profile —— server 只负责**校验与转交**，自己不使用它们。
    */
-  projects?: Record<string, { workspace: string; profile: string }>;
+  projects?: Record<string, { workspace: string; profile: string; publicUrl?: string }>;
+  /**
+   * 主动推送通道（`al:push`）。★ 2026-10-18（change: `return-project-task-result`）：
+   * 委托任务结束后要**回到原会话告诉她**。缺省 = 无通道（桌面端/无 QQ 时），只记日志不推。
+   */
+  push?: {
+    available: boolean;
+    sendProactive(openid: string, message: string, opts?: { maxSegments?: number }): Promise<boolean>;
+  };
 }
 
 export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
@@ -69,6 +77,8 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
    *    而不是假装受理（否则提交方以为任务排上了，其实没人会跑）。
    */
   const projects = opts.projects ?? {};
+  /** 主动推送通道（可能不存在 —— 桌面端/无 QQ 时是空实现） */
+  const push = opts.push;
   const app = Fastify({ logger: false });
 
   // ★ 8-29 cr-p0-webui-auth：auth 钩子（chat 路由 registerChatRoutes 同受保护）
@@ -301,12 +311,109 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
   //     否则「在服务器上任意位置跑任意 profile」会变成模型能力。
 
   /** 项目登记的校验：未知 id 一律拒收，且**把已登记的列出来**（只说「未知」等于没说） */
-  const projectOr = (id: unknown): { id: string; workspace: string; profile: string } | null => {
+  const projectOr = (id: unknown): { id: string; workspace: string; profile: string; publicUrl?: string } | null => {
     if (typeof id !== 'string' || id === '') return null;
     const p = projects[id];
-    return p ? { id, workspace: p.workspace, profile: p.profile } : null;
+    return p ? { id, workspace: p.workspace, profile: p.profile, ...(p.publicUrl ? { publicUrl: p.publicUrl } : {}) } : null;
   };
   const registered = (): string => Object.keys(projects).join(', ') || '无';
+
+  /**
+   * 从 alysia 会话 id 里取 QQ 私聊 openid。
+   *
+   * 真实形状（生产库实测）：`qq-official-1:private:private_<openid>`
+   * ——**三段**，最后一段是 `private_<openid>`。
+   *
+   * ⚠️ 踩过的坑（2026-10-18）：先前写成 `/private[_:]([A-Za-z0-9_-]+)$/` 直接对整串匹配，
+   *   正则**最左**命中 ⇒ 取到 `private_<openid>`（多带一段 `private_`），
+   *   QQ 于是返回 `11255 请求的资源不存在`。
+   *   现在改成「**先按冒号切最后一段**，再剥前缀」，不给正则留歧义。
+   *
+   * 取不到返回 `null`，调用方据此**跳过推送**——宁可不推，也不往错误的 openid 发。
+   */
+  const openidOfSession = (sessionId: string): string | null => {
+    if (!sessionId.startsWith('qq')) return null;
+    const last = sessionId.split(':').pop() ?? '';
+    const m = /^(?:private|group)_([A-Za-z0-9_-]{6,})$/.exec(last);
+    return m ? m[1] : null;
+  };
+
+  /**
+   * 把委托任务的**结果送回原会话**（★ 2026-10-18，change: `return-project-task-result`）。
+   *
+   * 两件事分开做，缺一不可：
+   *   ① **记进记忆** —— 她下一轮在「最近对话」里就能看到"我做过这件事"（不进画像/人格/摘要）
+   *   ② **主动推一条** —— 用户不必先开口（QQ 主动消息有配额，故只在本轮终态推一次）
+   *
+   * ⚠️ 任何一步失败都**不许**影响任务本身的状态：结果已经落库了，通知是增值项。
+   */
+  const notifyProjectTaskResult = async (task: {
+    taskId: string;
+    projectId: string;
+    revision: number;
+    status: string;
+    originSessionId: string;
+    dshSessionId: string | null;
+    result: unknown;
+    artifacts: unknown;
+  }): Promise<void> => {
+    const final =
+      task.result && typeof task.result === 'object' && 'final' in task.result
+        ? String((task.result as { final: unknown }).final ?? '')
+        : '';
+
+    // ① 结果入记忆（原会话）
+    try {
+      await core.memoryManager.recordProjectTaskResult({
+        taskId: task.taskId,
+        projectId: task.projectId,
+        revision: task.revision,
+        status: task.status,
+        originSessionId: task.originSessionId,
+        dshSessionId: task.dshSessionId,
+        summary: final,
+        artifacts: Array.isArray(task.artifacts) ? (task.artifacts as unknown[]) : null,
+        // ★ 地址随回执一起给她：真机上用户问过"给我链接"，她答"我没存下地址"
+        publicUrl: projects[task.projectId]?.publicUrl,
+      });
+    } catch (err: any) {
+      logger.warn(`[project-task] ${task.taskId} 结果记回记忆失败：${err?.message ?? err}`);
+    }
+
+    // ② 主动推送（best-effort）
+    if (!push?.available) return;
+    const openid = openidOfSession(task.originSessionId);
+    if (!openid) {
+      // 不是 QQ 私聊会话（webui / 测试会话）⇒ **不猜目标**，只留痕
+      logger.info(
+        `[project-task] ${task.taskId} 不推送：会话 "${task.originSessionId}" 不是 QQ 私聊`,
+      );
+      return;
+    }
+    const paths = Array.isArray(task.artifacts)
+      ? task.artifacts
+          .map(a => (a && typeof a === 'object' && 'path' in a ? String((a as { path: unknown }).path) : ''))
+          .filter(Boolean)
+      : [];
+    const lines = [
+      `委托任务结束了：${task.projectId} 第 ${task.revision + 1} 轮 → ${task.status}`,
+    ];
+    if (paths.length > 0) lines.push(`产物：${paths.slice(0, 5).join('、')}`);
+    if (final) lines.push('', final.length > 300 ? `${final.slice(0, 300)}…` : final);
+    const url = projects[task.projectId]?.publicUrl;
+    if (url) lines.push('', `外网地址：${url}`);
+
+    try {
+      // ★ `maxSegments: 1`：这是一条**通知**，不是她说话 —— 长文案别拆成 3 条消息
+      //   （QQ 实现对 >60 字或含换行的文本会自动分段，见 `qq-official.ts` 的 8-09 设计）
+      const ok = await push.sendProactive(openid, lines.join('\n'), { maxSegments: 1 });
+      logger.info(
+        `[project-task] ${task.taskId} 结果推送${ok ? '成功' : '失败（通道返回 false）'} → ${openid.slice(0, 8)}…`,
+      );
+    } catch (err: any) {
+      logger.warn(`[project-task] ${task.taskId} 结果推送异常：${err?.message ?? err}`);
+    }
+  };
 
   /** runner 可回传的终态（`queued`/`running` 不是 runner 能写的） */
   const RESULT_STATUSES = new Set(['needs_review', 'completed', 'failed', 'unknown']);
@@ -426,6 +533,8 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
       });
     }
     logger.info(`[project-task] ${id} → ${task.status}${task.dshSessionId ? `（工程会话 ${task.dshSessionId}）` : ''}`);
+    // ★ 结果送回原会话（记进记忆 + 可选主动推送）。**不 await**：推送慢不该拖住 runner 的回传。
+    void notifyProjectTaskResult(task);
     return { ok: true, task };
   });
 

@@ -29,10 +29,15 @@ export interface WebuiModuleOptions {
 export const webuiModule: Module<WebuiModuleOptions> = {
   name: 'al:webui',
   provides: false,
-  inject: ['al:core', 'al:config'],
+  inject: ['al:core', 'al:config', 'al:push'],
   async apply(ctx, opts) {
     const { config, isDesktop } = ctx.get<RuntimeConfig>('al:config')!;
     const core = ctx.get<AlysiaCore>('al:core')!;
+    /**
+     * ★ 2026-10-18（change: `return-project-task-result`）：委托任务的**结果回送**需要主动推送。
+     * 无 QQ 官方适配器时 `al:push` 是 `available: false` 的空实现 ⇒ 消费方跳过，不是报错。
+     */
+    const push = ctx.get('al:push');
 
     try {
       const { createWebuiApp } = await import('../webui/server.js');
@@ -63,7 +68,13 @@ export const webuiModule: Module<WebuiModuleOptions> = {
       const staticDist = opts?.consoleDist && existsSync(join(opts.consoleDist, 'index.html'))
         ? opts.consoleDist
         : undefined;
-      const webui = createWebuiApp(core, { webuiToken, requireAuth, staticDist, projects: config.projects });
+      const webui = createWebuiApp(core, {
+        webuiToken,
+        requireAuth,
+        staticDist,
+        projects: config.projects,
+        push: push as never,
+      });
       await webui.listen({ port: config.server.port, host: bindHost });
 
       const frontend = staticDist ? 'console (Next.js)' : '无（仅 /api/*）';

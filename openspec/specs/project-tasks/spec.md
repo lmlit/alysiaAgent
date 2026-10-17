@@ -152,3 +152,34 @@ systemd 以 root 读该文件再降权 ⇒ 进程里有 token、**runner 用户�
 - **没有人在环上的逐次审批**（`add-approval-gate`，pending）：需要人工点头的动作目前
   要么被沙箱直接拒，要么就是放行 —— 中间没有"问她"这一档。
 - **未在运行中抓到 dsh 子进程的 uid**：只证明了父进程是 `alysia-runner`（非 root）。
+
+## 10. 结果回送（2026-10-18，change: `return-project-task-result`）
+
+**为什么有这一节**：用户问「编程出结果了，她会告诉我吗？」—— 当时的答案是**不会**。
+`dsh → runner → POST /result → 写进任务表`，**这条线上没有她**；而委托会话又被整段排除在记忆外
+⇒ 表现为「我交出去了」（说的）→ 然后失忆。
+
+**契约 24（回执落回原会话）**：任务进入终态时，向 `originSessionId` 写一条**类型化事件**：
+`id = project-task:<taskId>:r<revision>`、`source='system'`、`role='assistant'`、`perspective='self'`。
+- **幂等**：同一条结果重复回传命中既有 id；不同轮次不同 id。
+- **防污染**：`skip_profile` + `synthetic='project-task-result'` + `project_task_result=true`
+  ⇒ 进 `getRecentMessages`（她下一轮能回忆），但**不进**画像/人格/嵌入/摘要。
+- **不猜目标**：`originSessionId` 为空 ⇒ 不写（宁可不记）。
+
+**契约 25（通知失败不许改任务状态）**：`notifyProjectTaskResult` **不 await**，
+记回与推送各自 try/catch；最差是"没通知"，不是"任务被判失败"。回传被拒（409）时**不触发**回送。
+
+**契约 26（结果必须带地址）**：「做完了」对用户不够用 —— 用户真正会问的是**"给我链接"**
+（真机上确实问过，而她答"我没存下能直接点开的地址"）。
+⇒ 回执正文末尾必须带 `projects.<id>.publicUrl`（配置项，**不由模型提供**）。
+
+**契约 27（通知只发一条）**：QQ 实现对「>60 字或含换行」的文本会**自动分段**（≤3 段、段间停顿）
+—— 那对"她说话"是设计，对**通知**是噪声（一条事变三条消息）。
+⇒ 工具类通知必须传 `maxSegments: 1`。
+
+**契约 28（只在能确定目标时推）**：`originSessionId` 形如 `qq-official-1:private:private_<openid>`
+才推（**先按冒号切最后一段再剥前缀** —— 对整串用正则最左匹配会取到 `private_<openid>`，
+QQ 返回 `11255 请求的资源不存在`，这个坑已经踩过）；`webui:` / 测试会话跳过并留痕。
+
+**已知边界**：回执**不进摘要** ⇒ v1 只保证**近期窗口**可回忆，不是长期记忆。
+
