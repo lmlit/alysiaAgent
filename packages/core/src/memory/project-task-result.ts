@@ -37,12 +37,107 @@ export interface ProjectTaskResultInput {
    *   地址必须随回执一起给她，否则"她知道做完了"仍然等于"她说不出在哪看"。
    */
   publicUrl?: string;
+  /**
+   * **她自己说的那句话**（由 `composeProjectTaskNotice` 生成）。
+   *
+   * ★ 2026-10-18 补（用户指着说"感觉好干啊，而且没有昔涟的味道"）：
+   *   这条事件是 `role: 'assistant'` —— 它以**她说过的话**的身份进她的对话史。
+   *   模板腔放进去，等于让她的记忆里留着一句她绝不会说的话。
+   *   所以：有她的措辞就用她的，**没有才回落到模板**（并记住这是回落，不是常态）。
+   */
+  notice?: string;
   /** 注入时钟（测试用） */
   now?: Date;
 }
 
 /** 摘要正文上限 —— 这条事件会进她的「最近对话」窗口，别把整份文件塞进去 */
 export const MAX_RESULT_SUMMARY_CHARS = 1200;
+
+/** 她说的那句话的长度上限（一句话的活儿，别写成小作文） */
+export const MAX_NOTICE_CHARS = 240;
+
+/**
+ * 生成「她自己那句话」的提示词（纯函数，便于测试）。
+ *
+ * 设计要点：
+ * - **给事实，不给结论**：模型只拿得到状态/产物/地址，拿不到"该怎么夸自己"。
+ * - **地址要逐字**：模型很容易改写 URL，所以提示词里明确"原样抄一遍"，
+ *   并且 `finalizeNotice` 会**兜底校验**（缺了就补上）。
+ * - **不许编**：以 `status` 为准 —— `failed`/`unknown` 时不许说"做好了"。
+ * - 短：2-3 句、不要列表、不要小标题（QQ 消息一条能放下）。
+ */
+export function buildNoticePrompts(input: {
+  /** 她的人设名（如「昔涟」）—— 只用来称呼自己，不用来编内容 */
+  personaName?: string;
+  projectId: string;
+  revision: number;
+  status: string;
+  summary?: string;
+  artifacts?: unknown[] | null;
+  publicUrl?: string;
+}): { system: string; user: string } {
+  const paths = Array.isArray(input.artifacts)
+    ? input.artifacts
+        .map(a => (a && typeof a === 'object' && 'path' in a ? String((a as { path: unknown }).path) : ''))
+        .filter(Boolean)
+    : [];
+  const name = input.personaName?.trim() || '昔涟';
+
+  const system = [
+    `你叫${name}，正在跟用户说话。刚刚有一件交给工程环境的活儿跑完了一轮，你要**用你自己的口吻**告诉用户结果。`,
+    '',
+    '要求：',
+    '- 2~3 句，一句话也行；不要列表、不要小标题、不要「回执」这类机器词。',
+    '- 用你平常说话的样子（温柔、口语、偶尔一句小小的自嘲或俏皮都可以），但别演过头。',
+    '- 只说**事实里有的**：不要编造完成情况、不要替用户验收、不要承诺没做的事。',
+    '- 如果这一轮其实失败了或结果不明，要如实说，不许粉饰成"做好了"。',
+    '- 如果给了访问地址，**把它原样抄一遍**（一个字符都不要改），放在最后。',
+    '- 不要提"委托任务""任务表""状态机"这类内部概念。',
+    '- **不要描述通知/回执机制本身**（例如"通知已经发出来了""系统告诉我"），直接说结果就好。',
+  ].join('\n');
+
+  const facts: string[] = [
+    `项目：${input.projectId}`,
+    `这是第 ${input.revision + 1} 轮`,
+    `这一轮的结果状态：${input.status}`,
+  ];
+  if (paths.length > 0) facts.push(`产出的文件：${paths.slice(0, 8).join('、')}`);
+  const summary = typeof input.summary === 'string' ? input.summary.trim() : '';
+  if (summary) {
+    facts.push('', '工程环境那边最后说的话（可以取材，但要用你自己的语气重说）：', summary.slice(0, 600));
+  }
+  if (input.publicUrl) facts.push('', `访问地址（必须原样抄进你的话里）：${input.publicUrl}`);
+
+  return { system, user: facts.join('\n') };
+}
+
+/**
+ * 收口模型的输出：去掉代码块/引号包裹、压成一段、**校验地址逐字存在**。
+ *
+ * ★ 为什么地址要在这里兜：模型改写 URL 是常见事故（少个端口、多个斜杠），
+ *   而用户拿到一个打不开的地址比没地址更糟。缺了就**追加**，不跟模型商量。
+ */
+export function finalizeNotice(raw: string, publicUrl: string): string {
+  let text = (raw ?? '').trim();
+  // 去围栏：```...```
+  text = text.replace(/^```[a-zA-Z]*\s*/g, '').replace(/```$/g, '').trim();
+  // 去整段引号包裹：「…」/“…”/"…"
+  text = text.replace(/^[「“"']([\s\S]*)[」”"']$/, '$1').trim();
+  // 压掉多余空行（QQ 一条消息更舒服）
+  text = text.replace(/\n{3,}/g, '\n\n');
+
+  if (text.length > MAX_NOTICE_CHARS) {
+    text = `${text.slice(0, MAX_NOTICE_CHARS)}…`;
+  }
+
+  const url = (publicUrl ?? '').trim();
+  if (url && !text.includes(url)) {
+    // 模型漏了或改写了 ⇒ 以代码为准追加（不猜、不让步）
+    text = text ? `${text}\n${url}` : url;
+  }
+  return text;
+}
+
 
 /**
  * 构造「委托任务回执」事件。
@@ -59,10 +154,20 @@ export function buildProjectTaskResultEvent(input: ProjectTaskResultInput): Memo
         .filter(Boolean)
     : [];
 
-  const lines = [
-    `（委托任务回执）项目 ${input.projectId} 第 ${input.revision + 1} 轮已结束：${input.status}。`,
-  ];
-  if (paths.length > 0) lines.push(`产物：${paths.slice(0, 8).join('、')}`);
+  const publicUrl = typeof input.publicUrl === 'string' ? input.publicUrl.trim() : '';
+  const notice = typeof input.notice === 'string' ? input.notice.trim() : '';
+
+  const lines: string[] = [];
+  if (notice) {
+    // ★ 她的措辞优先 —— 这条会成为"她说的话"
+    lines.push(finalizeNotice(notice, ''));
+  } else {
+    // 回落：机械但**诚实**（不假装是她的语气）
+    lines.push(
+      `（委托任务回执）项目 ${input.projectId} 第 ${input.revision + 1} 轮已结束：${input.status}。`,
+    );
+    if (paths.length > 0) lines.push(`产物：${paths.slice(0, 8).join('、')}`);
+  }
 
   const summary = typeof input.summary === 'string' ? input.summary.trim() : '';
   if (summary) {
@@ -74,8 +179,10 @@ export function buildProjectTaskResultEvent(input: ProjectTaskResultInput): Memo
   }
 
   // ★ 地址单独一行、放在最后：它是"用户下一个问题"的答案（"给我链接"）
-  const publicUrl = typeof input.publicUrl === 'string' ? input.publicUrl.trim() : '';
-  if (publicUrl) lines.push('', `外网地址：${publicUrl}`);
+  //   ⚠️ 但**她那句话里已经带地址时不再追加** —— 真机上出现过同一句里地址出现两遍
+  if (publicUrl && !lines.some(l => l.includes(publicUrl))) {
+    lines.push('', `外网地址：${publicUrl}`);
+  }
 
   return {
     id: `project-task:${input.taskId}:r${input.revision}`,

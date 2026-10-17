@@ -20,7 +20,12 @@ import type {
   SubmitResultInput,
 } from './stores/ProjectTaskStore.js';
 // ★ 2026-10-18（change: return-project-task-result）：结果 → 记忆事件的纯构造
-import { buildProjectTaskResultEvent } from './project-task-result.js';
+import {
+  buildProjectTaskResultEvent,
+  buildNoticePrompts,
+  finalizeNotice,
+  MAX_NOTICE_CHARS,
+} from './project-task-result.js';
 import { lifeEventImportance } from './importance.js';
 import { WorldbookMatcher } from './engines/WorldbookMatcher.js';
 import { PersonaAdapter } from './engines/PersonaAdapter.js';
@@ -1497,6 +1502,50 @@ export class MemoryManager {
    *
    * @returns 是否写入（`originSessionId` 为空/非法时返回 false —— **不猜**目标会话）
    */
+  /**
+   * 让**她自己**说这句话：把机械的结果状态，用她的人格与口吻重说一遍。
+   *
+   * ★ 2026-10-18（change: `return-project-task-result`），用户原话：
+   *   「返回的东西要过一遍提示词不，感觉好干啊，而且没有昔涟的味道」。
+   *
+   * ★ 为什么必须走人格：那条回执是 `role: 'assistant'` —— 它以**她说过的话**的身份
+   *   进她的对话史。模板腔放进去，等于让她的记忆里留着一句她绝不会说的话。
+   *
+   * ⚠️ **采样必须带 `max_tokens`**（KI-1 的教训：无上限的槽已经炸过三次 ——
+   *   会话摘要 22 天 / 每日反思 11 次 / 画像提取 6 个月）。
+   *
+   * @returns 一句话；模型失败时返回 **`null`**（调用方回落模板 —— 干，但诚实）
+   */
+  async composeProjectTaskNotice(input: {
+    projectId: string;
+    revision: number;
+    status: string;
+    summary?: string;
+    artifacts?: unknown[] | null;
+    publicUrl?: string;
+  }): Promise<string | null> {
+    let personaName: string | undefined;
+    try {
+      personaName = this.personaStore.get()?.name;
+    } catch {
+      personaName = undefined; // 人设读不到不该挡住通知
+    }
+    const { system, user } = buildNoticePrompts({ ...input, personaName });
+    try {
+      const raw = await this.llmService.complete(system, user, {
+        max_tokens: MAX_NOTICE_CHARS * 2,
+        temperature: 0.85,
+      } as Partial<SamplingSlot>);
+      const text = finalizeNotice(raw, input.publicUrl ?? '');
+      if (!text) return null;
+      return text;
+    } catch (err: any) {
+      logger.warn(`[ProjectTask] 通知措辞生成失败（回落模板）：${err?.message ?? err}`);
+      return null;
+    }
+  }
+
+  
   async recordProjectTaskResult(input: {
     taskId: string;
     projectId: string;
@@ -1511,6 +1560,8 @@ export class MemoryManager {
     artifacts?: unknown[] | null;
     /** 该项目的对外地址（随回执给她 —— 她会用它回答"给我链接"） */
     publicUrl?: string;
+    /** 她自己的措辞（`composeProjectTaskNotice` 的产物）；缺省回落模板 */
+    notice?: string;
   }): Promise<boolean> {
     // 事件形状（幂等 id / 三个标记位 / 正文措辞）在纯函数里，测试直接钉它
     const event = buildProjectTaskResultEvent(input);

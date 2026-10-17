@@ -31,6 +31,8 @@ function makeHarness(overrides: Record<string, unknown> = {}) {
     submitProjectTaskResult: vi.fn(() => ({ ...TASK, status: 'needs_review' })),
     /** ★ 2026-10-18（return-project-task-result）：结果回送原会话 */
     recordProjectTaskResult: vi.fn(async () => true),
+    /** 让**她自己**说那句话（失败回落模板） */
+    composeProjectTaskNotice: vi.fn(async () => '页面弄好啦，你看看顺不顺眼～'),
     ...overrides,
   };
   const push = { available: true, sendProactive: vi.fn(async () => true) };
@@ -290,13 +292,13 @@ describe('★ 结果回送原会话（return-project-task-result）', () => {
     }));
   });
 
-  it('★ QQ 私聊会话 → 主动推送一次，openid 取得对、正文有状态', async () => {
+  it('★ QQ 私聊会话 → 主动推送一次，openid 取得对', async () => {
     const { h } = await postResult();
     expect(h.push.sendProactive).toHaveBeenCalledTimes(1);
     const [openid, text] = h.push.sendProactive.mock.calls[0] as unknown as [string, string];
     expect(openid).toBe('ABC123DEF');
-    expect(text).toContain('needs_review');
-    expect(text).toContain('alysia-blog');
+    // ★ 正文是**她的话**（notice），不是模板 —— 模板只在回落时出现
+    expect(text).toBe('页面弄好啦，你看看顺不顺眼～');
   });
 
   // ★ 2026-10-18 真机踩到的 bug：真实会话 id 是**三段** `qq-official-1:private:private_<openid>`，
@@ -309,11 +311,14 @@ describe('★ 结果回送原会话（return-project-task-result）', () => {
 
   it('★ 回执里带上**对外地址**（真机上用户问过「给我链接」，她答「我没存下地址」）', async () => {
     const { h } = await postResult();
+    // 地址由**配置**提供、经 core 的 finalizeNotice 兜底逐字注入（core 单测覆盖）；
+    // 路由层的责任是把 publicUrl 传下去。
     expect(h.mm.recordProjectTaskResult).toHaveBeenCalledWith(
       expect.objectContaining({ publicUrl: 'http://example.test:3389/' }),
     );
-    const [, text] = h.push.sendProactive.mock.calls[0] as unknown as [string, string];
-    expect(text).toContain('http://example.test:3389/');
+    expect(h.mm.composeProjectTaskNotice).toHaveBeenCalledWith(
+      expect.objectContaining({ publicUrl: 'http://example.test:3389/' }),
+    );
   });
 
   // ★ 2026-10-18 真机撞出来的第二件事：QQ 实现会把「>60 字或含换行」的文本自动分段
@@ -323,6 +328,36 @@ describe('★ 结果回送原会话（return-project-task-result）', () => {
     const { h } = await postResult();
     const call = h.push.sendProactive.mock.calls[0] as unknown as [string, string, { maxSegments?: number }?];
     expect(call[2]).toEqual({ maxSegments: 1 });
+  });
+
+  // ★ 用户原话「感觉好干啊，而且没有昔涟的味道」：
+  //   这条事件是 role:assistant，等于"她说的话" ⇒ 必须让她自己说一遍，模板只做回落。
+  it('★★ 用她自己的措辞（不是模板腔）同时落库与推送', async () => {
+    const { h } = await postResult();
+    expect(h.mm.composeProjectTaskNotice).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: 'alysia-blog', status: 'needs_review' }),
+    );
+    // 落库的那条要带上她的措辞
+    expect(h.mm.recordProjectTaskResult).toHaveBeenCalledWith(
+      expect.objectContaining({ notice: '页面弄好啦，你看看顺不顺眼～' }),
+    );
+    // 推送的那条也是她的话，而不是"委托任务结束了：…"
+    const [, text] = h.push.sendProactive.mock.calls[0] as unknown as [string, string];
+    expect(text).toBe('页面弄好啦，你看看顺不顺眼～');
+    expect(text).not.toContain('委托任务结束了');
+  });
+
+  it('★ 措辞生成失败 → 回落模板，但**照样**记回与推送（不许因此丢通知）', async () => {
+    const { h } = await postResult(QQ_TASK, {
+      composeProjectTaskNotice: vi.fn(async () => { throw new Error('llm 挂了'); }),
+    });
+    // 回落时**不带** notice 键（不是 notice: undefined —— 那是"有值但空"）
+    const arg = (h.mm.recordProjectTaskResult.mock.calls[0] as unknown as [Record<string, unknown>])[0];
+    expect(arg).not.toHaveProperty('notice');
+    expect(arg).toEqual(expect.objectContaining({ taskId: 'pt-1', status: 'needs_review' }));
+    const [, text] = h.push.sendProactive.mock.calls[0] as unknown as [string, string];
+    expect(text).toContain('委托任务结束了'); // 回落口径：干，但诚实
+    expect(text).toContain('http://example.test:3389/');
   });
 
   it('★ 非 QQ 会话（webui / 测试会话）→ **不推送**（不猜目标）', async () => {

@@ -363,6 +363,25 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
         : '';
 
     // ① 结果入记忆（原会话）
+    //
+    // ★ 2026-10-18（用户原话「感觉好干啊，而且没有昔涟的味道」）：
+    //   这条事件是 `role: 'assistant'` —— 它以**她说过的话**的身份进她的对话史。
+    //   所以**先让她自己说一遍**（人格 + 事实），再落库；模型失败才回落模板。
+    const publicUrl = projects[task.projectId]?.publicUrl;
+    let notice: string | null = null;
+    try {
+      notice = await core.memoryManager.composeProjectTaskNotice({
+        projectId: task.projectId,
+        revision: task.revision,
+        status: task.status,
+        summary: final,
+        artifacts: Array.isArray(task.artifacts) ? (task.artifacts as unknown[]) : null,
+        publicUrl,
+      });
+    } catch (err: any) {
+      logger.warn(`[project-task] ${task.taskId} 通知措辞生成异常：${err?.message ?? err}`);
+    }
+
     try {
       await core.memoryManager.recordProjectTaskResult({
         taskId: task.taskId,
@@ -374,7 +393,8 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
         summary: final,
         artifacts: Array.isArray(task.artifacts) ? (task.artifacts as unknown[]) : null,
         // ★ 地址随回执一起给她：真机上用户问过"给我链接"，她答"我没存下地址"
-        publicUrl: projects[task.projectId]?.publicUrl,
+        publicUrl,
+        ...(notice ? { notice } : {}),
       });
     } catch (err: any) {
       logger.warn(`[project-task] ${task.taskId} 结果记回记忆失败：${err?.message ?? err}`);
@@ -395,18 +415,23 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
           .map(a => (a && typeof a === 'object' && 'path' in a ? String((a as { path: unknown }).path) : ''))
           .filter(Boolean)
       : [];
-    const lines = [
-      `委托任务结束了：${task.projectId} 第 ${task.revision + 1} 轮 → ${task.status}`,
-    ];
-    if (paths.length > 0) lines.push(`产物：${paths.slice(0, 5).join('、')}`);
-    if (final) lines.push('', final.length > 300 ? `${final.slice(0, 300)}…` : final);
-    const url = projects[task.projectId]?.publicUrl;
-    if (url) lines.push('', `外网地址：${url}`);
+    // ★ 优先用**她自己的话**（`notice`）；模型失败才用机械模板（干，但诚实）
+    let text = notice?.trim() ?? '';
+    if (!text) {
+      const lines = [
+        `委托任务结束了：${task.projectId} 第 ${task.revision + 1} 轮 → ${task.status}`,
+      ];
+      if (paths.length > 0) lines.push(`产物：${paths.slice(0, 5).join('、')}`);
+      if (final) lines.push('', final.length > 300 ? `${final.slice(0, 300)}…` : final);
+      const url = projects[task.projectId]?.publicUrl;
+      if (url) lines.push('', `外网地址：${url}`);
+      text = lines.join('\n');
+    }
 
     try {
       // ★ `maxSegments: 1`：这是一条**通知**，不是她说话 —— 长文案别拆成 3 条消息
       //   （QQ 实现对 >60 字或含换行的文本会自动分段，见 `qq-official.ts` 的 8-09 设计）
-      const ok = await push.sendProactive(openid, lines.join('\n'), { maxSegments: 1 });
+      const ok = await push.sendProactive(openid, text, { maxSegments: 1 });
       logger.info(
         `[project-task] ${task.taskId} 结果推送${ok ? '成功' : '失败（通道返回 false）'} → ${openid.slice(0, 8)}…`,
       );
