@@ -35,6 +35,15 @@ import { PROCESSED_PROFILE, PROCESSED_KNOWLEDGE } from '../../src/memory/types';
 /** 服务端会给 dsh 合成注入打的两个标记（见 `packages/server/src/ingest.ts`） */
 const SYNTHETIC = { skip_profile: true, synthetic: 'runtime-context', dsh_source: 'runtime-context' };
 
+/**
+ * ★ 2026-10-17（change: `isolate-delegated-task-memory`）：**委托任务会话**的标记。
+ *
+ * 服务端见到 `payload.dsh_origin` 就打**同样这两个字段**（不新增机制），
+ * 所以 core 这边**必须一视同仁** —— 本常量存在的意义就是把这条契约钉死在测试里：
+ * 将来若有人把闸改成「只认 `runtime-context`」，这条会立刻红。
+ */
+const DELEGATED = { skip_profile: true, synthetic: 'delegated-task', dsh_origin: 'delegated-task' };
+
 /** dsh 真正注入的那段文本（本用例只借它的形态，不依赖它的内容做判据） */
 const RUNTIME_CONTEXT_TEXT =
   'Current runtime context. This snapshot supersedes earlier runtime-context snapshots.\n\n' +
@@ -163,8 +172,28 @@ describe('★ 合成注入不进学习管道（KI-20）', () => {
 
     await processor.process(event);
 
-    expect(warn.mock.calls.map(c => String(c[0])).join('\n')).toContain('合成注入');
+    // ★ 2026-10-17（change: `isolate-delegated-task-memory`）：文案改为**原因中立**
+    //   —— `synthetic` 现在也承载「委托任务会话」这一来源（机器发起，不是用户发言），
+    //   对那种事件说「合成注入」会把排查带偏。断言因此跟着改口径，
+    //   但要求更强了：**必须能看到「为什么被跳过」**。
+    const logged = warn.mock.calls.map(c => String(c[0])).join('\n');
+    expect(logged, '跳过没留痕 —— "滤掉了"与"本来没采到"会同形').toContain('非用户发言');
+    expect(logged, '留痕里没有跳过原因，事后无法复盘').toContain('runtime-context');
     warn.mockRestore();
+  });
+
+  // ★ 2026-10-17（change: `isolate-delegated-task-memory`）：**委托会话走同一个闸**
+  it('★★ 委托任务会话（dsh_origin）与合成注入**一视同仁**：同样不进画像/人格/嵌入', async () => {
+    const spy = vi.spyOn(personaAdapter, 'processSignal');
+    const event = makeEvent({ payload: { role: 'user', content: '把关于我页面做出来', ...DELEGATED } });
+    eventStore.insert(event);
+
+    await processor.process(event);
+
+    expect(spy, '委托会话被当成"用户说了什么"去做人格扫描了').not.toHaveBeenCalled();
+    expect(vectorStore.insert, '委托会话被嵌入进向量库了（日后会被召回）').not.toHaveBeenCalled();
+    // 与合成注入一样，只留流水账
+    expect(eventStore.getById(event.id)!.processed).toBe(PROCESSED_KNOWLEDGE);
   });
 
   it('★ 回归：群聊 NPC 的 skip_profile **不许**因此变吵（那量很大，会淹掉日志）', async () => {
@@ -177,7 +206,7 @@ describe('★ 合成注入不进学习管道（KI-20）', () => {
     expect(
       warn.mock.calls.map(c => String(c[0])).join('\n'),
       'NPC 消息也开始打日志了 —— 本项目已因 96.6% 噪声吃过一次亏',
-    ).not.toContain('合成注入');
+    ).not.toContain('非用户发言');
     warn.mockRestore();
   });
 });

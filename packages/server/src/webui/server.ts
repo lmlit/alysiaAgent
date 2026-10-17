@@ -53,10 +53,22 @@ export interface WebuiAuthOptions {
    *  ★ 10-02 remove-packages-webui：旧前端包已删，不再有默认回落——
    *  不传 / 产物缺失 = 只提供 /api/*（静态路由不注册，并显式 warn，不静默）。 */
   staticDist?: string;
+  /**
+   * ★ 2026-10-17（change: `add-project-task-delegation`）：**委托项目登记表**。
+   * 见 `packages/server/src/config.ts` 的 `projects`。
+   * ⚠️ 这是**宿主侧**路径/ profile —— server 只负责**校验与转交**，自己不使用它们。
+   */
+  projects?: Record<string, { workspace: string; profile: string }>;
 }
 
 export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
   const { webuiToken = '', requireAuth = false, staticDist } = opts;
+  /**
+   * 委托项目登记表（★ 2026-10-17，change: `add-project-task-delegation`）。
+   * ⚠️ 空表 = 该能力未配置：相关端点会**响亮拒绝**并说明「已登记：无」，
+   *    而不是假装受理（否则提交方以为任务排上了，其实没人会跑）。
+   */
+  const projects = opts.projects ?? {};
   const app = Fastify({ logger: false });
 
   // ★ 8-29 cr-p0-webui-auth：auth 钩子（chat 路由 registerChatRoutes 同受保护）
@@ -278,9 +290,147 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
     return { ok: true, accepted, rejected };
   });
 
+  // ── 委托任务（project tasks）──────────────────────────────────────
+  //  ★ 2026-10-17（change: `add-project-task-delegation`）。
+  //
+  //  分工（与 §2.5 那条一样）：**服务端只做校验与状态，不执行**。
+  //  真正跑 dsh 的是**宿主上的 runner**（alysia server 在容器里，看不到宿主上的 dsh
+  //  与工作区）⇒ runner 用 `GET /api/project-tasks/next` 认领、用 `.../result` 回传。
+  //
+  //  ⚠️ 路径 / profile **只从登记表来**：模型与工具都不许自带目录，
+  //     否则「在服务器上任意位置跑任意 profile」会变成模型能力。
+
+  /** 项目登记的校验：未知 id 一律拒收，且**把已登记的列出来**（只说「未知」等于没说） */
+  const projectOr = (id: unknown): { id: string; workspace: string; profile: string } | null => {
+    if (typeof id !== 'string' || id === '') return null;
+    const p = projects[id];
+    return p ? { id, workspace: p.workspace, profile: p.profile } : null;
+  };
+  const registered = (): string => Object.keys(projects).join(', ') || '无';
+
+  /** runner 可回传的终态（`queued`/`running` 不是 runner 能写的） */
+  const RESULT_STATUSES = new Set(['needs_review', 'completed', 'failed', 'unknown']);
+
+  app.post('/api/project-tasks', async (req, reply) => {
+    const b = req.body as Record<string, unknown> | undefined;
+    const project = projectOr(b?.projectId);
+    if (!project) {
+      return reply.code(400).send({
+        ok: false,
+        error: `未知项目 ${typeof b?.projectId === 'string' ? b.projectId : '(空)'}（已登记：${registered()}）`,
+      });
+    }
+    const goal = typeof b?.goal === 'string' ? b.goal.trim() : '';
+    if (!goal) return reply.code(400).send({ ok: false, error: 'goal 不能为空' });
+    const requestKey = typeof b?.requestKey === 'string' ? b.requestKey.trim() : '';
+    if (!requestKey) {
+      // 没有它就没法区分「重试」与「又一次提交」——那正是会做两遍活的地方
+      return reply.code(400).send({ ok: false, error: 'requestKey 不能为空（同一次调用的重试靠它去重）' });
+    }
+
+    const out = core.memoryManager.createProjectTask({
+      projectId: project.id,
+      requestKey,
+      goal,
+      acceptanceCriteria: typeof b?.acceptanceCriteria === 'string' ? b.acceptanceCriteria : '',
+      originSessionId: typeof b?.originSessionId === 'string' ? b.originSessionId : '',
+      origin: b?.origin === 'delegated' ? 'delegated' : 'user',
+    });
+
+    if (out.kind === 'busy') {
+      // 409：不是错误，是**明确忙碌**——并返回既有任务，让调用方知道在跑什么
+      return reply.code(409).send({
+        ok: false,
+        reason: 'busy',
+        task: out.task,
+        error: `项目 ${project.id} 已有在途任务 ${out.task.taskId}（状态 ${out.task.status}）`,
+      });
+    }
+    logger.info(`[project-task] ${out.kind}：${out.task.taskId}（项目 ${project.id}）`);
+    return { ok: true, reason: out.kind, task: out.task };
+  });
+
   /**
-   * 记忆检索 —— dsh 记忆回传的**读通道**（change: bridge-memory-read）。
+   * runner **认领**下一个任务（原子）。
    *
+   * ⚠️ 必须注册在 `/api/project-tasks/:id` **之前**：Fastify 的静态段优先，
+   *   但先注册能少一个「为什么 /next 被当成 id」的排查。
+   * 空闲时返回 `{ ok: true, task: null }` —— **空转是常态，不是错误**。
+   */
+  app.get('/api/project-tasks/next', async (req, reply) => {
+    const q = req.query as { projectId?: unknown } | undefined;
+    const project = projectOr(q?.projectId);
+    if (!project) {
+      return reply.code(400).send({
+        ok: false,
+        error: `未知项目 ${typeof q?.projectId === 'string' ? q.projectId : '(空)'}（已登记：${registered()}）`,
+      });
+    }
+    const task = core.memoryManager.claimNextProjectTask(project.id);
+    if (!task) return { ok: true, task: null };
+    logger.info(`[project-task] 被认领：${task.taskId}（revision ${task.revision}，第 ${task.attempts} 次）`);
+    // 把项目配置**随认领一起下发**：runner 不需要再读一份配置（单一来源）
+    return { ok: true, task, project };
+  });
+
+  app.get('/api/project-tasks/:id', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const task = core.memoryManager.getProjectTask(id);
+    if (!task) return reply.code(404).send({ ok: false, error: `没有这个任务：${id}` });
+    return { ok: true, task };
+  });
+
+  app.post('/api/project-tasks/:id/revision', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const b = req.body as Record<string, unknown> | undefined;
+    const feedback = typeof b?.feedback === 'string' ? b.feedback.trim() : '';
+    if (!feedback) return reply.code(400).send({ ok: false, error: 'feedback 不能为空' });
+
+    const before = core.memoryManager.getProjectTask(id);
+    if (!before) return reply.code(404).send({ ok: false, error: `没有这个任务：${id}` });
+
+    const task = core.memoryManager.addProjectTaskRevision(id, feedback);
+    if (!task) {
+      // 只有「还在途」会走到这里（未知 id 已在上面挡掉）——说清楚，别让调用方猜
+      return reply.code(409).send({
+        ok: false,
+        error: `任务 ${id} 当前状态 ${before.status} 不接受修改意见（等这一轮结束）`,
+      });
+    }
+    logger.info(`[project-task] 续作：${id} → revision ${task.revision}（沿用工程会话 ${task.dshSessionId ?? '无'}）`);
+    return { ok: true, task };
+  });
+
+  /** runner 回传结果。⚠️ 只接受仍在 `running` 的任务（迟到的回传不许覆盖） */
+  app.post('/api/project-tasks/:id/result', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const b = req.body as Record<string, unknown> | undefined;
+    const status = typeof b?.status === 'string' ? b.status : '';
+    if (!RESULT_STATUSES.has(status)) {
+      return reply.code(400).send({
+        ok: false,
+        error: `status 必须是 ${[...RESULT_STATUSES].join('/')} 之一（queued/running 由服务端自己管）`,
+      });
+    }
+    const task = core.memoryManager.submitProjectTaskResult(id, {
+      status: status as 'needs_review' | 'completed' | 'failed' | 'unknown',
+      dshSessionId: typeof b?.dshSessionId === 'string' && b.dshSessionId ? b.dshSessionId : undefined,
+      result: b?.result,
+      artifacts: Array.isArray(b?.artifacts) ? b.artifacts : undefined,
+      error: typeof b?.error === 'string' ? b.error : undefined,
+    });
+    if (!task) {
+      return reply.code(409).send({
+        ok: false,
+        error: `任务 ${id} 不在 running（可能已被回收重认领，或这是一次迟到的回传）——未写入`,
+      });
+    }
+    logger.info(`[project-task] ${id} → ${task.status}${task.dshSessionId ? `（工程会话 ${task.dshSessionId}）` : ''}`);
+    return { ok: true, task };
+  });
+
+  /**
+   * 记忆检索 —— dsh 记忆回传的**读通道**（change: bridge-memory-read）。   *
    * ★ 与聊天管线**同一套组装**（`read()` + `assembleWithWorldbook()`）：
    *   各写各的会让她在 dsh 里和 QQ 里记起不同的东西
    *   （同 `getCompactPersonaPrompt` 的教训——「人设/记忆文本长什么样」只能有一处定义）。

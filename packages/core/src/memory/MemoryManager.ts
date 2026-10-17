@@ -11,6 +11,14 @@ import { WorldbookStore } from './stores/WorldbookStore.js';
 import { CodeContextStore } from './stores/CodeContextStore.js';
 import { LifeStore } from './stores/LifeStore.js';
 import type { LifeEvent } from './stores/LifeStore.js';
+// ★ 2026-10-17（change: add-project-task-delegation）：委托任务表
+import { ProjectTaskStore } from './stores/ProjectTaskStore.js';
+import type {
+  ProjectTask,
+  ProjectTaskStatus,
+  CreateOutcome,
+  SubmitResultInput,
+} from './stores/ProjectTaskStore.js';
 import { lifeEventImportance } from './importance.js';
 import { WorldbookMatcher } from './engines/WorldbookMatcher.js';
 import { PersonaAdapter } from './engines/PersonaAdapter.js';
@@ -107,6 +115,14 @@ export class MemoryManager {
   private worldbookStore: WorldbookStore;
   private codeContextStore: CodeContextStore;
   private lifeStore: LifeStore;
+  /**
+   * 委托任务表（★ 2026-10-17，change: `add-project-task-delegation`）。
+   *
+   * ★ 为什么放在 MemoryManager 上：它是**落库状态**且 Web 端要用 ——
+   *   按本仓硬约束（CLAUDE.md「Web 端接口兼容」），必须经 MemoryManager/AlysiaCore
+   *   暴露**纯数据**方法，不能在路由层自己开 DB 句柄。
+   */
+  private projectTaskStore: ProjectTaskStore;
   /** ★ 8-29 世界观底色缓存（worldview-base-field） */
   private _worldviewBlock: string = '';
   private worldbookMatcher: WorldbookMatcher;
@@ -140,6 +156,7 @@ export class MemoryManager {
     this.worldbookStore = new WorldbookStore(db);
     this.codeContextStore = new CodeContextStore(db);
     this.lifeStore = new LifeStore(db);
+    this.projectTaskStore = new ProjectTaskStore(db);
 
     // ★ 8-10 slotify：把同一定时任务/画像类调用绑定到对应采样槽位
     const slotify = (slot?: Partial<SamplingSlot>): ILLMService => ({
@@ -1419,6 +1436,47 @@ export class MemoryManager {
 
   /** ★ 获取会话列表（Web 端会话管理）。
    *  返回最近活跃的会话及其消息数。 */
+  // ── 委托任务（project tasks）────────────────────────────────
+  //  ★ 2026-10-17（change: `add-project-task-delegation`）。
+  //  这几个方法是**纯数据**出入口：路由层与聊天工具都只经它们，
+  //  不许自己去碰 DB 句柄（本仓「Web 端接口兼容」硬约束）。
+  //  ⚠️ `now` 只为测试注入；生产路径别传。
+
+  /** 建任务（`requestKey` 去重 / 同项目在途 ⇒ `busy`） */
+  createProjectTask(input: {
+    projectId: string;
+    requestKey: string;
+    goal: string;
+    acceptanceCriteria?: string;
+    originSessionId?: string;
+    origin?: 'user' | 'delegated';
+  }): CreateOutcome {
+    return this.projectTaskStore.create(input);
+  }
+
+  getProjectTask(taskId: string): ProjectTask | null {
+    return this.projectTaskStore.get(taskId);
+  }
+
+  listProjectTasks(projectId: string, limit = 20): ProjectTask[] {
+    return this.projectTaskStore.listByProject(projectId, limit);
+  }
+
+  /** **原子**认领（runner 用）；没有可执行任务时返回 `null`（空闲是常态） */
+  claimNextProjectTask(projectId: string): ProjectTask | null {
+    return this.projectTaskStore.claimNext(projectId);
+  }
+
+  /** runner 回传结果；不在 `running` 的任务不接受（迟到的回传不许覆盖） */
+  submitProjectTaskResult(taskId: string, input: SubmitResultInput): ProjectTask | null {
+    return this.projectTaskStore.submitResult(taskId, input);
+  }
+
+  /** 追加修改意见 ⇒ 新 revision、回 `queued`、**沿用同一个工程会话** */
+  addProjectTaskRevision(taskId: string, feedback: string): ProjectTask | null {
+    return this.projectTaskStore.addRevision(taskId, feedback);
+  }
+
   listSessions(limit: number = 20): Array<{ sessionId: string; messageCount: number; lastActive: string }> {
     const sessions = this.eventStore.listSessions(limit);
     return sessions.map(s => ({

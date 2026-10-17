@@ -55,6 +55,15 @@ Alysia 从"桌面 AI Agent"重新定位为**有记忆、有人格的 AI 伴侣**
 | 会话管理命令 | |
 | Docker 部署 | |
 | WebUI 管理面板 | |
+| **委托任务**（聊天侧把工程活交给 dsh） | |
+
+> ★ 2026-10-17（change: `add-project-task-delegation`）：**委托任务**是一个跨三层的部件，
+> 契约单独成 spec —— 见 [`project-tasks`](../project-tasks/spec.md)。这里只记它对架构的**硬约束**：
+>
+> **alysia server 跑在容器里，`dsh` 与项目工作区在宿主机上** ⇒ 服务端**无法** spawn dsh。
+> 所以委托的执行方是**宿主侧 runner**（`scripts/project-task-runner.mjs`，出站轮询认领），
+> 不是服务端进程内部的一条调用链。任何「服务端直接起子进程跑 dsh」的设计**都不成立**，
+> 除非把 dsh 塞进镜像或挂 `docker.sock`（两者都被否决，理由见该 spec §1）。
 
 ### 1.3 技术选型
 

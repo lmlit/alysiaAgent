@@ -306,8 +306,44 @@ dsh 插件只回传原始事件；提取 / 5 道护栏 / 事实去重 / supersed
 
 ---
 
-## 2.5 角色系统（2026-08-02 已封装）
+### 2.4.5 委托任务 `project-tasks`（2026-10-17 新增）
 
+**Core 方法**: `MemoryManager.createProjectTask()` / `getProjectTask()` /
+`listProjectTasks()` / `claimNextProjectTask()` / `submitProjectTaskResult()` /
+`addProjectTaskRevision()`（均返回**纯数据**，见 `ProjectTaskStore` 的 `ProjectTask`）
+
+**用途**: 聊天侧的她把工程活交给 dsh 执行（change: `add-project-task-delegation`）。
+**服务端只做校验与状态，不执行** —— 真正跑 dsh 的是**宿主上的 runner**
+（`scripts/project-task-runner.mjs`），因为 alysia server 在容器里、`dsh` 在宿主机上。
+
+| 方法 | 路径 | 谁用 | 说明 |
+|---|---|---|---|
+| POST | `/api/project-tasks` | 聊天工具 | 创建。`requestKey` 去重；同项目在途 ⇒ **409 + 既有任务** |
+| GET | `/api/project-tasks/next?projectId=` | **runner** | **原子认领**；空闲返回 `{ ok, task: null }`（空转是常态） |
+| GET | `/api/project-tasks/:id` | 聊天工具 | 查状态/结果/产物 |
+| POST | `/api/project-tasks/:id/revision` | 聊天工具 | 追加意见 ⇒ revision+1、回 `queued`、**沿用同一工程会话** |
+| POST | `/api/project-tasks/:id/result` | **runner** | 回传终态（`needs_review`/`completed`/`failed`/`unknown`） |
+
+```
+创建    { projectId, requestKey, goal, acceptanceCriteria?, originSessionId?, origin? }
+        → 200 { ok, reason: 'created'|'deduped', task } | 409 { ok:false, reason:'busy', task }
+认领    → 200 { ok, task, project: { id, workspace, profile } } | 200 { ok, task: null }
+回传    { status, dshSessionId?, result?, artifacts?, error? }
+        → 200 { ok, task } | 409（不在 running：迟到的回传不许覆盖）
+```
+
+★ **`projectId` 必须在 `config.yml` 的 `projects:` 里登记过**；未登记 ⇒ 400 且**列出已登记的**。
+模型**不能**自带工作目录或 dsh profile（那等于把「任意位置跑任意 profile」变成模型能力）。
+
+★ **授权语义**：`origin='delegated'`（她在对话里决定交出去）vs `'user'`（用户显式下令），
+带 `originSessionId` 以便结果回到原会话。
+
+★ **runner 永远不写 `completed`**：那是「结果被接受」，属验收方；dsh 正常结束只写 `needs_review`。
+拿不到终态/超时 ⇒ `unknown`，**绝不自动重投**（盲目重投会把同一份工作做两遍）。
+
+⚠️ 该组端点与既有端点**同一套 Bearer 鉴权**（不新开通道）。
+
+## 2.5 角色系统（2026-08-02 已封装）
 | Core 方法 | 用途 |
 |-----------|------|
 | `listRoles()` | 角色列表（含 worldbook 条目数） |

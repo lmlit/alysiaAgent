@@ -67,8 +67,11 @@ export class RealtimeProcessor {
       if (event.payload.synthetic) {
         warnThrottled(
           'realtime-synthetic',
-          `跳过学习：合成注入（${String(event.payload.synthetic)}）` +
-            ` —— 不算用户发言，不进画像/人格/嵌入`,
+          // ★ 2026-10-17（change: `isolate-delegated-task-memory`）：措辞改为**原因中立**。
+          //   原先写死成「合成注入」，而 `synthetic` 现在也承载「委托任务会话」这一来源
+          //   （机器发起、不是用户发言）—— 对那种事件说「合成注入」会把排查带偏。
+          `跳过学习：非用户发言（${String(event.payload.synthetic)}）` +
+            ` —— 不进画像/人格/嵌入`,
         );
       }
       this.eventStore.markProcessed(event.id, PROCESSED_KNOWLEDGE);

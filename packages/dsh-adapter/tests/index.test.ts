@@ -876,3 +876,96 @@ describe('★ 合成注入：适配器只上报来源，不自己决定策略（
     } finally { f.restore(); }
   });
 });
+
+// ─────────────────────────────────────────────────────────────
+// ★ 2026-10-17 · change: isolate-delegated-task-memory
+//
+// 委托任务（alysia 让 dsh 去干的工程活）**不是用户说的话**。
+// 与上面两组的分工一致：adapter **只上报事实**（`payload.dsh_origin`），
+// 「要不要跳过学习」由服务端判定（`packages/server/src/ingest.ts`）。
+//
+// ★ 两条反向守卫：
+//   ① 没配 `sessionOrigin` ⇒ payload **一个字段都不能多**（桌面端行为不许变）
+//   ② 没配 ⇒ 仍然结算（结算跳过是**委托 profile 专属**，不是全局行为）
+// ─────────────────────────────────────────────────────────────
+describe('★ 委托会话的来源标记（isolate-delegated-task-memory）', () => {
+  const ORIGIN = 'delegated-task';
+
+  it('★ 配了 sessionOrigin → 每条回传都带 dsh_origin（值 = 跳过原因）', async () => {
+    const { ctx, emit } = makeMockCtx();
+    const f = stubFetch();
+    try {
+      apply(ctx, { alysiaBaseUrl: 'http://127.0.0.1:1', sessionOrigin: ORIGIN });
+      emit('session/event', ...msg(1, 'user/message', '帮我把关于我页面做出来'));
+      emit('session/event', ...msg(2, 'assistant/message', '好，我开始了。'));
+      emit('session/event', ...msg(3, 'turn/end', ''));
+      await new Promise(r => setTimeout(r, 20));
+
+      const events = f.ingestCalls[0].body.events;
+      expect(events).toHaveLength(2);
+      for (const e of events) {
+        expect(e.payload.dsh_origin, '没把会话来源报上去 —— 服务端就会把它当用户发言学习').toBe(ORIGIN);
+      }
+    } finally { f.restore(); }
+  });
+
+  it('★ 回归：没配 → **不带**这个字段（不是空串 —— 服务端按「出现即机器发起」判）', async () => {
+    const { ctx, emit } = makeMockCtx();
+    const f = stubFetch();
+    try {
+      apply(ctx, { alysiaBaseUrl: 'http://127.0.0.1:1' });
+      emit('session/event', ...msg(1, 'user/message', '你好'));
+      emit('session/event', ...msg(2, 'turn/end', ''));
+      await new Promise(r => setTimeout(r, 20));
+
+      // payload 逐字等于旧形状：桌面端与全部既有场景的行为不许有任何变化
+      expect(f.ingestCalls[0].body.events[0].payload).toEqual({ role: 'user', content: '你好' });
+      expect(f.ingestCalls[0].body.events[0].payload.dsh_origin).toBeUndefined();
+    } finally { f.restore(); }
+  });
+
+  it('★ 与 dsh_source 正交：两个字段同时出现（会话级 / 消息级各管各的）', async () => {
+    const { ctx, emit } = makeMockCtx();
+    const f = stubFetch();
+    try {
+      apply(ctx, { alysiaBaseUrl: 'http://127.0.0.1:1', sessionOrigin: ORIGIN });
+      emit('session/event', ...syntheticMsg(1, RUNTIME_CONTEXT_TEXT));
+      emit('session/event', ...msg(2, 'turn/end', ''));
+      await new Promise(r => setTimeout(r, 20));
+
+      const p = f.ingestCalls[0].body.events[0].payload;
+      expect(p.dsh_source).toBe('runtime-context');  // 这条**消息**是什么（dsh 给的）
+      expect(p.dsh_origin).toBe(ORIGIN);             // 这个**会话**是谁发起的（本侧配的）
+    } finally { f.restore(); }
+  });
+
+  it('★ 配了 → session/disposed **不结算**（机器发起的会话不进记忆）', async () => {
+    const { ctx, emit } = makeMockCtx();
+    const f = stubFetch({ ok: true, accepted: 1, rejected: [] });
+    try {
+      apply(ctx, { alysiaBaseUrl: 'http://127.0.0.1:1', sessionOrigin: ORIGIN });
+      emit('session/event', ...msg(1, 'user/message', '跑完了'));
+      emit('session/disposed', SESSION);
+      await new Promise(r => setTimeout(r, 40));
+
+      const urls = f.calls.map(c => c.url);
+      // 事件照常回传（审计轨迹要留）
+      expect(urls.some(u => u.includes('/api/ingest')), '尾巴没发出去 —— 审计轨迹就断了').toBe(true);
+      // 但不发起结算：它的内容按定义不进记忆，结算只会白烧一次 LLM + 造空摘要行
+      expect(urls.some(u => u.includes('/extract')), '委托会话被结算了 —— 会产出空摘要行').toBe(false);
+    } finally { f.restore(); }
+  });
+
+  it('★ 回归：没配 → 仍然结算（桌面端既有行为一字不变）', async () => {
+    const { ctx, emit } = makeMockCtx();
+    const f = stubFetch({ ok: true, accepted: 1, rejected: [] });
+    try {
+      apply(ctx, { alysiaBaseUrl: 'http://127.0.0.1:1' });
+      emit('session/event', ...msg(1, 'user/message', '聊完了'));
+      emit('session/disposed', SESSION);
+      await new Promise(r => setTimeout(r, 40));
+
+      expect(f.calls.some(c => c.url.includes('/extract'))).toBe(true);
+    } finally { f.restore(); }
+  });
+});

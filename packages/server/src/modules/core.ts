@@ -28,6 +28,12 @@ export const coreModule: Module = {
       features: config.features ?? { codeMode: false },
       // ★ 8-10 采样参数统一配置（DEFAULT floor + config.yml sampling: 节覆盖）
       sampling: config.sampling,
+      /**
+       * ★ 2026-10-17（change: `add-project-task-delegation`）：把登记的项目 id 交给 core，
+       *   决定**委托工具注册不注册**（空 ⇒ 不注册）。
+       * ⚠️ 只给 id：工作目录与 dsh profile 留在服务端（runner 从认领响应里拿）。
+       */
+      projectIds: Object.keys(config.projects ?? {}),
     });
 
     await core.start();

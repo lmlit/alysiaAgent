@@ -54,6 +54,23 @@ export const UNKNOWN_SESSION_ID = `${DSH_SESSION_PREFIX}unknown`;
  */
 export const RUNTIME_CONTEXT_SOURCE = 'runtime-context';
 
+/**
+ * **会话来源标记**字段名 —— 「这个会话是机器发起的，不是用户发言」。
+ *
+ * ★ 2026-10-17（change: `isolate-delegated-task-memory`）：
+ *   委托任务（alysia 让 dsh 去干的工程活）跑完会照常回传，而它**不是用户说的话**。
+ *   不标记的后果与已修的两例同族：画像回吸、人格放大、纠正误判、摘要与向量污染
+ *   （第一例 = 子 agent 会话，第二例 = dsh 的 runtime context 快照）。
+ *
+ * **语义：字段出现（非空）即「机器发起」**，值同时作**跳过原因**留痕。
+ * 服务端**不枚举已知值** —— 将来新增来源（定时维护等）零改动。
+ *
+ * ⚠️ 与 {@link RUNTIME_CONTEXT_SOURCE} 的分工（正交，别混）：
+ *   - `dsh_source` 由 **dsh 给**：这条**消息**是什么（`runtime-context` 等）；
+ *   - `dsh_origin` 由 **alysia 侧配**：这个**会话**是谁发起的（`delegated-task` 等）。
+ */
+export const DSH_ORIGIN_FIELD = 'dsh_origin';
+
 const EVENT_SOURCES = new Set(['chat', 'tool', 'system', 'code']);
 const MESSAGE_ROLES = new Set(['user', 'assistant']);
 
@@ -99,6 +116,14 @@ export function validateIngestEvent(raw: unknown): string | null {
     return `${e.id}: payload.role 必须是 user/assistant`;
   }
 
+  // ★ 2026-10-17（change: `isolate-delegated-task-memory`）：会话来源标记**可缺省**，
+  //   但**给了就必须是非空字符串** —— 空串/非字符串会让「机器发起的会话」与
+  //   「用户自己的会话」在服务端分不开，而这个区分正是这道闸的全部意义。
+  if (p[DSH_ORIGIN_FIELD] !== undefined
+    && (typeof p[DSH_ORIGIN_FIELD] !== 'string' || (p[DSH_ORIGIN_FIELD] as string).trim() === '')) {
+    return `${e.id}: payload.${DSH_ORIGIN_FIELD} 若出现必须是非空字符串（它标记会话由机器发起，值同时作跳过原因）`;
+  }
+
   const importance = e.importance;
   if (importance !== undefined && (typeof importance !== 'number' || !Number.isFinite(importance))) {
     return `${e.id}: importance 必须是数字`;
@@ -133,6 +158,25 @@ export function normalizeIngestEvent(e: MemoryEvent): MemoryEvent {
     payload.skip_profile = true;
     payload.synthetic = RUNTIME_CONTEXT_SOURCE;
   }
+
+  // ★ 2026-10-17（change: `isolate-delegated-task-memory`）：**机器发起的会话不是用户发言**。
+  //   走的是**同一个闸**（`skip_profile` + `synthetic`），不新增机制 ——
+  //   实测确认 `skip_profile` 一处命中三处生效：
+  //     `RealtimeProcessor`（早退：不做人格扫描/纠正快路径/**不做嵌入**）、
+  //     `ProfileExtractor`（不进画像）、`SessionEndProcessor`（认 `synthetic`，不进摘要）。
+  //   ⚠️ **必须同时打 `synthetic`**：`SessionEndProcessor` **刻意只过滤 `synthetic`
+  //      不过滤 `skip_profile`**（群聊 NPC 的 skip_profile 进摘要是既有行为）
+  //      ⇒ 只打 `skip_profile` 会漏掉摘要这条路。
+  //   ⚠️ `synthetic` 的取值：**消息级**的原因（runtime-context）比**会话级**的原因更精确，
+  //      故两者同时命中时保留前者。
+  const origin = typeof payload[DSH_ORIGIN_FIELD] === 'string'
+    ? (payload[DSH_ORIGIN_FIELD] as string).trim()
+    : '';
+  if (origin) {
+    payload.skip_profile = true;
+    if (!payload.synthetic) payload.synthetic = origin;
+  }
+
   return {
     ...e,
     payload: payload as MemoryEvent['payload'],

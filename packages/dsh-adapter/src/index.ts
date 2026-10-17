@@ -14,7 +14,7 @@ import type { AssembleContext, SessionEvent } from './types.ts'
 import { createRecallMemoryTool } from './recall-memory.ts'
 import { AlysiaClient } from './alysia-client.ts'
 import { IngestDelivery } from './delivery.ts'
-import { isSubagentSession, sessionIdOf, toAlysiaSessionId } from './session-id.ts'
+import { isSubagentSession, sessionIdOf, toAlysiaSessionId, DSH_ORIGIN_FIELD } from './session-id.ts'
 // PERSONA_VARIABLE 定义在 persona.ts（与变量注册处共用同一常量）
 export { PERSONA_VARIABLE } from './persona.ts'
 
@@ -34,6 +34,14 @@ export interface Config {
   logLevel?: 'info' | 'debug'
   /** alysia server 基址（缺省 `http://127.0.0.1:6185`） */
   alysiaBaseUrl?: string
+  /**
+   * alysia WebUI 的 Bearer token（缺省读环境变量 `ALYSIA_WEBUI_TOKEN`）。
+   *
+   * ★ 服务端部署**必须**配上：alysia 绑非回环地址时 `/api/*` 强制鉴权，
+   *   漏配的表现只是「记忆全是空的」，不会响亮失败。
+   *   见 `openspec/specs/dsh-adapter/spec.md` §2.7.2。
+   */
+  alysiaToken?: string
   /** 关掉记忆回传（默认开）。alysia 不在时开着也无妨——一切调用都是 best-effort */
   bridge?: boolean
   /**
@@ -44,6 +52,19 @@ export interface Config {
    * **设 0 = 每次挂载都重新拉**（测试用；生产中这么做正是本项要消除的浪费）。
    */
   prewarmReuseMs?: number
+  /**
+   * **会话来源标记**：非空 ⇒ 本实例回传的每条事件都带
+   * `payload.dsh_origin = <值>`，服务端据此判为「**机器发起、不是用户发言**」
+   * 并打上不学习闸（`skip_profile` + `synthetic`），见 `packages/server/src/ingest.ts`。
+   *
+   * ★ 2026-10-17（change: `isolate-delegated-task-memory`）：
+   *   委托运行体（alysia 让 dsh 去干的工程活）**不是用户说的话**；
+   *   不标记就会被画像提取 / 人格扫描 / 纠正快路径 / 摘要 / 嵌入照单全收。
+   *
+   * 缺省**不设**（= 用户与她在编程模式里的对话，行为一字不变）。
+   * 服务器的委托 profile 里配 `delegated-task`。
+   */
+  sessionOrigin?: string
 }
 
 /**
@@ -54,6 +75,18 @@ export function apply(ctx: Context, config: Config = {}): void {
   // ★ 启动日志：插件挂没挂上**必须能观测**。
   //   否则「preset 没生效」时无法区分「插件没加载」和「加载了但注册没生效」。
   ctx.logger.info('[alysia-adapter] 已挂载（记忆 context + recall_memory + 会话钩子）');
+
+  /**
+   * 会话来源标记（见 `Config.sessionOrigin`）。
+   * 非空 ⇒ 每条回传事件带 `payload.dsh_origin`；服务端据此判为「非用户发言」。
+   */
+  const sessionOrigin = (config.sessionOrigin ?? '').trim();
+  if (sessionOrigin) {
+    ctx.logger.info(
+      `[alysia-adapter] 会话来源标记已启用：${DSH_ORIGIN_FIELD}=${sessionOrigin} —— ` +
+        `本实例回传的事件会被判为「非用户发言」（不进画像/人格/嵌入/摘要），且**不做结算**`,
+    );
+  }
 
   // ── 1. persona：由 **host 行** `@alysia/dsh-adapter/persona-variable` 注册变量 ──
   //   2026-10-01 两处修正：
@@ -71,6 +104,7 @@ export function apply(ctx: Context, config: Config = {}): void {
   // ── 与 alysia 的通道（先建：记忆 context / 工具 / 回传三处都要用）──
   const client = new AlysiaClient({
     baseUrl: config.alysiaBaseUrl,
+    token: config.alysiaToken,
     logger: ctx.logger,
   })
 
@@ -167,7 +201,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     // ★ 序号在**发起时**领（不是返回时）—— 否则晚归的预热会拿着"最新号"把刷新盖掉。
     const prewarmSeq = ++issuedSeq;
     void sharedPrewarm(client, config.prewarmReuseMs).then(t => setMemoryContext(t, prewarmSeq));
-    installBridge(ctx, client, debug, (text, alysiaSessionId) => {
+    installBridge(ctx, client, debug, sessionOrigin, (text, alysiaSessionId) => {
       memorySessionId = alysiaSessionId;
       void refreshMemory(text);
     });
@@ -195,6 +229,12 @@ function installBridge(
   ctx: Context,
   client: AlysiaClient,
   debug: boolean,
+  /**
+   * 会话来源标记（已 trim；`''` = 不标记）。
+   * 非空 ⇒ 每条回传事件带 `payload.dsh_origin`，服务端据判「机器发起、不是用户发言」。
+   * 见 `Config.sessionOrigin` 与 `session-id.ts` 的 `DSH_ORIGIN_FIELD`。
+   */
+  sessionOrigin: string,
   /** 用户消息到达时回调：`(原话, alysia 侧会话 id)` —— 用于刷新记忆缓存 */
   onUserMessage: (text: string, alysiaSessionId: string) => void,
 ): void {
@@ -354,6 +394,12 @@ function installBridge(
           // ★ change: filter-synthetic-context-inflow —— 把 dsh 的**来源标记**透传给服务端
           //   （证据留在事件里，将来复盘要靠它；"要不要跳过学习"由服务端判）。
           ...(msg.sourceKind ? { dsh_source: msg.sourceKind } : {}),
+          // ★ change: isolate-delegated-task-memory —— **会话级**来源标记。
+          //   与上面那个字段正交：`dsh_source` 是「这条消息是什么」（dsh 给的），
+          //   `dsh_origin` 是「这个会话是谁发起的」（本侧配的）。
+          //   ⚠️ 缺省**不带这个字段**（不是空串）—— 服务端按「字段出现即机器发起」判，
+          //      带个空串会变成畸形输入。
+          ...(sessionOrigin ? { [DSH_ORIGIN_FIELD]: sessionOrigin } : {}),
         },
         created_at: new Date(event.time || Date.now()).toISOString(),
       });
@@ -400,6 +446,21 @@ function installBridge(
       noteMissingId('session/disposed');
       return;
     }
+
+    // ★ 2026-10-17（change: `isolate-delegated-task-memory`）：**机器发起的会话不结算**。
+    //   结算的意义是把**对话**变成记忆，而本实例的事件已被明确排除在记忆之外
+    //   ⇒ 结算只会白烧一次 LLM（摘要槽还贴着预算天花板，见 KI-1）并产出空摘要行。
+    //   事件**照常回传**（审计要留），只是不发起结算。
+    if (sessionOrigin) {
+      ctx.logger.info(
+        `[alysia-adapter] session/disposed → **跳过结算**（会话来源=${sessionOrigin}：机器发起，不进记忆）` +
+          `：${toAlysiaSessionId(sid)}`,
+      );
+      // 仍然要把队列发出去：这是审计轨迹，丢在内存里等于没回传
+      void delivery.drain();
+      return;
+    }
+
     ctx.logger.info(`[alysia-adapter] session/disposed → 结算 ${toAlysiaSessionId(sid)}`);
     void drainThenSettle(sid);
   });

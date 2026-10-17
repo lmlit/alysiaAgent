@@ -211,6 +211,37 @@ export function initializeDatabase(db: Database.Database): void {
       source      TEXT NOT NULL DEFAULT 'seed',
       created_at  TEXT NOT NULL
     );
+
+    -- ★ 2026-10-17 委托任务（change: add-project-task-delegation）：
+    --   聊天侧的她把工程活交给 dsh 执行；本表是**唯一**的提交 / 查询 / 结果通道。
+    --   ⚠️ request_key UNIQUE：同一次工具调用的重试只产生一个任务
+    --      （**不拿正文哈希代替** —— 正文改了还是同一次请求）。
+    --   ⚠️ status 的合法取值与迁移由 ProjectTaskStore 守，这里**不写 CHECK**：
+    --      SQLite 改 CHECK 要重建表，历史数据迁移会变复杂（同一取舍见 reminders 表）。
+    --   ⚠️ dsh_session_id 可空 = 「还没有」；续作靠它（NULL 时不许带 --session-id）。
+    CREATE TABLE IF NOT EXISTS project_tasks (
+      task_id             TEXT PRIMARY KEY,
+      request_key         TEXT NOT NULL UNIQUE,
+      project_id          TEXT NOT NULL,
+      origin_session_id   TEXT NOT NULL DEFAULT '',
+      origin              TEXT NOT NULL DEFAULT 'user',   -- 'user' | 'delegated'
+      goal                TEXT NOT NULL,
+      acceptance_criteria TEXT NOT NULL DEFAULT '',
+      dsh_session_id      TEXT,
+      status              TEXT NOT NULL,                  -- queued|running|needs_review|completed|failed|unknown
+      revision            INTEGER NOT NULL DEFAULT 0,
+      result              TEXT,                           -- JSON（上一轮结果；续作前不清）
+      artifacts           TEXT,                           -- JSON 数组
+      attempts            INTEGER NOT NULL DEFAULT 0,
+      last_error          TEXT,
+      created_at          TEXT NOT NULL,
+      updated_at          TEXT NOT NULL
+    );
+
+    -- 认领路径的索引：按项目取最老的待办（claimNext 的顺序由它兜底）
+    --   ⚠️ SQL 注释里**不能写反引号** —— 它会把外层模板字符串截断（本项目已栽过两次）
+    CREATE INDEX IF NOT EXISTS idx_project_tasks_claim
+      ON project_tasks (project_id, status, created_at);
   `);
 
   // Migration: add memory_config to existing persona table (v2)

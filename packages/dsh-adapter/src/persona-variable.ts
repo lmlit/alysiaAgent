@@ -38,6 +38,11 @@ export interface Config {
   persona?: PersonaMode
   /** alysia server 基址 */
   alysiaBaseUrl?: string
+  /**
+   * alysia WebUI 的 Bearer token（缺省读环境变量 `ALYSIA_WEBUI_TOKEN`）。
+   * 服务端部署必须配（`/api/*` 强制鉴权）——见 `spec.md` §2.7.2。
+   */
+  alysiaToken?: string
   /** 动态人设刷新间隔（毫秒）。`0` = 关闭刷新，只用静态兜底文本 */
   refreshMs?: number
 }
@@ -46,6 +51,7 @@ export function apply(ctx: Context, config: Config = {}): void {
   const mode: PersonaMode = config.persona ?? 'xilian'
   const client = new AlysiaClient({
     baseUrl: config.alysiaBaseUrl ?? DEFAULT_ALYSIA_BASE_URL,
+    token: config.alysiaToken,
     logger: ctx.logger,
   })
 

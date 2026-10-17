@@ -14,6 +14,14 @@
 /** 默认基址（alysia WebUI/server 的本地端口） */
 export const DEFAULT_ALYSIA_BASE_URL = 'http://127.0.0.1:6185';
 
+/**
+ * 鉴权 token 的环境变量名 —— 对应 alysia 的 `server.webuiToken`。
+ *
+ * ★ 2026-10-17（change: `connect-server-dsh-bridge`）：token **只经环境变量/config 传递**，
+ *   源码与仓库内不得出现字面量。
+ */
+export const TOKEN_ENV_VAR = 'ALYSIA_WEBUI_TOKEN';
+
 /** 单次请求超时。本地回环，慢于这个值说明对面不对劲，不拖住 dsh */
 const DEFAULT_TIMEOUT_MS = 5000;
 
@@ -78,12 +86,26 @@ export interface AlysiaClientOptions {
   baseUrl?: string;
   timeoutMs?: number;
   logger?: ClientLogger;
+  /**
+   * alysia WebUI 的 Bearer token。**缺省读环境变量 `ALYSIA_WEBUI_TOKEN`**。
+   *
+   * ★ 为什么需要它（2026-10-17，change: `connect-server-dsh-bridge`）：
+   *   alysia 在**需要鉴权**的部署下（容器内绑非回环地址 ⇒ `requireAuth = true`）
+   *   对 `/api/*` 强制 `Authorization: Bearer <token>`，**只有 `/api/health` 豁免**。
+   *   此前本客户端不带任何鉴权头 ⇒ 桥接调用**全部 401**；而本文件按设计 best-effort 降级，
+   *   于是症状只是「人设与记忆都是空的」——**不会响亮失败**，极难排查。
+   *
+   * 语义：传入 `''` 表示**显式不带 token**（不再回落到环境变量）；`undefined` 才读环境变量。
+   */
+  token?: string;
 }
 
 export class AlysiaClient {
   private readonly baseUrl: string;
   private readonly timeoutMs: number;
   private readonly logger?: ClientLogger;
+  /** 已解析的 Bearer token（空串 = 不带鉴权头）。解析顺序：显式 config > 环境变量 */
+  private readonly token: string;
   /** 连续失败计数——只用来把日志降噪（前几次 warn，之后闭嘴） */
   private failureStreak = 0;
 
@@ -91,6 +113,9 @@ export class AlysiaClient {
     this.baseUrl = (opts.baseUrl || DEFAULT_ALYSIA_BASE_URL).replace(/\/+$/, '');
     this.timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.logger = opts.logger;
+    // `undefined` 才回落环境变量；显式 `''` = 明确不带 token
+    const raw = opts.token !== undefined ? opts.token : process.env[TOKEN_ENV_VAR];
+    this.token = (raw ?? '').trim();
   }
 
   /** 取动态人设文本（紧凑形式）。失败返回 null，调用方保留旧值 */
@@ -188,9 +213,12 @@ export class AlysiaClient {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      // ★ 有 token 才带这个头：不带时行为与旧版逐字一致（本机免鉴权部署不受影响）
+      if (this.token) headers.Authorization = `Bearer ${this.token}`;
       const resp = await fetch(url, {
         method,
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: body === undefined ? undefined : JSON.stringify(body),
         signal: controller.signal,
       });

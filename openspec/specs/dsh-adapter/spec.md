@@ -50,6 +50,14 @@
     不能在 `.then()` 里领），结果落地时**不比已应用的更旧才允许写入**（`seq < appliedSeq` 丢弃）。
     空结果**不推进**已应用序号（保持「失败保留旧值」）。
     正常顺序（预热先回、刷新后回）行为不变。
+- ⚠️ **鉴权（2026-10-17 补，change: `connect-server-dsh-bridge`）**：`GET /api/persona/prompt`、
+  `POST /api/memory/read`、`POST /api/ingest`、`POST /api/sessions/:id/extract` 在 alysia
+  **需要鉴权**的部署下（容器内绑非回环地址 ⇒ `requireAuth = true`）一律要求
+  `Authorization: Bearer <token>`（只有 `/api/health` 豁免）。
+  插件侧必须带上（见 §2.7.2）；漏带的表现是**所有桥接调用 401**，而 adapter 按设计
+  best-effort 降级 ⇒ 只表现为「记忆与人设都是空的」，**不会响亮失败**。
+  排查入口：`[alysia] GET /api/persona/prompt → HTTP 401` 这类限频 warn
+  （⚠️ 该 warn 能否看见取决于有没有装 exporter，见 §2.7.4）。
 
 ### 2.3 生活事件 variable
 
@@ -216,6 +224,71 @@ alysia 未启动是常态，通道失败**绝不能**让 dsh 会话不可用。
 核心侧实现属 **KI-12**，在既有 change `fix-store-write-trace` 内完成；
 本节只钉住**口径**，避免 dsh 侧与核心侧对「重复投递」的理解分叉。
 
+### 2.5.2 会话来源标记：机器发起的会话不是用户发言
+
+> ★ 2026-10-17（change: `isolate-delegated-task-memory`）。
+> 这是「机器自己的东西被当成用户的」这一族的**第三例**：
+> 第一例是子 agent 会话（§2.5，`header.origin === 'subagent'`），
+> 第二例是 dsh 的 runtime context 快照（§2.5，`source.kind === 'runtime-context'`），
+> 本例外是**委托任务会话**（alysia 让 dsh 去干的工程活）。
+
+#### 2.5.2.1 契约：字段出现即「机器发起」
+
+- 字段名 **`payload.dsh_origin`**（非空字符串）。
+- **契约**：该字段**出现**（非空）即表示**这个会话是机器发起的，不是用户发言**；
+  值同时作**跳过原因**留痕。服务端**不枚举已知值** —— 将来新增来源零改动。
+- **契约**：缺省**不带这个字段**（**不是空串**）。带空串会被服务端当畸形输入拒收。
+- **契约**：字段若出现必须是非空字符串，否则 `/api/ingest` **拒收**并给出具体原因。
+- ⚠️ **与 `dsh_source` 正交，别混**：
+  `dsh_source` 由 **dsh 给**，说的是「这条**消息**是什么」（`runtime-context` 等）；
+  `dsh_origin` 由 **alysia 侧配**，说的是「这个**会话**是谁发起的」（`delegated-task` 等）。
+  两者可以同时出现；同时命中时 `synthetic` 取**更精确的消息级原因**。
+
+#### 2.5.2.2 分工与落地位置（沿用 §2.5 的分工，不新增机制）
+
+| 侧 | 职责 |
+|---|---|
+| adapter | **只上报事实**：`Config.sessionOrigin` 非空 ⇒ 每条回传带 `payload.dsh_origin` |
+| 服务端 | **只做判定**：`normalizeIngestEvent` 打 `skip_profile = true` + `synthetic = <值>` |
+
+**为什么两处配置（profile 级）而不是按 sessionId 登记**：
+`sessionId` 只有在运行体启动后（`--json` 首行 / SDK 响应）才知道，而事件可能在那之前就发出
+⇒ 头几条事件会**漏标记**，而漏掉的恰恰是最早的上下文；且登记需要「提交方」存在（阶段 C/D 才有）。
+profile 级标记**零竞态、可独立验证、不依赖未来组件**。
+将来提交方落地时可**另行**登记 sessionId 作为第二道闸。
+
+#### 2.5.2.3 为什么必须同时打 `skip_profile` 和 `synthetic`
+
+一处标记，三处生效，但**消费方认的字段不同**：
+
+| 消费方 | 认哪个 | 效果 |
+|---|---|---|
+| `RealtimeProcessor` | `skip_profile` | **早退**：不做人格扫描、不做纠正快路径、**不做嵌入** |
+| `ProfileExtractor` | `skip_profile` | 不进画像 |
+| `SessionEndProcessor` | **`synthetic`** | 不进摘要 |
+
+⚠️ `SessionEndProcessor` **刻意只过滤 `synthetic` 不过滤 `skip_profile`**
+（群聊 NPC 的 `skip_profile` 进摘要是既有行为）
+⇒ **只打 `skip_profile` 会漏掉摘要这条路**，而摘要会被召回并回灌。
+（实测：服务器上一次委托任务的 6 条事件**逐条**带上这两个标记。）
+
+#### 2.5.2.4 委托会话不结算
+
+- **契约**：配了 `sessionOrigin` 的实例在 `session/disposed` 时**只排空、不调用**
+  `/api/sessions/:id/extract`。
+- 理由：结算的意义是把**对话**变成记忆；而该会话的事件已被明确排除在记忆之外
+  ⇒ 结算只会白烧一次 LLM（摘要槽还贴着预算天花板，见 KI-1）并产出**空摘要行**。
+- 事件**照常回传**（审计轨迹要留），跳过结算**必须留痕**。
+- ⚠️ **可观测性边界**：`headless` 是一次性进程，实测**没有触发** `session/disposed`
+  ⇒ 这条分支在真机上**尚未被执行到**，目前只有单测覆盖。它是**防御性**的。
+
+#### 2.5.2.5 留痕文案：原因中立
+
+- `RealtimeProcessor` 的跳过日志为
+  `跳过学习：非用户发言（<原因>）—— 不进画像/人格/嵌入`。
+- ⚠️ 原措辞写死成「合成注入」，而 `synthetic` 现在也承载委托会话 —— 旧措辞会把排查带偏。
+  **这是文案变更，不是行为变更**（限频与触发条件都不变）。
+
 ### 2.6 Agent preset(聊天/编程双模式)
 
 - ✅ **已落地**（2026-10-01 bundle 化）:preset **派生自出厂 `standard`**（**保住工具集**——
@@ -228,6 +301,88 @@ alysia 未启动是常态，通道失败**绝不能**让 dsh 会话不可用。
   报 `unknown agent preset: <id>`,且**不提示「它被改名了」**。
   显示名 `name` 随便改（不持久化）。2026-10-02 改名的代价是 16 个会话全删。
 - 编程模式**由 dsh 本身承接**（不再自建 Electron 壳）——见 `alysia-architecture` §1.1。
+
+### 2.7 服务器侧运行体（委托任务的第一段落地）
+
+> ★ 2026-10-17（change: `connect-server-dsh-bridge`）。
+> 背景与实测证据：`docs/ALYSIA-DSH-BRIDGE-SERVER-INVENTORY.md`（只读 SSH 盘点）、
+> `docs/ALYSIA-DSH-BRIDGE-PROBE-2026-10-17.md`（CLI 实测）、
+> `openspec/archive/2026-10-17-connect-server-dsh-bridge/e01-evidence.md`（服务器验收记录）。
+
+#### 2.7.1 形态：独立 profile + `headless`，不复用运行中的 `web`
+
+- 委托任务跑在**新建的独立 profile**（服务器上是 `alysia`）上，组合 = `@deepseek-ai/dsh-base`
+  + `@deepseek-ai/dsh-headless` + `@alysia/dsh-adapter`。
+- **契约**：不得把 adapter 加进正在提供服务的 profile。
+  理由：那是用户正在用的生产界面（服务器上是 `:3080` 的 `web` profile），
+  混入委托会话会同时污染**用户体验**与**来源可判定性**（两者都在同一进程里，事后分不开）。
+- 运行体形态选 `headless`：**一次性进程**，建会话 → 提交 → 等静默 → 打印结果 → 退出，
+  **不监听端口**；`--session-id` 可续作同一会话；`--json` 输出机器可读事件流
+  （首行含 `sessionId` 与 `cwd`；`status.phase` 给状态；`turn_end.reason` 给终态）。
+- ⚠️ **契约**：`headless`/SDK 路径**没有 agent preset 名册**（名册只在 `@deepseek-ai/dsh-web-app`
+  组合包里，见 §5）。所以「使用 Alysia 模式」在委托运行体上**不是选一个 preset id**，
+  而是**把相同的人设变量 + adapter 插件行挂进该 profile**。
+  任何依赖「按会话指定 preset」的设计都不成立。
+- ⚠️ **契约**：adapter 是 **bundle**（`package.json` 里声明 `dsh.bundle.patch`），
+  所以它自带的 `cordis.patch.yml`（含 `alysia-persona` host 行与 `preset-alysia-standard`）
+  会**作为一个独立层自动叠加**。profile 层因此**只能按 id 覆写**它，不能 `insert` 同名行
+  （重复挂载会产出两条 `alysia-persona`）；headless 里没有 `agentPresets` 服务，
+  那条 preset 声明行必须显式 `disabled: true`（否则每次运行都报 pending 警告）。
+
+#### 2.7.2 鉴权：桥接必须携带 alysia 的 WebUI token
+
+- **现象（服务器实测）**：容器内绑 `0.0.0.0` ⇒ `requireAuth` 为真 ⇒
+  `/api/*` 强制 `Authorization: Bearer <token>`。
+  而 `AlysiaClient` 原实现**不带任何鉴权头** ⇒ 所有桥接调用 401。
+  实测对照：`/api/health` → 200（豁免）；`/api/persona/prompt` 与 `/api/memory/read`
+  → **无 token 401 / 带 token 200**（人设 16348 B、记忆上下文 8846 B）。
+- **契约**：`AlysiaClient` **必须**支持 Bearer token；缺省从环境变量
+  `ALYSIA_WEBUI_TOKEN` 取，插件 config 的 `alysiaToken` 显式值优先
+  （语义：传 `''` = 明确不带，`undefined` 才读环境变量）。
+  未配置 token 时**照旧按 best-effort 失败**（不回退到无鉴权，也不静默通过）。
+- **契约**：token **只经环境变量/config 传递**，源码与仓库内**不得出现字面量**。
+- ⚠️ **部署地址不是对称的**：桥接的 `alysiaBaseUrl` 必须是**宿主机能看到**的地址。
+  服务器上 alysia 容器映射为 `127.0.0.1:6186`（`6185` 是**容器内**端口）；
+  桌面端本机跑 alysia 时才是 `127.0.0.1:6185`。**照抄另一端会连不通。**
+
+#### 2.7.3 分发：本地打包 → 上传 → profile 内安装
+
+- **契约**：服务器**不能连 GitHub**，本包**未发布 npm** ⇒ 必须
+  `npm pack` → 上传 → `dsh plugin --profile alysia add <tarball>`。
+- **契约**：打包**必须**在 `dist/` 重建之后。实测教训：
+  桌面端正在加载的 `dist/` 停在 2026-10-02，**不含** KI-23/KI-24 与失败分类的修复
+  —— 「源码已修」不等于「分发物已修」，把旧 dist 打包出去等于把缺陷一起搬运。
+
+#### 2.7.4 日志：委托运行体必须自备 exporter，且**只能写 stderr**
+
+- **现象（实测 + 源码核实）**：cordis 的 `LoggerService` 启动时**只注册一个内存环形缓冲 exporter**
+  （`bufferSize = 1000`，只入数组、从不打印）；真正打印的是独立插件
+  `@deepseek-ai/cordis-plugin-logger-console`（行 id `logger-console`），
+  而 dsh 的 **base / headless / web-app 三个组合包都不含这一行**。
+  ⇒ 在这三种组合里，**任何插件**的 `ctx.logger.*` 都进内存就没人看。
+- **契约**：委托运行体的组合**必须**显式挂一个 exporter，否则「桥接到底通没通」不可观测
+  （表现为「什么都没有发生」，而不是一条错误）。
+- **契约（硬约束）**：exporter 的出口**必须是 stderr**。
+  stdout 是机器契约：`--json` 时是 NDJSON 事件流，不带 `--json` 时是最终答案本身。
+  **禁止**在委托运行体里使用官方 `@deepseek-ai/cordis-plugin-logger-console`
+  —— 它 `export()` 里是 `console.log`（= stdout），会破坏该契约
+  （同 `dsh-sdk-jsonrpc-server` 文档对 stdout 纯度的要求）。
+- **实现**：`packages/dsh-adapter/src/stderr-log.ts`（插件名 `alysia-log-stderr`，
+  子路径 `@alysia/dsh-adapter/stderr-log`）。
+- ⚠️ **级别语义容易读反**（`vendor/cordis/src/logger.ts`）：
+  `LoggerLevel` = `ERROR 0 / INFO 1 / WARN 2 / DEBUG 3`，过滤判据是
+  `targetLevel < level ⇒ 丢弃`，即 target 是**上限**。故 `levels: { default: 2 }`
+  = 收 error + info + warn、丢 debug。
+
+#### 2.7.5 凭据来源：与同机既有的 dsh 服务共用一份 EnvironmentFile
+
+- **实测**：服务器上 `web` profile 由 `dsh-web.service` 承载，
+  `EnvironmentFile=/root/.dsh-web.env`（进程环境里可见 `DEEPSEEK_API_KEY`）。
+- **契约**：委托运行体**复用同一个来源**，不另建一份凭据
+  （否则「哪份是生效的」会成为一个新的静默分叉）。
+- ⚠️ **安全纪律**：任何诊断输出**不得打印凭据值**。
+  判定「有没有配」必须用 `[ -n "$VAR" ]` —— **不许**用参数展开的 `${VAR:-…}` / `${VAR:+…}`
+  顺手把值带出来（本项目本次就是这么误打出一个真实 API Key 的）。
 
 ## 3. 一期范围(MVP,2026-08-25)
 
@@ -256,6 +411,7 @@ alysia 未启动是常态，通道失败**绝不能**让 dsh 会话不可用。
 | QQ 适配器（全新 dsh 插件） | ❌ 未做（当前 QQ 仍在 server 侧 `adapters/qq-official.ts`） |
 | 昔涟控制台 dsh 插件（`build-alysia-console-plugin`） | ⚠️ **进行中**。★ 2026-10-16 **更正**：原记的「踩在**已废弃的** `.agent-presets` / `tapIndex` 上」**理由不准** —— `.agent-presets` 确实废弃（且本包早已不用它，走的是 `dsh.bundle.patch`），但 `tapIndex` **没有废弃**（程序还在，dsh 文档称它是"任何行都无法表达的标记的逃生口"）。**真问题是**：桌面端 UI 不走 `renderIndex()` ⇒ **`tapIndex` 在桌面端不执行** ⇒ 入口脚本进不了页面（悬浮球不出现）。**已修**：注入改为 `webserver/index-inject` 行（`script-preload` + `script-src`@body），并加了「不再用 tapIndex」的回归守卫。**未做**：世界书/生活模板页、记忆旋钮页、审计页、`install_bundle` 装入 web profile 后的真机验收（见 §5） |
 | 结算的「两段确认」服务端接口 | ❌ 未做（本 change 走适配器侧挂起重试，见 §2.5.1 契约 6；是否要服务端配合待评估） |
+| 服务器侧运行体（独立 `alysia` profile + headless + adapter） | ✅ 已落地（2026-10-17，`connect-server-dsh-bridge`）——E01 只读连通验收通过（见 §2.7） |
 
 ## 5. 与 dsh 的对接约束
 

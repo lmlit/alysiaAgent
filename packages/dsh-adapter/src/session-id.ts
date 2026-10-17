@@ -17,6 +17,17 @@
 export const DSH_SESSION_PREFIX = 'dsh:';
 
 /**
+ * **会话来源标记**的字段名。**必须与 `packages/server/src/ingest.ts` 的
+ * `DSH_ORIGIN_FIELD` 一致**（同 `DSH_SESSION_PREFIX`：两边不能共享常量，
+ * 因为插件不能依赖 server 包 —— 靠两处注释 + 两处测试钉住同一个字面量）。
+ *
+ * ★ 2026-10-17（change: `isolate-delegated-task-memory`）：
+ *   语义 = **「这个会话是机器发起的，不是用户发言」**（字段出现即成立，值作跳过原因）。
+ *   服务端见到它就走既有的不学习闸（`skip_profile` + `synthetic`）。
+ */
+export const DSH_ORIGIN_FIELD = 'dsh_origin';
+
+/**
  * 取 dsh 会话 id；**取不到返回 `null`**，不再是 `'unknown'`。
  *
  * `session/event` 的第一个参数是 `Session` 实例（dsh 的 `callbackArgs = [this, event]`），

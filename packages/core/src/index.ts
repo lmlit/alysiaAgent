@@ -133,7 +133,12 @@ export class AlysiaCore {
       .use(eventbusModule)
       .use(coalescerModule)
       .use(personaSeedModule, { workspaceDir: this.opts.workspaceDir })
-      .use(toolsModule, { features, workspaceDir: this.opts.workspaceDir })
+      .use(toolsModule, {
+        features,
+        workspaceDir: this.opts.workspaceDir,
+        // ★ 2026-10-17（change: add-project-task-delegation）：空列表 ⇒ 不注册委托工具
+        projectIds: this.opts.projectIds ?? [],
+      })
       .use(commandsModule, { ownerId: this.opts.ownerId })
       .use(pipelineModule, { sampling: this.sampling, ownerId: this.opts.ownerId })
       .use(bootModule);

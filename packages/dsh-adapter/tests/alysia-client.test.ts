@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { AlysiaClient, DEFAULT_ALYSIA_BASE_URL } from '../src/alysia-client.ts';
+import { AlysiaClient, DEFAULT_ALYSIA_BASE_URL, TOKEN_ENV_VAR } from '../src/alysia-client.ts';
 
 let originalFetch: typeof globalThis.fetch;
 beforeEach(() => { originalFetch = globalThis.fetch; });
@@ -199,5 +199,73 @@ describe('extractSession', () => {
     await expect(c.extractSession('dsh:sess/with slash')).resolves.toBe(true);
     // id 必须编码 —— 裸斜杠会把路径拆成两段
     expect(url).toBe('http://127.0.0.1:1/api/sessions/dsh%3Asess%2Fwith%20slash/extract');
+  });
+});
+
+/**
+ * ★ 2026-10-17（change: `connect-server-dsh-bridge`）：Bearer 鉴权。
+ *
+ * 为什么值得单独守：alysia 在**需要鉴权**的部署下（绑非回环地址）对 `/api/*`
+ * 强制 `Authorization: Bearer <token>`，而本客户端按设计 best-effort 降级
+ * ⇒ 漏带这个头的症状只是「人设/记忆全空」，**不报错、不留痕**。
+ * 服务器侧实测 `鉴权: 开`，所以这条是「桥接能不能用」的硬前提。
+ *
+ * 同时守反向：**没配 token 时不许偷偷带一个空 Authorization**——
+ * 那会让「本机免鉴权部署」与「配错 token」两种情形长得一样。
+ */
+describe('★ Bearer 鉴权（connect-server-dsh-bridge）', () => {
+  let saved: string | undefined;
+  beforeEach(() => { saved = process.env[TOKEN_ENV_VAR]; delete process.env[TOKEN_ENV_VAR]; });
+  afterEach(() => {
+    if (saved === undefined) delete process.env[TOKEN_ENV_VAR];
+    else process.env[TOKEN_ENV_VAR] = saved;
+  });
+
+  /** 抓一次请求的 headers */
+  async function captureHeaders(client: AlysiaClient): Promise<Record<string, string>> {
+    let headers: Record<string, string> = {};
+    globalThis.fetch = (async (_u: string, i: any) => {
+      headers = i.headers ?? {};
+      return { ok: true, json: async () => ({ prompt: 'x' }) };
+    }) as never;
+    await client.getPersonaPrompt();
+    return headers;
+  }
+
+  it('显式 token → 发 Authorization: Bearer', async () => {
+    const h = await captureHeaders(new AlysiaClient({ baseUrl: 'http://127.0.0.1:1', token: 'secret-token' }));
+    expect(h.Authorization).toBe('Bearer secret-token');
+  });
+
+  it('缺省从环境变量取 token', async () => {
+    process.env[TOKEN_ENV_VAR] = 'from-env';
+    const h = await captureHeaders(new AlysiaClient({ baseUrl: 'http://127.0.0.1:1' }));
+    expect(h.Authorization).toBe('Bearer from-env');
+  });
+
+  it('显式 token 优先于环境变量', async () => {
+    process.env[TOKEN_ENV_VAR] = 'from-env';
+    const h = await captureHeaders(new AlysiaClient({ baseUrl: 'http://127.0.0.1:1', token: 'explicit' }));
+    expect(h.Authorization).toBe('Bearer explicit');
+  });
+
+  it('★ 没配 token → 不带 Authorization 头（不是空值头）', async () => {
+    const h = await captureHeaders(new AlysiaClient({ baseUrl: 'http://127.0.0.1:1' }));
+    expect(h.Authorization).toBeUndefined();
+    expect(h['Content-Type']).toBe('application/json');
+  });
+
+  it('显式空串 = 明确不带（即使环境变量配了）', async () => {
+    process.env[TOKEN_ENV_VAR] = 'from-env';
+    const h = await captureHeaders(new AlysiaClient({ baseUrl: 'http://127.0.0.1:1', token: '' }));
+    expect(h.Authorization).toBeUndefined();
+  });
+
+  it('401 时把响应体带进日志（否则「没配 token」与「token 错」分不开）', async () => {
+    fetchReturns({ error: 'unauthorized' }, 401);
+    const logger = makeLogger();
+    const c = new AlysiaClient({ baseUrl: 'http://127.0.0.1:1', logger });
+    await expect(c.getPersonaPrompt()).resolves.toBeNull();
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('401'));
   });
 });

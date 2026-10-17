@@ -33,6 +33,17 @@ export interface ServerConfig {
     host?: string;
   };
   features?: { codeMode?: boolean; shell?: boolean; filesystem?: boolean; streaming?: boolean };
+  /**
+   * **委托项目登记表**（★ 2026-10-17，change: `add-project-task-delegation`）。
+   *
+   * 键 = 项目 ID（模型只许用这里的键），值 = 宿主上的工作区与要用的 dsh profile。
+   *
+   * ⚠️ **路径只能来自这里**：模型/工具提交任务时**永远不能**自带工作目录或 profile
+   *    （那等于把「在服务器上任意位置跑任意 profile」变成模型能力）。
+   * ⚠️ 这是**宿主侧**路径：alysia server 在容器里看不到它，它只被**宿主上的 runner**使用
+   *    （runner 从认领响应里拿到它，见 webui 的 `/api/project-tasks/next`）。
+   */
+  projects?: Record<string, { workspace: string; profile: string }>;
   /** ★ 8-10 采样参数统一配置（7 槽位，缺省走 core DEFAULT_SAMPLING floor） */
   sampling?: DeepPartial<SamplingConfig>;
 }
@@ -92,5 +103,37 @@ export function loadConfig(path: string): ServerConfig {
     },
     features: data.features ?? { codeMode: false },
     sampling: data.sampling ?? undefined,
+    /**
+     * ★ 2026-10-17（change: `add-project-task-delegation`）：委托项目登记表。
+     *
+     * ⚠️ **这个函数是逐字段挑选的** —— 加新配置段时漏这一行，就是
+     *   「配置文件里写了、进程里没有」，而且**不会报错**。
+     *   真机第一次跑就撞上了：容器里 `config.yml` 明明有 `projects:`，
+     *   服务端却回「已登记：无」。所以下面用显式映射 + 坏条目留痕。
+     */
+    projects: sanitizeProjects(data.projects),
   };
+}
+
+/**
+ * 只接受 `{ <id>: { workspace, profile } }` 形状。
+ * 坏条目**丢掉并留痕**（不静默通过 —— 否则「配了但不生效」永远查不出来）。
+ */
+function sanitizeProjects(
+  raw: unknown,
+): Record<string, { workspace: string; profile: string }> | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const out: Record<string, { workspace: string; profile: string }> = {};
+  for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
+    const workspace = (value as { workspace?: unknown } | null)?.workspace;
+    const profile = (value as { profile?: unknown } | null)?.profile;
+    if (typeof workspace === 'string' && workspace !== '' && typeof profile === 'string' && profile !== '') {
+      out[id] = { workspace, profile };
+    } else {
+      logger.warn(
+        `[Config] projects.${id} 形状不对（需要 workspace 与 profile 两个非空字符串），已忽略`,
+      );
+    }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }

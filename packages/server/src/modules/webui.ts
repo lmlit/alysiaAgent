@@ -63,7 +63,7 @@ export const webuiModule: Module<WebuiModuleOptions> = {
       const staticDist = opts?.consoleDist && existsSync(join(opts.consoleDist, 'index.html'))
         ? opts.consoleDist
         : undefined;
-      const webui = createWebuiApp(core, { webuiToken, requireAuth, staticDist });
+      const webui = createWebuiApp(core, { webuiToken, requireAuth, staticDist, projects: config.projects });
       await webui.listen({ port: config.server.port, host: bindHost });
 
       const frontend = staticDist ? 'console (Next.js)' : '无（仅 /api/*）';

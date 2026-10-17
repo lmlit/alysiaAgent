@@ -10,6 +10,17 @@ export { KnowledgeStore } from './stores/KnowledgeStore.js';
 export { WorldbookStore } from './stores/WorldbookStore.js';
 export { LifeStore } from './stores/LifeStore.js';
 export type { LifeEvent, LifeState } from './stores/LifeStore.js';
+// ★ 2026-10-17（change: add-project-task-delegation）：委托任务表。
+//   导出到 barrel 是**必须的**：server 侧只能经 `@alysia/core/memory` 这个入口拿它
+//   （core 的 package.json exports 不暴露深路径）。
+export { ProjectTaskStore } from './stores/ProjectTaskStore.js';
+export type {
+  ProjectTask,
+  ProjectTaskStatus,
+  CreateOutcome,
+  CreateInput,
+  SubmitResultInput,
+} from './stores/ProjectTaskStore.js';
 export { WorldbookMatcher } from './engines/WorldbookMatcher.js';
 export { PersonaAdapter } from './engines/PersonaAdapter.js';
 export { ProfileExtractor } from './engines/ProfileExtractor.js';

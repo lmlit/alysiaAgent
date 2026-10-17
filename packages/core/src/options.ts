@@ -41,4 +41,12 @@ export interface AlysiaCoreOptions {
   /** ★ 8-10 采样参数统一配置（与 DEFAULT_SAMPLING 深合并，缺省走默认 floor）。
    *  对应 config.yml 的 sampling: 节。 */
   sampling?: DeepPartial<SamplingConfig>;
+  /**
+   * 已登记的**委托项目 id**（★ 2026-10-17，change: `add-project-task-delegation`）。
+   *
+   * **空/缺省 ⇒ 不注册委托工具**（配置即能力开关，见 `tools/project-tasks.ts`）。
+   * ⚠️ 只放**id**：工作目录与 dsh profile 是**服务端配置**，由 runner 从认领响应里拿，
+   *    core 不持有宿主路径（它连容器里都看不到）。
+   */
+  projectIds?: string[];
 }

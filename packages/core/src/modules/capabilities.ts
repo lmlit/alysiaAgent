@@ -15,6 +15,8 @@ import {
   createCancelReminderTool,
 } from '../tools/reminder.js';
 import { createSelfEvolveTools } from '../tools/self-evolve.js';
+// ★ 2026-10-17（change: add-project-task-delegation）：委托任务工具
+import { createProjectTaskTools } from '../tools/project-tasks.js';
 import { createShellExecTool } from '../tools/shell.js';
 import {
   createWriteFileTool,
@@ -44,6 +46,11 @@ export function registerChatTools(
   db: unknown,
   /** 由调用方注入（模块传 `ctx.logger`；`AlysiaCore` 公开方法走默认） */
   log: ModuleLogger = logger,
+  /**
+   * ★ 2026-10-17（change: `add-project-task-delegation`）：已登记的项目 id。
+   * **空 = 不注册委托工具**（这就是能力开关；见 `createProjectTaskTools`）。
+   */
+  projectIds: string[] = [],
 ): void {
   registry.register(createWebSearchTool());
   registry.register(createWeatherTool());
@@ -58,6 +65,11 @@ export function registerChatTools(
   registry.register(createCancelReminderTool(noopPersist));
   // ★ 8-14 内容自进化（content-self-evolution）：自写 worldbook/life 模板 + 用户指令删除
   for (const tool of createSelfEvolveTools(memoryManager)) {
+    registry.register(tool);
+  }
+  // ★ 2026-10-17（change: `add-project-task-delegation`）：委托任务工具。
+  //   未登记任何项目 ⇒ 一个都不注册（能力开关：配置即开关，不另立布尔位）
+  for (const tool of createProjectTaskTools(memoryManager, { projectIds })) {
     registry.register(tool);
   }
   // 表情包不再注册为工具 — 改用文案内标记 [表情包:名字]，发送时解析（LLMAgentStage + adapter）
@@ -110,6 +122,11 @@ export const providerModule: Module<ProviderConfig> = {
 export interface ToolsConfig {
   features: AlysiaFeatures;
   workspaceDir: string;
+  /**
+   * 已登记的委托项目 id（★ change: `add-project-task-delegation`）。
+   * 空/缺省 ⇒ 不注册委托工具（能力开关）。
+   */
+  projectIds?: string[];
 }
 
 /** 工具注册表。对应 `index.ts:200-204` */
@@ -119,7 +136,13 @@ export const toolsModule: Module<ToolsConfig> = {
   apply(ctx, config) {
     const cfg = config!;
     const registry = new ToolRegistry();
-    registerChatTools(registry, ctx.get<MemoryManager>('al:memory')!, ctx.get('al:db'), ctx.logger);
+    registerChatTools(
+      registry,
+      ctx.get<MemoryManager>('al:memory')!,
+      ctx.get('al:db'),
+      ctx.logger,
+      cfg.projectIds ?? [],
+    );
     if (cfg.features.codeMode) {
       registerCodeTools(registry, cfg.workspaceDir, cfg.features);
     }
