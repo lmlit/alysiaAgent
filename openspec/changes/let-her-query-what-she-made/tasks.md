@@ -37,3 +37,23 @@
 - `docs/Web-API-Design.md` 要补 `POST/GET /api/host/pages` 两条（下一轮文档改动一起做）
 - 用户提的第二件事——「dsh 插件还可以帮她**操作我们的服务器**」—— 是**能力面扩张**，
   需要先定清单（只读的服务状态/日志？还是要能做动作？），另开 change
+
+## A1 档：只读看板（用户 2026-10-19：「A，但是他会自己触发看看卡住的进度吗」）
+
+- [x] `ProjectTaskStore`：`listRecent(limit, status?)` 跨项目 + `countByStatus()`（看板的数据源）
+- [x] `MemoryManager`：`listRecentProjectTasks` / `countProjectTasksByStatus`（公开面，Web API 也能用）
+- [x] `packages/server/src/server-status.ts`：只读快照 —— uptime / runner 心跳（复用页面清单的
+      `receivedAt`）/ 日志**尾部**的 WARN·ERROR（`openSync+readSync` 只读 256KB，不整文件读）
+- [x] `packages/server/src/modules/logging.ts`：`setServerStatusLogDir(logDir)`（日志目录单一来源）
+- [x] core 工具 `check_server_status`：服务 / runner 心跳 / 基站页数 / 任务各状态计数 /
+      最近 5 条活（`running|queued` 且 ≥20 分钟没动 ⇒ 标 **⚠️ 可能卡住**）/ 最近告警
+- [x] 测试：`project-task-status-tool.test.ts`（10 例，含"只读"与"心跳超时"两条反向守卫）
+- [x] 部署 + 容器内自查：`logTail = 8 条`（正确解析并按 160 字截断）
+- [ ] **A2 看门狗**（"她自己触发"）—— 单独开 change：`watch-for-stuck-work`。本 change 只给"能看"，
+      不做轮询（理由见 proposal 的「不做自动轮询」）
+
+## 容器里发现的一条真问题（与本 change 无关，但看板把它带出来了）
+
+`[WARN] [Memory] vector search failed, fallback to text search: Embed API error 400`（01:20 起多次）
+⇒ 向量检索在**静默退化**成文本检索。要单独查（可能是智谱 embedding 的请求体/额度问题），
+已记进 `docs/TODO.md`。

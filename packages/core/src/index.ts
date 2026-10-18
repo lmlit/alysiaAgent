@@ -142,6 +142,7 @@ export class AlysiaCore {
         // ★ 2026-10-19（change: let-her-query-what-she-made）：页面清单（只读），
         //   缺省 ⇒ 不注册 list_my_pages / find_page
         ...(this.opts.hostPages ? { hostPages: this.opts.hostPages } : {}),
+        ...(this.opts.serverStatus ? { serverStatus: this.opts.serverStatus } : {}),
       })
       .use(commandsModule, { ownerId: this.opts.ownerId })
       .use(pipelineModule, { sampling: this.sampling, ownerId: this.opts.ownerId })

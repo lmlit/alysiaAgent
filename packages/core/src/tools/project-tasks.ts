@@ -40,6 +40,12 @@ export interface ProjectTaskHost {
   }): CreateOutcome;
   getProjectTask(taskId: string): ProjectTask | null;
   addProjectTaskRevision(taskId: string, feedback: string): ProjectTask | null;
+  /**
+   * ★ 2026-10-19：跨项目最近的活 + 各状态计数（`check_server_status` 用）。
+   * 可选：老宿主（测试替身/桌面端）没有这两个方法时，看板少一段，不炸。
+   */
+  listRecentProjectTasks?(limit?: number, status?: string): ProjectTask[];
+  countProjectTasksByStatus?(): Record<string, number>;
 }
 
 export interface ProjectTaskToolOptions {
@@ -68,7 +74,29 @@ export interface ProjectTaskToolOptions {
    * 不给 provider ⇒ 这两个查询工具不注册（保持"没数据就别给她假能力"）。
    */
   pages?: PagesProvider;
+  /**
+   * ★ 2026-10-19（change: `let-her-query-what-she-made`）：**服务/宿主健康**的只读快照。
+   * 缺省 ⇒ 不注册 `check_server_status`。
+   */
+  serverStatus?: ServerStatusProvider;
 }
+
+/**
+ * 服务/宿主健康快照（只读）。
+ *
+ * 为什么由服务端算：uptime、日志尾、runner 心跳都在它够得着的地方；
+ * core 只负责**措辞**，不碰文件与进程。
+ */
+export type ServerStatusProvider = () => {
+  /** 服务进程已运行多少秒 */
+  uptimeSec: number;
+  /** 宿主 runner 最近一次推页面清单的时间（心跳的唯一可靠来源） */
+  hostPagesReceivedAt?: string;
+  /** 清单里有多少页（顺带证明基站生成器在跑） */
+  pagesCount: number;
+  /** 最近几条 WARN/ERROR（已截断，**不含**密钥与正文） */
+  logTail: Array<{ level: string; at: string; message: string }>;
+} | null;
 
 /**
  * 页面清单提供者（★ 2026-10-19，change: `let-her-query-what-she-made`）。
@@ -413,6 +441,82 @@ export function createProjectTaskTools(
     },
   };
 
+  /**
+   * ★ 2026-10-19（change: `let-her-query-what-she-made`，A1 档）：**只读看板**。
+   *
+   * 回答的是"现在有没有卡住/堆着"—— 用户问过「她会自己触发看看卡住的进度吗」，
+   * 答案是"不会自动"，但**有人问、或她收到异常时**，她必须能一眼看全，而不是去翻日志。
+   *
+   * ⚠️ 它只**看**：不重启、不清理、不改任何东西（那是 B 档，要先定白名单与审计）。
+   */
+  const checkStatus: ToolDefinition = {
+    name: 'check_server_status',
+    description:
+      '看**你自己这边**现在什么情况（只读：不重启、不清理、不改任何东西）：'
+      + '服务跑了多久、宿主 runner 还在不在、基站清单多新、任务各状态有多少、'
+      + '有没有排队太久或卡住的活、最近的告警。'
+      + '用户问「现在怎么样了」「是不是卡住了」时用这个；**别为了看状态去新建任务**。',
+    parameters: { type: 'object', properties: {}, required: [] },
+    async handler() {
+      const st = opts.serverStatus?.() ?? null;
+      const counts = host.countProjectTasksByStatus
+        ? host.countProjectTasksByStatus()
+        : {};
+      const recent = host.listRecentProjectTasks ? host.listRecentProjectTasks(5) : [];
+
+      const lines: string[] = [];
+      if (st) {
+        const up = Math.round(st.uptimeSec / 60);
+        const beat = st.hostPagesReceivedAt
+          ? Math.floor((Date.now() - Date.parse(st.hostPagesReceivedAt)) / 1000)
+          : null;
+        lines.push('**服务**：正常（已运行 ' + up + ' 分钟）');
+        lines.push(
+          beat === null
+            ? '**宿主 runner**：还没收到过它的心跳（可能没在跑）'
+            : beat < 90
+              ? `**宿主 runner**：在（${beat} 秒前刚推过清单）`
+              : `**宿主 runner**：**${Math.round(beat / 60)} 分钟没动静了**（可能挂了/在跑长任务）`,
+        );
+        lines.push(`**基站清单**：${st.pagesCount} 页${beat !== null && beat >= 90 ? '（偏旧）' : ''}`);
+      } else {
+        lines.push('**服务**：拿不到状态快照（provider 没接）');
+      }
+
+      const order = ['queued', 'running', 'needs_review', 'unknown', 'failed', 'completed'];
+      const parts = order
+        .filter(k => (counts[k] ?? 0) > 0)
+        .map(k => `${k} ${counts[k]}`);
+      lines.push(`**任务**：${parts.length ? parts.join(' · ') : '（一个都没有）'}`);
+
+      if (recent.length > 0) {
+        lines.push('', '**最近的活**：');
+        for (const t of recent) {
+          const mins = Math.floor((Date.now() - Date.parse(t.updatedAt)) / 60000);
+          const stuck = (t.status === 'running' || t.status === 'queued') && mins >= 20;
+          lines.push(
+            `- ${t.taskId.slice(0, 11)}… · ${t.projectId} · ${t.status}/${t.phase}` +
+            ` · ${mins >= 1 ? `${mins} 分钟前` : '刚刚'}${stuck ? ' ⚠️ 可能卡住' : ''}` +
+            ` · ${t.goal.slice(0, 40)}`,
+          );
+        }
+      }
+
+      if (st?.logTail?.length) {
+        lines.push('', `**最近的告警**（${st.logTail.length} 条，已截断）：`);
+        for (const l of st.logTail.slice(0, 5)) {
+          lines.push(`- [${l.level}] ${l.at ? l.at.slice(11, 19) + ' ' : ''}${l.message.slice(0, 120)}`);
+        }
+      } else if (st) {
+        lines.push('', '**最近的告警**：没有（最近这段日志里没 WARN/ERROR）');
+      }
+
+      lines.push('', '（这是只读快照；要处理得让用户点头 —— 我不会自己去重启或清理。）');
+      return lines.join('\n');
+    },
+  };
+
   const withPages = opts.pages ? [listPages, findPage] : [];
-  return [start, get, cont, ...withPages];
+  const withStatus = opts.serverStatus ? [checkStatus] : [];
+  return [start, get, cont, ...withPages, ...withStatus];
 }

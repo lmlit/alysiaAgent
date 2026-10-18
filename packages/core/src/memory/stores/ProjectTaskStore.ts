@@ -202,6 +202,33 @@ export class ProjectTaskStore {
     return (rows as Record<string, unknown>[]).map(rowToTask);
   }
 
+  /**
+   * ★ 2026-10-19（change: `let-her-query-what-she-made`）：**跨项目**列最近的活。
+   *
+   * 给"她现在在忙什么/有没有卡住"这类查询用 —— 她要一眼看全，而不是按项目一个个试。
+   * 排序用 `updated_at`：卡住的任务 `created_at` 很旧、但 `updated_at` 会停在卡住那一刻，
+   * 两种排序对"看进度"都不完美，这里选 `updated_at`（更贴近"最近发生了什么"）。
+   */
+  listRecent(limit = 10, status?: string): ProjectTask[] {
+    const n = Math.min(Math.max(1, Math.trunc(limit)), 50);
+    const rows = status
+      ? this.db.prepare(
+          'SELECT * FROM project_tasks WHERE status = ? ORDER BY updated_at DESC LIMIT ?',
+        ).all(status, n)
+      : this.db.prepare('SELECT * FROM project_tasks ORDER BY updated_at DESC LIMIT ?').all(n);
+    return (rows as Record<string, unknown>[]).map(rowToTask);
+  }
+
+  /** 各状态计数（看板用：一眼看出"有没有堆着没人管"） */
+  countByStatus(): Record<string, number> {
+    const rows = this.db.prepare(
+      'SELECT status, COUNT(*) AS n FROM project_tasks GROUP BY status',
+    ).all() as Array<{ status: string; n: number }>;
+    const out: Record<string, number> = {};
+    for (const r of rows) out[String(r.status)] = Number(r.n) || 0;
+    return out;
+  }
+
   // ── 写 ──────────────────────────────────────────────────────
 
   /**

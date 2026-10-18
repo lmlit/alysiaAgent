@@ -16,7 +16,7 @@ import {
 } from '../tools/reminder.js';
 import { createSelfEvolveTools } from '../tools/self-evolve.js';
 // ★ 2026-10-17（change: add-project-task-delegation）：委托任务工具
-import { createProjectTaskTools, type PagesProvider } from '../tools/project-tasks.js';
+import { createProjectTaskTools, type PagesProvider, type ServerStatusProvider } from '../tools/project-tasks.js';
 import { createShellExecTool } from '../tools/shell.js';
 import {
   createWriteFileTool,
@@ -61,6 +61,11 @@ export function registerChatTools(
    * 缺省 ⇒ 不注册 `list_my_pages` / `find_page`。
    */
   hostPages?: PagesProvider,
+  /**
+   * ★ 2026-10-19（change: `let-her-query-what-she-made`）：服务/宿主健康快照（只读）。
+   * 缺省 ⇒ 不注册 `check_server_status`。
+   */
+  serverStatus?: ServerStatusProvider,
 ): void {
   registry.register(createWebSearchTool());
   registry.register(createWeatherTool());
@@ -79,7 +84,7 @@ export function registerChatTools(
   }
   // ★ 2026-10-17（change: `add-project-task-delegation`）：委托任务工具。
   //   未登记任何项目 ⇒ 一个都不注册（能力开关：配置即开关，不另立布尔位）
-  for (const tool of createProjectTaskTools(memoryManager, { projectIds, taskWindow, pages: hostPages })) {
+  for (const tool of createProjectTaskTools(memoryManager, { projectIds, taskWindow, pages: hostPages, serverStatus })) {
     registry.register(tool);
   }
   // ★ 2026-10-19：页面查询工具挂没挂上必须能观测（否则"她不会查"与"没注册"同形）
@@ -147,6 +152,11 @@ export interface ToolsConfig {
    */
   taskWindow?: { holidays?: string[]; peakWindows?: Array<[number, number]> };
   /**
+   * ★ 2026-10-19（change: `let-her-query-what-she-made`）：服务/宿主健康快照（只读）。
+   * 缺省 ⇒ 不注册 `check_server_status`。
+   */
+  serverStatus?: ServerStatusProvider;
+  /**
    * ★ 2026-10-19（change: `let-her-query-what-she-made`）：她做过的页面清单（只读投影）。
    * 由宿主 runner 推上来（容器看不到宿主目录）。缺省 ⇒ 不注册查询工具。
    */
@@ -168,6 +178,7 @@ export const toolsModule: Module<ToolsConfig> = {
       cfg.projectIds ?? [],
       cfg.taskWindow,
       cfg.hostPages,
+      cfg.serverStatus,
     );
     if (cfg.features.codeMode) {
       registerCodeTools(registry, cfg.workspaceDir, cfg.features);

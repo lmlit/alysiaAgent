@@ -51,6 +51,7 @@
 | KI-9 | `memory/services/` 半死代码（仅测试在用） | 🤖 | [KNOWN-ISSUES #KI-9](KNOWN-ISSUES.md#L403) |
 | KI-10 | 内核缺「只排序、不依赖服务」的表达（`after?`） | 🤖 | [KNOWN-ISSUES #KI-10](KNOWN-ISSUES.md#L392) |
 | KI-18 | `/api/sessions/:id/extract` 无任何校验 | 🤖 | [KNOWN-ISSUES #KI-18](KNOWN-ISSUES.md#L414) |
+| **新增 2026-10-19** | **向量检索静默退化成文本检索**：容器日志 `[WARN] [Memory] vector search failed, fallback to text search: Embed API error 400`（01:20 起多次）。召回质量在降，但**没人会发现** —— 正是静默失败族的样子 | 🧑 | 日志（`/app/data/logs/alysia-2026-10-19.log`）；根因待查（智谱 embedding 请求体/额度？） |
 
 ## C. 能力机会（不是缺陷，是"要不要做"）
 

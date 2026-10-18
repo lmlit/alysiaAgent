@@ -1478,6 +1478,18 @@ export class MemoryManager {
     return this.projectTaskStore.listByProject(projectId, limit);
   }
 
+  /**
+   * ★ 2026-10-19（change: `let-her-query-what-she-made`）：**跨项目**最近的活 + 各状态计数。
+   * 给"她现在在忙什么 / 有没有堆着没人管"这类只读看板用。
+   */
+  listRecentProjectTasks(limit = 10, status?: string): ProjectTask[] {
+    return this.projectTaskStore.listRecent(limit, status);
+  }
+
+  countProjectTasksByStatus(): Record<string, number> {
+    return this.projectTaskStore.countByStatus();
+  }
+
   /** **原子**认领（runner 用）；没有可执行任务时返回 `null`（空闲是常态） */
   claimNextProjectTask(projectId: string): ProjectTask | null {
     return this.projectTaskStore.claimNext(projectId);

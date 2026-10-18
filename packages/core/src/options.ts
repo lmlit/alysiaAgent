@@ -72,4 +72,14 @@ export interface AlysiaCoreOptions {
       updatedAt: string;
     }>;
   } | null;
+  /**
+   * ★ 2026-10-19（change: `let-her-query-what-she-made`）：服务/宿主健康快照（只读）。
+   * 缺省 ⇒ 不注册 `check_server_status`。
+   */
+  serverStatus?: () => {
+    uptimeSec: number;
+    hostPagesReceivedAt?: string;
+    pagesCount: number;
+    logTail: Array<{ level: string; at: string; message: string }>;
+  } | null;
 }

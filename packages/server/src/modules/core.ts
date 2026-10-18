@@ -12,6 +12,7 @@ import { AlysiaCore } from '@alysia/core';
 import type { Module } from '@alysia/core/kernel';
 import type { RuntimeConfig } from './config.js';
 import { hostPagesCache } from '../host-pages.js';
+import { getServerStatusSnapshot } from '../server-status.js';
 
 export const coreModule: Module = {
   name: 'al:core',
@@ -43,6 +44,8 @@ export const coreModule: Module = {
      * `POST /api/host/pages` 推上来，这里读进程内缓存。
      */
     hostPages: () => hostPagesCache.get(),
+    /** ★ 2026-10-19（let-her-query-what-she-made）：服务/宿主健康快照（只读）。 */
+    serverStatus: () => getServerStatusSnapshot(),
     });
 
     await core.start();

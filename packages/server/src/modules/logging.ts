@@ -10,6 +10,7 @@
 import { logger, startDailyLogCleanup } from '@alysia/core';
 import type { Module } from '@alysia/core/kernel';
 import type { RuntimeConfig } from './config.js';
+import { setServerStatusLogDir } from '../server-status.js';
 
 export const loggingModule: Module = {
   name: 'al:logging',
@@ -27,6 +28,8 @@ export const loggingModule: Module = {
     const logDir = `${config.server.dataDir}/logs`;
 
     logger.configure({ logDir });
+    // ★ 2026-10-19（change: let-her-query-what-she-made）：check_server_status 要读日志尾部
+    setServerStatusLogDir(logDir);
     ctx.provide('al:logDir', logDir);
     ctx.logger.info(`Log file: ${logDir}/alysia-${new Date().toISOString().slice(0, 10)}.log`);
 
