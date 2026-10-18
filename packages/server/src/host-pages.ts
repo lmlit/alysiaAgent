@@ -33,6 +33,11 @@ export interface HostPagesIndex {
   pages: HostPage[];
   /** 服务端**收到**它的时间（服务端时区，用来判"这份多旧"） */
   receivedAt?: string;
+  /**
+   * ★ 2026-10-19（change: `watch-for-stuck-work`）：宿主侧探到的**站点可达性**。
+   * 容器够不到宿主的 3389，所以只能由 runner 探完顺手带上来（看门狗的判据之一）。
+   */
+  site?: { ok: boolean; status: number; checkedAt: string };
 }
 
 let current: HostPagesIndex | null = null;
@@ -59,9 +64,24 @@ export function parseHostPagesInput(raw: unknown): HostPagesIndex | null {
       updatedAt: typeof p.updatedAt === 'string' ? p.updatedAt : '',
     });
   }
+  // ★ 2026-10-19：站点可达性（宿主探的）。缺省就是"没探过"，不猜
+  const rawSite = (raw as { site?: unknown }).site;
+  let site: HostPagesIndex['site'];
+  if (rawSite && typeof rawSite === 'object') {
+    const s = rawSite as Record<string, unknown>;
+    if (typeof s.ok === 'boolean') {
+      site = {
+        ok: s.ok,
+        status: typeof s.status === 'number' ? s.status : 0,
+        checkedAt: typeof s.checkedAt === 'string' ? s.checkedAt : '',
+      };
+    }
+  }
+
   return {
     generatedAt: typeof b.generatedAt === 'string' ? b.generatedAt : '',
     pages,
+    ...(site ? { site } : {}),
   };
 }
 

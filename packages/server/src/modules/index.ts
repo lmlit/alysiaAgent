@@ -34,3 +34,5 @@ export { webuiModule } from './webui.js';
 export type { WebuiModuleOptions } from './webui.js';
 // ★ 2026-10-18（let-her-start-her-own-projects）：她自己发起「做点小东西」（默认关闭）
 export { selfActivityModule } from './self-activity.js';
+// ★ 2026-10-19（change: watch-for-stuck-work）：看门狗（只读判据 + 主动通知）
+export { watchdogModule } from './watchdog.js';

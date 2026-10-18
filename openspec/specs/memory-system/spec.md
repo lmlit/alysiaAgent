@@ -1226,6 +1226,7 @@ query → Worldbook 匹配 → embed API → LanceDB 向量检索
 | 场景 | 处理策略 |
 |---|---|
 | Embed API 挂了 | 向量检索降级为 SQLite LIKE，写入进重试队列，指数退避 |
+| **空查询不请求 embedding**（★ 2026-10-19，change: `fix-empty-embed-query`） | `query.trim() === ''`（dsh 会话挂载预热、系统组装）⇒ **直接走文本检索**，`debug` 级日志。真机证据：`[memory/read] query=""` 后面紧跟 `Embed API error 400 {"code":"1213","未正常接收到prompt参数"}` —— 智谱拒绝空 prompt。**没有查询文本就没有"语义相似"**，那次请求本来就不该发；不许"兜底成零向量"（零向量会返回随机相似的垃圾结果，比文本检索更糟）。`al:embed` 同样对空文本**不发请求**并抛明确错误 |
 | LLM 提取失败 | 非实时，失败跳过，下次 cron 补处理 |
 | **推理模型的 max_tokens 预算**（★ 2026-09-25 实测） | `CHAT_MODEL` 是**推理模型**：**reasoning 与可见内容共用同一个 `max_tokens`**，每次调用先花 ~250 tokens 在 reasoning 上。512 的预算下对话稍长即"预算耗尽、content 为空"（HTTP 200、0 字）。**要求结构化输出的槽位（`session.summary` / `life.generateSummary`）max_tokens 必须 ≥1024**。这同一个 512 曾同时造成「会话摘要 22 天 100% 失败」与「每日反思 11 次 empty response」 |
 | LLM 返回非法 JSON（markdown 围栏 / 截断 / 空白） | 解析前**剥围栏**（共用工具 `utils/llm-json.ts`）+ 截断检测；失败重试 1 次（实测模型偶发空响应，重试可救回）；仍失败则**不存占位符**——`summary=''` + `summary_status='failed'` + **不生成 embedding**，等 cron 补处理 |

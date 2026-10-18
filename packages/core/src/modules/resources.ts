@@ -113,6 +113,17 @@ export const embedModule: Module<HttpEndpointConfig> = {
     const cfg = config!;
     ctx.provide('al:embed', {
       embed: async (text: string): Promise<number[]> => {
+        /**
+         * ★ 2026-10-19（change: `fix-empty-embed-query`）：空文本**不发请求**。
+         *
+         * 智谱对空 prompt 回 `400 {"code":"1213","message":"未正常接收到prompt参数。"}` ——
+         * 既浪费一次往返，又把一条 400 写进日志（真故障会被它淹掉）。
+         * 空文本在语义上就没有向量；调用方本该跳过（`MemoryManager.read` 已加守卫）。
+         * 这里抛明确的错误，方便定位"谁在拿空文本要向量"。
+         */
+        if (!text || text.trim() === '') {
+          throw new Error('embed: 空文本（调用方应在调用前跳过 embedding）');
+        }
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 8000);
         try {

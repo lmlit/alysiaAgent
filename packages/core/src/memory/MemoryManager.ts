@@ -33,6 +33,12 @@ import {
   finalizeNotice,
   MAX_NOTICE_CHARS,
 } from './project-task-result.js';
+// ★ 2026-10-19（change: watch-for-stuck-work）：看门狗通知的措辞（只准说事实里有的）
+import {
+  buildWatchdogPrompts,
+  finalizeWatchdogNotice,
+  MAX_WATCHDOG_NOTICE_CHARS,
+} from './watchdog-notice.js';
 import { lifeEventImportance } from './importance.js';
 import { WorldbookMatcher } from './engines/WorldbookMatcher.js';
 import { PersonaAdapter } from './engines/PersonaAdapter.js';
@@ -886,11 +892,23 @@ export class MemoryManager {
     const knobs = this.personaStore.getMemoryConfig();
 
     // 向量存储未启用时直接走文本检索（避免 embed 成功但 search 空结果不触发 fallback）
-    if (!this.vectorStore) {
+    //
+    // ★ 2026-10-19（change: `fix-empty-embed-query`）：**空 query 也直接走文本检索**。
+    //   真机证据：`[memory/read] query=""` 紧跟着
+    //   `Embed API error 400: {"code":"1213","message":"未正常接收到prompt参数。"}`
+    //   —— 只是"这次没有语义查询"（如 dsh 会话的系统组装），却每次都要先撞一次 400、
+    //   再打一条 WARN，日志噪声掩盖真故障。空查询请求 embedding 本来就是错的：
+    //   **没有查询文本就没有"语义相似"可言**。
+    if (!this.vectorStore || req.query.trim() === '') {
       const retrieved = this.applyKnobsToRetrieved([
         ...this.conversationStore.searchByText(req.query, req.limit),
         ...this.knowledgeStore.searchChunksByText(req.query, Math.min(3, req.limit)),
       ], knobs).results.slice(0, req.limit);
+      if (!this.vectorStore) {
+        // 老路径：向量库没起来（真问题，值得 WARN，由调用方/启动日志说明）
+      } else {
+        logger.debug('[Memory] 空查询 ⇒ 跳过向量检索，直接文本检索（不是故障）');
+      }
 
       return {
         context: '',
@@ -1697,6 +1715,44 @@ export class MemoryManager {
   }
 
   
+  /**
+   * ★ 2026-10-19（change: `watch-for-stuck-work`）：看门狗通知的**她自己的说法**。
+   *
+   * 与 `composeProjectTaskNotice` 同构：模型失败返回 `null`，调用方回落机械模板。
+   * 只准说事实里有的（提示词里写死了，见 `watchdog-notice.ts`）。
+   */
+  async composeWatchdogNotice(input: {
+    facts: Array<{ key: string; level: 'warn' | 'error'; title: string; detail: string }>;
+    /** 为了语气：她跟这个人最近怎么说话（可选） */
+    originSessionId?: string;
+  }): Promise<string | null> {
+    let personaName: string | undefined;
+    try {
+      personaName = this.personaStore.get()?.name;
+    } catch {
+      personaName = undefined;
+    }
+    let recentDialogue: string | undefined;
+    if (input.originSessionId) {
+      try {
+        recentDialogue = this.getRecentDialogueBlock(input.originSessionId, 6) || undefined;
+      } catch {
+        recentDialogue = undefined;
+      }
+    }
+    const { system, user } = buildWatchdogPrompts({ facts: input.facts, personaName, recentDialogue });
+    try {
+      const raw = await this.llmService.complete(system, user, {
+        max_tokens: MAX_WATCHDOG_NOTICE_CHARS * 3,
+        temperature: 0.8,
+      } as Partial<SamplingSlot>);
+      return finalizeWatchdogNotice(raw);
+    } catch (err: any) {
+      logger.warn(`[Watchdog] 通知措辞生成失败（回落模板）：${err?.message ?? err}`);
+      return null;
+    }
+  }
+
   async recordProjectTaskResult(input: {
     taskId: string;
     projectId: string;

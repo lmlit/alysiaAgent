@@ -28,6 +28,7 @@ import {
   webuiModule,
   // ★ 2026-10-18（let-her-start-her-own-projects）：她自己发起"做点小东西"（默认关闭）
   selfActivityModule,
+  watchdogModule,
 } from './modules/index.js';
 import type { RuntimeConfig } from './modules/index.js';
 
@@ -56,6 +57,8 @@ async function main(): Promise<void> {
     .use(cronModule)
     // 只传候选路径；「用不用」由 webui 模块判（那里才知道 isDesktop）
     .use(webuiModule, { consoleDist })
+    // ★ 2026-10-19（change: watch-for-stuck-work）：看门狗 —— 只读判据 + 她自己说一句
+    .use(watchdogModule)
     // ★ 她自己找活干（默认关闭；需要在 config.yml 里显式 selfActivity.enabled=true）
     .use(selfActivityModule);
 

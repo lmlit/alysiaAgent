@@ -604,6 +604,17 @@ export async function pushPagesIndex(cfg, log) {
     log(`  ⚠️ 页面清单不是合法 JSON（${PAGES_INDEX_PATH}）—— 跳过本次上报`);
     return false;
   }
+  // ★ 2026-10-19（change: `watch-for-stuck-work`）：宿主机自己探一下基站 —— 容器**够不到**宿主 3389，
+  //   所以"站点还打不打得开"只能在这里测，顺带带上去给看门狗当判据。
+  //   ⚠️ 3 秒超时、失败不改 payload 结构（只是 `site.ok=false`）；探不到就如实报，别假装健康。
+  try {
+    const base = (process.env.ALYSIA_HUB_URL ?? 'http://127.0.0.1:3389').replace(/\/+$/, '');
+    const r = await fetch(base + '/', { signal: AbortSignal.timeout(3000) });
+    await r.arrayBuffer().catch(() => {});          // ⚠️ 不读 body 会让 undici 崩（真机踩过）
+    parsed.site = { ok: r.status === 200, status: r.status, checkedAt: new Date().toISOString() };
+  } catch (err) {
+    parsed.site = { ok: false, status: 0, checkedAt: new Date().toISOString() };
+  }
   const res = await api(cfg, 'POST', '/api/host/pages', parsed);
   if (!res.ok) {
     log(`  ⚠️ 页面清单上报失败（HTTP ${res.status}）：${res.json?.error ?? res.text?.slice(0, 120)}`);

@@ -86,6 +86,30 @@ export interface ServerConfig {
   };
   /** ★ 8-10 采样参数统一配置（7 槽位，缺省走 core DEFAULT_SAMPLING floor） */
   sampling?: DeepPartial<SamplingConfig>;
+  /**
+   * ★ 2026-10-19（change: `watch-for-stuck-work`）：**看门狗**。
+   *
+   * 用户原话：「他会自己触发看看卡住的进度吗」。她不会 —— 除非系统替她盯着。
+   * 这里配的是"盯多紧"：判据全是**只读**的（任务卡住 / runner 掉线 / 站点打不开 / 队列堆积 /
+   * 刚重启），发现异常就让她自己发一条很短的 QQ 消息。
+   *
+   * 默认**开**（intervalSec 60 / 冷却 30 分钟）；显式 `enabled: false` 才关。
+   */
+  watchdog?: {
+    enabled?: boolean;
+    /** 判据多久跑一次（秒，默认 60，最小 15） */
+    intervalSec?: number;
+    /** 同一问题多久内不重复说（分钟，默认 30） */
+    cooldownMinutes?: number;
+    /** 任务 running/queued 多久没动算卡住（分钟，默认 20） */
+    stuckMinutes?: number;
+    /** 最老的排队任务等多久算"没人接活"（分钟，默认 30） */
+    queueOldestMinutes?: number;
+    /** 排队条数到多少算堆积（默认 3） */
+    queueDepth?: number;
+    /** runner 心跳断多久算它挂了（秒，默认 90） */
+    runnerHoleSec?: number;
+  };
 }
 
 export function loadConfig(path: string): ServerConfig {
@@ -156,6 +180,8 @@ export function loadConfig(path: string): ServerConfig {
     projectTasks: sanitizeProjectTasks((data as { projectTasks?: unknown }).projectTasks),
     // ★ 逐字段挑选（同一个坑）：自发起配置也要显式映射
     selfActivity: sanitizeSelfActivity((data as { selfActivity?: unknown }).selfActivity),
+    // ★ 2026-10-19（change: watch-for-stuck-work）：看门狗配置（同一个坑：必须显式映射）
+    watchdog: sanitizeWatchdog((data as { watchdog?: unknown }).watchdog),
   };
 }
 
@@ -231,6 +257,47 @@ export function sanitizeProjectTasks(
  * ⚠️ **默认关闭**：不写 `enabled: true` 就永远不发 —— "她自己花钱干活"必须显式打开。
  * 数值字段只接受有限正数，形状不对就**回落默认**（否则配个 0 会变成"无限次"）。
  */
+/**
+ * 看门狗配置（★ 2026-10-19，change: `watch-for-stuck-work`）。
+ *
+ * 与其它段同一个纪律：**形状不对就丢并留痕**，别静默通过（否则"配了但不生效"永远查不出来）。
+ * 默认开；`enabled: false` 才关。数值给下限，防止有人把 `intervalSec` 配成 1 秒把库打满。
+ */
+export function sanitizeWatchdog(raw: unknown): {
+  enabled?: boolean;
+  intervalSec?: number;
+  cooldownMinutes?: number;
+  stuckMinutes?: number;
+  queueOldestMinutes?: number;
+  queueDepth?: number;
+  runnerHoleSec?: number;
+} {
+  const out: ReturnType<typeof sanitizeWatchdog> = {};
+  if (!raw || typeof raw !== 'object') return out;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.enabled === 'boolean') out.enabled = r.enabled;
+  const num = (v: unknown, min: number, max: number): number | undefined => {
+    if (typeof v !== 'number' || !Number.isFinite(v)) return undefined;
+    return Math.min(Math.max(v, min), max);
+  };
+  const interval = num(r.intervalSec, 15, 3600);
+  if (interval !== undefined) out.intervalSec = Math.round(interval);
+  const cooldown = num(r.cooldownMinutes, 1, 24 * 60);
+  if (cooldown !== undefined) out.cooldownMinutes = Math.round(cooldown);
+  const stuck = num(r.stuckMinutes, 5, 24 * 60);
+  if (stuck !== undefined) out.stuckMinutes = Math.round(stuck);
+  const oldest = num(r.queueOldestMinutes, 5, 24 * 60);
+  if (oldest !== undefined) out.queueOldestMinutes = Math.round(oldest);
+  const depth = num(r.queueDepth, 1, 100);
+  if (depth !== undefined) out.queueDepth = Math.round(depth);
+  const hole = num(r.runnerHoleSec, 30, 3600);
+  if (hole !== undefined) out.runnerHoleSec = Math.round(hole);
+  if (Object.keys(out).length === 0 && raw !== undefined) {
+    logger.warn('[Config] watchdog 段形状不对（全部字段无效）—— 已忽略，用默认值');
+  }
+  return out;
+}
+
 export function sanitizeSelfActivity(
   raw: unknown,
 ): {
