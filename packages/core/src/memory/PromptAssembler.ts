@@ -7,6 +7,8 @@ import type { WorldbookStore } from './stores/WorldbookStore.js';
 import type { CodeContextStore } from './stores/CodeContextStore.js';
 import type { SearchResult, WorldbookEntry } from './types.js';
 import { TokenBudget } from './TokenBudget.js';
+// ★ 2026-10-19（change: watch-for-stuck-work）：她自己留意到的事（由看门狗写入）
+import { getSelfNotices, renderSelfNoticeBlock } from './self-notice.js';
 import { logger } from '../utils/logger.js';
 import { warnThrottled } from '../utils/write-trace.js';
 
@@ -52,6 +54,19 @@ export class PromptAssembler {
     const budget = new TokenBudget(3200);
 
     const blocks: string[] = [];
+
+    // ★ 2026-10-19（change: `watch-for-stuck-work`）：**她自己注意到的事**。
+    //   放在最靠前：它决定"此刻该不该说点什么"，比背景知识更即时。
+    //   没有就完全不出块（不要留一个空标题）。
+    const selfNotices = getSelfNotices();
+    const selfNoticeBlock = renderSelfNoticeBlock(selfNotices);
+    if (selfNoticeBlock) {
+      budget.reserve(selfNoticeBlock);
+      blocks.push(selfNoticeBlock);
+      // 可观测：她这一轮到底看没看到（否则"注入了"与"没注入"同形）
+      // INFO 级：这一行是"她到底看没看到"的唯一证据（DEBUG 不进日志文件）
+      logger.info(`[Prompt] 她这一轮看到了 ${selfNotices.length} 条自己注意到的事`);
+    }
 
     // Persona block (always included — most essential)
     // ★ 8-09 防御：tone 空对象/缺失字段 → 默认参数（云端历史遗留 tone='{}' 导致 undefined）

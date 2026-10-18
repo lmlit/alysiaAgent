@@ -33,12 +33,6 @@ import {
   finalizeNotice,
   MAX_NOTICE_CHARS,
 } from './project-task-result.js';
-// ★ 2026-10-19（change: watch-for-stuck-work）：看门狗通知的措辞（只准说事实里有的）
-import {
-  buildWatchdogPrompts,
-  finalizeWatchdogNotice,
-  MAX_WATCHDOG_NOTICE_CHARS,
-} from './watchdog-notice.js';
 import { lifeEventImportance } from './importance.js';
 import { WorldbookMatcher } from './engines/WorldbookMatcher.js';
 import { PersonaAdapter } from './engines/PersonaAdapter.js';
@@ -1716,42 +1710,16 @@ export class MemoryManager {
 
   
   /**
-   * ★ 2026-10-19（change: `watch-for-stuck-work`）：看门狗通知的**她自己的说法**。
+   * ⚠️ 2026-10-19 删除：`composeWatchdogNotice()`。
    *
-   * 与 `composeProjectTaskNotice` 同构：模型失败返回 `null`，调用方回落机械模板。
-   * 只准说事实里有的（提示词里写死了，见 `watchdog-notice.ts`）。
+   * 第一版让看门狗**生成一段话推给用户**，用户当场否掉了：
+   * 「这个不是推送给我的，是告诉昔涟让她自行决策或者来找我商量的吧，
+   * 不要太多专业名词和上面数字，很奇怪啊」。
+   *
+   * 现在的形态：看门狗只把**一句人话**放进 `self-notice` 清单，
+   * 由 `PromptAssembler` 在她下一次说话时注入 `[你刚注意到的事]` ——
+   * **她**决定要不要处理、要不要开口、用什么话说。所以这里不再需要"代她写话"。
    */
-  async composeWatchdogNotice(input: {
-    facts: Array<{ key: string; level: 'warn' | 'error'; title: string; detail: string }>;
-    /** 为了语气：她跟这个人最近怎么说话（可选） */
-    originSessionId?: string;
-  }): Promise<string | null> {
-    let personaName: string | undefined;
-    try {
-      personaName = this.personaStore.get()?.name;
-    } catch {
-      personaName = undefined;
-    }
-    let recentDialogue: string | undefined;
-    if (input.originSessionId) {
-      try {
-        recentDialogue = this.getRecentDialogueBlock(input.originSessionId, 6) || undefined;
-      } catch {
-        recentDialogue = undefined;
-      }
-    }
-    const { system, user } = buildWatchdogPrompts({ facts: input.facts, personaName, recentDialogue });
-    try {
-      const raw = await this.llmService.complete(system, user, {
-        max_tokens: MAX_WATCHDOG_NOTICE_CHARS * 3,
-        temperature: 0.8,
-      } as Partial<SamplingSlot>);
-      return finalizeWatchdogNotice(raw);
-    } catch (err: any) {
-      logger.warn(`[Watchdog] 通知措辞生成失败（回落模板）：${err?.message ?? err}`);
-      return null;
-    }
-  }
 
   async recordProjectTaskResult(input: {
     taskId: string;

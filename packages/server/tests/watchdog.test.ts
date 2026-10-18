@@ -231,11 +231,13 @@ describe('WatchdogService：定时器与去重状态', () => {
     expect(svc.snapshot().notified).toEqual(['site-down'])
   })
 
-  it('★ 同一个问题连跑两轮 ⇒ 只发一次', async () => {
+  it('★ 同一个问题连跑两轮 ⇒ 每轮都交付（状态幂等，不再是"只发一次消息"）', async () => {
     const { svc, sent } = makeService(() => base({ site: { ok: false, status: 500, checkedAt: '' } }))
     await svc.runOnce()
     await svc.runOnce()
-    expect(sent).toHaveLength(1)
+    // 交付语义变了：交付 = 把"现在的问题"放进她的上下文（幂等）。
+    // 早先的"只发一次"是消息语义 —— 而消息语义正是让用户收到 5 条的元凶。
+    expect(sent).toHaveLength(2)
   })
 
   it('★ 问题消失后跑一轮 ⇒ 发一次恢复', async () => {
@@ -280,13 +282,8 @@ describe('★ 第一轮不报"刚重启"（否则每次部署都发假警报）'
     expect(r2.fresh.map(i => i.key)).toEqual(['fresh-restart'])
   })
 })
-describe('★ 跨重启不重复通知（真机踩过：一小时发了 4 条）', () => {
-  it('上一轮的状态能恢复：同一个问题重启后不再说', async () => {
-    const persisted = {
-      lastNotified: { 'site-down': NOW - 60_000 },
-      prev: { 'site-down': '站点打不开' },
-      recovered: [],
-    }
+describe('★ 交付 = 状态，不是消息（用户纠正后的口径）', () => {
+  it('★ 重启后问题还在 ⇒ 照样交给她（第一版按冷却过滤 ⇒ 重启后清单为空，她看不到）', async () => {
     const sent: unknown[] = []
     const svc = new WatchdogService({
       intervalSec: 60,
@@ -295,66 +292,25 @@ describe('★ 跨重启不重复通知（真机踩过：一小时发了 4 条）
       gather: () => base({ site: { ok: false, status: 500, checkedAt: '' } }),
       notify: async (fresh) => { sent.push(fresh) },
       log: () => {},
-      loadState: () => persisted,
+      // 上一轮的状态（模拟重启前说过）
+      loadState: () => ({ lastNotified: { 'site-down': NOW - 60_000 }, prev: { 'site-down': '站点打不开' }, recovered: [] }),
     })
     await svc.runOnce()
-    expect(sent).toEqual([])
+    expect(sent).toHaveLength(1) // 仍然交付（否则她永远看不到还没修的问题）
   })
 
-  it('★ 重启后的第一轮不发"恢复"（那时 prev 是过期的，会假报好消息）', async () => {
-    const persisted = {
-      lastNotified: { 'site-down': NOW - 60_000 },
-      prev: { 'site-down': '站点打不开' },
-      recovered: [],
-    }
-    const sent: Array<{ fresh: unknown[]; recovered: unknown[] }> = []
+  it('问题消失 ⇒ 交付空清单（她那边的"注意到的事"自然清空，不需要报平安）', async () => {
+    const sent: Array<unknown[]> = []
     const svc = new WatchdogService({
       intervalSec: 60,
       cooldownMs: 30 * 60000,
       thresholds: DEFAULT_THRESHOLDS,
-      gather: () => base({ site: { ok: true, status: 200, checkedAt: '' } }),
-      notify: async (fresh, recovered) => { sent.push({ fresh, recovered }) },
-      log: () => {},
-      loadState: () => persisted,
-    })
-    // 第一轮：不发恢复 —— 上一轮的状态是**过期的**，分不清"修好了"还是"刚重启"
-    await svc.runOnce()
-    expect(sent).toEqual([])
-    // 第二轮：上一轮已干净、prev 已重建 ⇒ 也不会冒出"恢复"（宁可不报，也不发假好消息）
-    await svc.runOnce()
-    expect(sent).toEqual([])
-  })
-
-  it('状态在每轮结束后落盘（下一轮/下次启动能接着用）', async () => {
-    const saved: Array<{ lastNotified: Record<string, number> }> = []
-    const svc = new WatchdogService({
-      intervalSec: 60,
-      cooldownMs: 30 * 60000,
-      thresholds: DEFAULT_THRESHOLDS,
-      gather: () => base({ site: { ok: false, status: 500, checkedAt: '' } }),
-      notify: async () => {},
-      log: () => {},
-      saveState: (st) => { saved.push(st as { lastNotified: Record<string, number> }) },
-    })
-    await svc.runOnce()
-    expect(saved).toHaveLength(1)
-    expect(Object.keys(saved[0].lastNotified)).toContain('site-down')
-  })
-
-  it('★ failed 类用更长冷却（默认 6 小时），不会半小时念一次', async () => {
-    const t = task({ status: 'unknown', updatedAt: new Date().toISOString() })
-    const sent: Array<Array<{ key: string }>> = []
-    const svc = new WatchdogService({
-      intervalSec: 60,
-      cooldownMs: 0,
-      failedCooldownMs: 6 * 60 * 60 * 1000,
-      thresholds: DEFAULT_THRESHOLDS,
-      gather: () => base({ tasks: [t] }),
-      notify: async (fresh) => { sent.push(fresh as Array<{ key: string }>) },
+      gather: () => base(),
+      notify: async (fresh) => { sent.push(fresh as unknown[]) },
       log: () => {},
     })
-    await svc.runOnce()
     await svc.runOnce()
     expect(sent).toHaveLength(1)
+    expect(sent[0]).toEqual([])
   })
 })

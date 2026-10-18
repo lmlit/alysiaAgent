@@ -1,6 +1,9 @@
 export { logger, startDailyLogCleanup } from './utils/logger.js';
 // ★ 2026-10-02 observe-zero-row-writes：写入影响行数观测（只观测不拦截，看 KI-11）
 export { traceZeroRows } from './utils/write-trace.js';
+// ★ 2026-10-19（change: watch-for-stuck-work）：看门狗把发现交给她 → 下一次组装提示词时注入
+export { setSelfNotices, getSelfNotices, clearSelfNotices, renderSelfNoticeBlock } from './memory/self-notice.js';
+export type { SelfNotice } from './memory/self-notice.js';
 // ★ 9-25 fix-session-summary-silent-failure：LLM 结构化输出的共用解析入口
 //   （life.ts 与 SessionEndProcessor 共用，详见 utils/llm-json.ts 头部说明）
 export { parseLLMJson, stripMarkdownFence, looksTruncated } from './utils/llm-json.js';

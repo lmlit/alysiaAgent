@@ -79,10 +79,20 @@ export interface WatchdogIssue {
   /** 去重键：同一个 key 在冷却窗口内只报一次 */
   key: WatchdogIssueKey;
   level: 'warn' | 'error';
-  /** 人话标题（她会改写） */
+  /** 人话标题 */
   title: string;
-  /** 事实细节（阈值/数字/分钟数，**全部来自读数**） */
+  /** 事实细节（**给日志/排障**：含任务 id、分钟数、状态码） */
   detail: string;
+  /**
+   * ★ 2026-10-19（用户当场纠正）：**给她看的一句人话**。
+   *
+   * 用户原话：「这个不是推送给我的，是告诉昔涟让她自行决策或者来找我商量的吧，
+   * 不要太多专业名词和上面数字，很奇怪啊」。
+   *
+   * ⇒ 这里**不带**任务 id、阶段名、分钟数、状态码、HTTP —— 只有"出了什么事"和"碍不碍事"。
+   * 她照这句决定：自己处理，还是用自己的话来问人。
+   */
+  plain: string;
 }
 
 /** 分钟数（向上取整；<1 分钟给 "<1"） */
@@ -120,6 +130,10 @@ export function evaluateWatchdogFacts(
       detail:
         `${t.taskId}（${t.projectId}，${t.phase || '未知阶段'}）` +
         `已经 ${mins(idleMs)}没动静了，任务目标：${t.goal.slice(0, 40)}`,
+      plain:
+        t.status === 'running'
+          ? `你给自己做的那件（${t.goal.slice(0, 18)}…）停在半路了，好一阵没往下走`
+          : `有件事交出去之后一直没人接手（${t.goal.slice(0, 18)}…）`,
     });
   }
 
@@ -133,6 +147,10 @@ export function evaluateWatchdogFacts(
       detail:
         `${t.taskId}（${t.projectId}）状态 ${t.status}` +
         (t.lastError ? `，错误：${t.lastError.slice(0, 80)}` : ''),
+      plain:
+        t.status === 'unknown'
+          ? `有一件没做完就断了，结果没留下（${t.goal.slice(0, 18)}…）`
+          : `有一件做失败了（${t.goal.slice(0, 18)}…）`,
     });
   }
 
@@ -143,6 +161,7 @@ export function evaluateWatchdogFacts(
       level: 'error',
       title: '替我干活的那一头好像停了',
       detail: `已经 ${Math.round(input.runnerBeatSec)} 秒没有心跳（阈值 ${thresholds.runnerHoleSec} 秒）；在这期间新交的活不会有人接`,
+      plain: '替我办事的那一头没动静了 —— 这段时间新交的活不会有人接',
     });
   }
 
@@ -153,6 +172,7 @@ export function evaluateWatchdogFacts(
       level: 'error',
       title: '放页面的地方打不开了',
       detail: `探测返回 HTTP ${input.site.status || '无响应'}（探测时间 ${input.site.checkedAt}）`,
+      plain: '放页面的地方打不开了，别人现在看不到那些页面',
     });
   }
 
@@ -170,6 +190,7 @@ export function evaluateWatchdogFacts(
         detail:
           `排队 ${depth} 件，最老的一件等了 ${mins(waitMs)}` +
           `（阈值：${thresholds.queueDepth} 件 / ${thresholds.queueOldestMinutes} 分钟）`,
+        plain: '积了几件事排着队，最前面那件等了挺久',
       });
     }
   }
@@ -183,6 +204,7 @@ export function evaluateWatchdogFacts(
       detail:
         `最近一小时重启了 ${input.bootsLastHour} 次（本次已跑 ${Math.round(input.uptimeSec)} 秒）` +
         '—— 这不正常，通常是启动就报错在反复重试',
+      plain: '我这边刚反复重启了几次，不太对劲',
     });
   }
 
@@ -375,12 +397,15 @@ export class WatchdogService {
         return last === undefined || input.nowMs - last >= failedCd;
       });
 
-      if (plan.fresh.length > 0 || plan.recovered.length > 0) {
-        // 先记账再发：模型慢/推送失败时不要下一轮又发一遍
-        for (const i of plan.fresh) this.lastNotified.set(i.key, input.nowMs);
-        for (const r of plan.recovered) this.recoveredAlready.add(r.key);
-        await this.opts.notify(plan.fresh, plan.recovered);
-      }
+      // ★ 2026-10-19（设计修正）：**每轮都交付**，不再按冷却过滤。
+      //
+      // 为什么：交付的语义变了 —— 不再是"发一条消息"，而是"把当前状态放进她的上下文"。
+      // 状态是**幂等**的：同一件事还在，就该一直挂在 `[你刚注意到的事]` 里；
+      // 冷却只用于"要不要再提醒人"，而那个通道已经不存在了（说不说是她的决定）。
+      // 早先按冷却过滤会让**重启后清单为空**（问题还在，但她看不到）—— 这是真 bug。
+      for (const i of issues) this.lastNotified.set(i.key, input.nowMs);
+      for (const r of plan.recovered) this.recoveredAlready.add(r.key);
+      await this.opts.notify(issues, plan.recovered);
 
       // 恢复过的 key 从 prev 里清掉，避免"恢复了又出现"时被当成老的
       this.prev = new Map(issues.map(i => [i.key, i.title]));
