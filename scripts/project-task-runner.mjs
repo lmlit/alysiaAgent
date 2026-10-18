@@ -38,6 +38,8 @@
  */
 
 import { spawn } from 'node:child_process';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 
 // ── 参数 ────────────────────────────────────────────────────────
 
@@ -216,6 +218,69 @@ export function nextUrl(project) {
     : '/api/project-tasks/next';
 }
 
+/**
+ * 从**工作区文件**读出状态机需要的事实（★ change: `make-author-iterate`）。
+ *
+ * ★ 为什么在 runner 这边算：只有它能读宿主上的工作区。
+ *   但**判据在服务端**（纯函数 `advanceLoop`）—— 执行端不能自己宣布"我改好了"。
+ */
+export function collectFacts(workspace) {
+  const read = (p) => {
+    try {
+      return readFileSync(p, 'utf8');
+    } catch {
+      return '';
+    }
+  };
+  const list = (dir, re) => {
+    try {
+      return readdirSync(dir).filter((f) => re.test(f)).sort();
+    } catch {
+      return [];
+    }
+  };
+  const stat = (p) => {
+    try {
+      return statSync(p);
+    } catch {
+      return null;
+    }
+  };
+
+  const notes = read(join(workspace, 'NOTES.md'));
+  const drafts = list(join(workspace, 'drafts'), /\.html$/i);
+  const shots = list(join(workspace, 'shots'), /\.(png|jpe?g|webp)$/i);
+
+  const builtPages = [];
+  try {
+    for (const f of readdirSync(workspace)) {
+      if (!/\.html$/i.test(f)) continue;
+      const st = stat(join(workspace, f));
+      if (st) builtPages.push({ file: f, mtime: st.mtimeMs });
+    }
+  } catch {
+    /* 工作区都读不到就只能报空 */
+  }
+  builtPages.sort((a, b) => b.mtime - a.mtime);
+
+  // 已发布：public/ 里出现了某个"做出来的页面"的同名文件
+  const publishedNames = list(join(workspace, 'public'), /\.html$/i);
+  const published = builtPages.some((p) => publishedNames.includes(p.file));
+
+  return { notes, drafts, shots, builtPages, published };
+}
+
+/**
+ * 一次**阶段推进**：把"这一轮只做这一件事"拼进任务正文。
+ *
+ * 阶段指令由服务端下发（`nextPrompt`），runner 不在本地抄一份 —— 单一来源。
+ */
+export function buildPhaseTask(task, prompt) {
+  const base = buildTaskText(task);
+  if (!prompt) return base;
+  return `${base}\n\n=== 这一轮只做这一件事（做完就停，别抢后面的步骤） ===\n${prompt}`;
+}
+
 async function tick(cfg, log) {
   // ★ 不传 --project ⇒ 不带查询参数 ⇒ 服务端挑"还有活的最老的项目"（一个 runner 服务所有项目）
   const url = nextUrl(cfg.project);
@@ -224,7 +289,7 @@ async function tick(cfg, log) {
     log(`认领失败（HTTP ${claimed.status}）：${claimed.json?.error ?? claimed.text?.slice(0, 200)}`);
     return { didWork: false };
   }
-  const { task, project, paused } = claimed.json ?? {};
+  const { task, project, paused, nextPrompt } = claimed.json ?? {};
 
   // ★ 2026-10-18（change: `gate-project-tasks-to-offpeak`）：
   //   高峰时段（北京时间工作日 9-12 / 14-18）服务端**不认领**。
@@ -243,8 +308,7 @@ async function tick(cfg, log) {
   lastPauseLine = '';                     // 恢复执行时清掉，下次暂停还能再报一次
 
   log(`认领到 ${task.taskId}（revision ${task.revision}，第 ${task.attempts} 次）`);
-  const dshArgs = buildDshArgs(task, project.profile);
-  log(`  将执行：dsh ${dshArgs.slice(0, -1).join(' ')} <task>`);
+  log(`  阶段：${task.phase ?? '(无)'}${nextPrompt ? '（按阶段推进）' : '（一次性任务）'}`);
   log(`  工作区：${project.workspace}`);
 
   if (cfg.dryRun) {
@@ -252,25 +316,104 @@ async function tick(cfg, log) {
     return { didWork: true };
   }
 
-  const started = Date.now();
-  const run = await runDsh({
-    workspace: project.workspace, profile: project.profile, task, timeoutSec: cfg.timeoutSec,
-  });
-  const { sessionId, reason, finalText, badLines } = parseRunEvents(run.stdout);
-  const outcome = mapOutcome({ reason, timedOut: run.timedOut });
-  const secs = Math.round((Date.now() - started) / 1000);
-  log(`  dsh 退出码 ${run.code}，用时 ${secs}s，turn_end.reason=${reason ?? '（缺失）'}` +
-      (badLines ? `，NDJSON 坏行 ${badLines}` : ''));
+  // ── 阶段循环（★ 2026-10-18：一次成型不合格，要来回）────────────────────
+  const maxRounds = cfg.loopMaxRounds ?? 8;
+  let phasePrompt = nextPrompt ?? '';
+  let sessionId = null;
+  let finalText = '';
+  let lastDetail = '';
+  let rounds = 0;
 
+  for (;;) {
+    rounds += 1;
+    const runTask = { ...task, goal: task.goal };
+    const dshArgs = buildDshArgs(task, project.profile);
+    log(`  [第 ${rounds} 轮] dsh ${dshArgs.slice(0, -1).join(' ')} <task>`);
+
+    const started = Date.now();
+    const run = await runDsh({
+      workspace: project.workspace,
+      profile: project.profile,
+      task: { ...runTask, goal: buildPhaseTask(task, phasePrompt) },
+      timeoutSec: cfg.timeoutSec,
+    });
+    const parsed = parseRunEvents(run.stdout);
+    const outcome = mapOutcome({ reason: parsed.reason, timedOut: run.timedOut });
+    const secs = Math.round((Date.now() - started) / 1000);
+    sessionId = parsed.sessionId ?? sessionId;
+    finalText = parsed.finalText || finalText;
+    log(
+      `    退出码 ${run.code}，用时 ${secs}s，reason=${parsed.reason ?? '（缺失）'}` +
+        (parsed.badLines ? `，NDJSON 坏行 ${parsed.badLines}` : ''),
+    );
+
+    // 执行端明确报错/超时 ⇒ 不再推进阶段，直接回传（让服务端决定）
+    if (outcome.status !== 'needs_review') {
+      log(`    执行端不正常（${outcome.status}）—— 停止推进`);
+      return await submit(cfg, log, task, {
+        status: outcome.status,
+        sessionId,
+        finalText,
+        secs,
+        exitCode: run.code,
+        error: outcome.error,
+      });
+    }
+
+    // 收集事实 → 让服务端判能不能进下一阶段
+    const facts = collectFacts(project.workspace);
+    const adv = await api(cfg, 'POST', `/api/project-tasks/${task.taskId}/advance`, { facts });
+    if (!adv.ok) {
+      log(`    推进失败（HTTP ${adv.status}）：${adv.json?.error ?? adv.text?.slice(0, 160)}`);
+      return await submit(cfg, log, task, {
+        status: 'unknown',
+        sessionId,
+        finalText,
+        secs,
+        exitCode: run.code,
+        error: `状态机推进失败：${adv.json?.error ?? adv.status}`,
+      });
+    }
+    const decision = adv.json.decision;
+    lastDetail = decision.detail;
+    log(`    阶段 → ${decision.next}${decision.done ? `（完成：${decision.outcome}）` : ''} · ${decision.detail}`);
+
+    if (decision.done) {
+      return await submit(cfg, log, task, {
+        status: decision.outcome === 'published' ? 'needs_review' : 'needs_review',
+        sessionId,
+        finalText,
+        secs,
+        exitCode: run.code,
+        loopNote: `循环完成（${rounds} 轮）：${decision.detail}`,
+      });
+    }
+    if (rounds >= maxRounds) {
+      log(`    轮次到顶（${maxRounds}）—— 交给人`);
+      return await submit(cfg, log, task, {
+        status: 'needs_review',
+        sessionId,
+        finalText,
+        secs,
+        exitCode: run.code,
+        loopNote: `轮次到顶（${maxRounds} 轮）：${lastDetail}`,
+      });
+    }
+    phasePrompt = decision.prompt ?? '';
+  }
+}
+
+/** 回传统一入口（把阶段信息拼进 final，回执里能看见过程） */
+async function submit(cfg, log, task, o) {
+  const final = [o.finalText ?? '', o.loopNote ? `\n\n[过程] ${o.loopNote}` : ''].join('').slice(0, 4000);
   const res = await api(cfg, 'POST', `/api/project-tasks/${task.taskId}/result`, {
-    status: outcome.status,
-    dshSessionId: sessionId ?? undefined,
-    result: { final: finalText.slice(0, 4000), ranSeconds: secs, exitCode: run.code },
+    status: o.status,
+    dshSessionId: o.sessionId ?? undefined,
+    result: { final, ranSeconds: o.secs, exitCode: o.exitCode },
     artifacts: [],
-    error: outcome.error,
+    error: o.error,
   });
   if (!res.ok) {
-    // ⚠️ 回传失败**不能**假装成功。任务会停在 running，由服务端的认领超时回收。
     log(`  !! 回传失败（HTTP ${res.status}）：${res.json?.error ?? res.text?.slice(0, 200)}` +
         ` —— 任务保持 running，等超时回收`);
   } else {

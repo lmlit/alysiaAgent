@@ -244,9 +244,17 @@ export function initializeDatabase(db: Database.Database): void {
       ON project_tasks (project_id, status, created_at);
   `);
 
+  // ★ 2026-10-18（change: `make-author-iterate`）：把「做一件东西」变成**显式状态机**。
+  //   `phase`：当前阶段（intent/sketch/review/build/revise/statement/publish/done）
+  //   `loop_state`：累积状态（rounds/visits/revisions），JSON
+  //   ⚠️ 老库要迁移：这两个列是新加的（CREATE TABLE IF NOT EXISTS 不会补列）。
+  addColumnIfMissing(db, 'project_tasks', 'phase',
+    `ALTER TABLE project_tasks ADD COLUMN phase TEXT NOT NULL DEFAULT 'intent'`);
+  addColumnIfMissing(db, 'project_tasks', 'loop_state',
+    `ALTER TABLE project_tasks ADD COLUMN loop_state TEXT`);
+
   // Migration: add memory_config to existing persona table (v2)
-  addColumnIfMissing(db, 'persona', 'memory_config',
-    `ALTER TABLE persona ADD COLUMN memory_config TEXT NOT NULL DEFAULT '{"retention_bias":0.2,"decay_rate":0.3,"importance_threshold":0.4,"recency_weight":0.3,"confirmation_bias":0.3}'`);
+  addColumnIfMissing(db, 'persona', 'memory_config',    `ALTER TABLE persona ADD COLUMN memory_config TEXT NOT NULL DEFAULT '{"retention_bias":0.2,"decay_rate":0.3,"importance_threshold":0.4,"recency_weight":0.3,"confirmation_bias":0.3}'`);
 
   // Migration: 角色系统 (v3) — persona 多行化 + worldbook role 维度
   const personaCols = db.prepare(`PRAGMA table_info(persona)`).all() as Array<{ name: string }>;

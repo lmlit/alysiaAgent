@@ -407,8 +407,72 @@ describe('★ 结果回送原会话（return-project-task-result）', () => {
 //   DeepSeek 的高峰时段（北京时间工作日 9-12 / 14-18）**只排队不执行**。
 //   钱按执行时间算，排队不花；而拒收任务等于让用户与模型都去记时段。
 // ─────────────────────────────────────────────────────────────
-describe('★ 高峰时段不认领（执行窗口）', () => {
-  /**
+// ─────────────────────────────────────────────────────────────
+// ★ 2026-10-18（change: `make-author-iterate`）：状态机推进
+//   runner 把**从工作区读到的事实**发上来，服务端据此决定进下一阶段/原地/收工。
+//   ⚠️ 判据在服务端（纯函数），执行端不能自己宣布"我改好了"。
+// ─────────────────────────────────────────────────────────────
+describe('★ 阶段推进（POST /advance）', () => {
+  const TASK_INTENT = { ...TASK, phase: 'intent', loopState: { rounds: 0, visits: {}, revisions: 0 } };
+
+  function harness(overrides: Record<string, unknown> = {}) {
+    const h = makeHarness({
+      getProjectTask: () => TASK_INTENT,
+      advanceProjectTaskLoop: vi.fn(() => ({
+        decision: { next: 'sketch', prompt: '去画草图', done: false, detail: '意图已写（20 字）', state: { rounds: 1, visits: {}, revisions: 0 } },
+        task: { ...TASK_INTENT, phase: 'sketch' },
+      })),
+      ...overrides,
+    });
+    return h;
+  }
+
+  it('★ 缺 facts → 400（事实必须由 runner 给，不许服务端猜）', async () => {
+    const h = harness();
+    const app = await buildApp(h.core);
+    const res = await app.inject({ method: 'POST', url: '/api/project-tasks/pt-1/advance', payload: {} });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toContain('facts');
+  });
+
+  it('★ 正常推进 → 返回 decision（next/detail）并把事实原样传给 core', async () => {
+    const h = harness();
+    const app = await buildApp(h.core);
+    const res = await app.inject({
+      method: 'POST', url: '/api/project-tasks/pt-1/advance',
+      payload: { facts: { notes: '## 意图\n想做点安静的', drafts: [], shots: [], builtPages: [], published: false } },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().decision.next).toBe('sketch');
+    const arg = (h.mm.advanceProjectTaskLoop.mock.calls[0] as unknown as [string, Record<string, unknown>])[1];
+    expect(arg.notes).toContain('意图');
+  });
+
+  it('★ 事实字段形状不对 -> 归一成安全值（不炸、也不当成 true）', async () => {
+    const h = harness();
+    const app = await buildApp(h.core);
+    await app.inject({
+      method: 'POST', url: '/api/project-tasks/pt-1/advance',
+      payload: { facts: { notes: 123, drafts: 'nope', shots: null, builtPages: [{ file: 'a.html' }, { mtime: 1 }], published: 'yes' } },
+    });
+    const arg = (h.mm.advanceProjectTaskLoop.mock.calls[0] as unknown as [string, Record<string, unknown>])[1];
+    expect(arg.notes).toBe('');
+    expect(arg.drafts).toEqual([]);
+    expect(arg.builtPages).toEqual([{ file: 'a.html', mtime: 0 }]);
+    expect(arg.published).toBe(false); // 'yes' 不是 true
+  });
+
+  it('未知任务 → 404', async () => {
+    const h = harness({ advanceProjectTaskLoop: vi.fn(() => null) });
+    const app = await buildApp(h.core);
+    const res = await app.inject({
+      method: 'POST', url: '/api/project-tasks/nope/advance', payload: { facts: {} },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+});
+
+describe('★ 高峰时段不认领（执行窗口）', () => {  /**
    * 用**注入时钟**锁死时刻：2026-10-19 周一 10:15（北京时间）—— 正经的高峰。
    * ⚠️ 不能靠"跑测试那天恰好是工作日"：周末判定会在高峰之前短路，
    *    那样这条用例在周日会假通过/假失败。

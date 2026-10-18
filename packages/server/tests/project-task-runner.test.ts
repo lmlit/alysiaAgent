@@ -7,8 +7,11 @@
 //
 // ⚠️ 真正的**副作用**（spawn dsh、HTTP 轮询）不在这里测 —— 那是真机验收的事。
 import { describe, it, expect } from 'vitest';
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 // @ts-expect-error —— 宿主脚本是 .mjs，没有类型声明（故意的：它要能被 node 直跑）
-import { buildDshArgs, buildTaskText, parseRunEvents, mapOutcome, nextUrl } from '../../../scripts/project-task-runner.mjs';
+import { buildDshArgs, buildTaskText, parseRunEvents, mapOutcome, nextUrl, collectFacts, buildPhaseTask } from '../../../scripts/project-task-runner.mjs';
 
 const task = {
   taskId: 'pt-1', goal: '做一个关于我页面', acceptanceCriteria: '能构建', revision: 0, dshSessionId: null,
@@ -119,5 +122,65 @@ describe('★ 认领 URL（不指定项目 = 服务所有项目）', () => {
 
   it('项目 id 要 encode（不能把特殊字符塞进 query）', () => {
     expect(nextUrl('a b&c')).toBe('/api/project-tasks/next?projectId=a%20b%26c');
+  });
+});
+
+// ★ 2026-10-18（change: `make-author-iterate`）
+//   状态机的**事实**必须从文件系统读出来（不能采信模型自述）。
+describe('★ 阶段推进：从工作区读事实', () => {
+  const TASK = {
+    taskId: 'pt-1', requestKey: 'k', projectId: 'p', originSessionId: 's',
+    origin: 'delegated', goal: '做一个页面', acceptanceCriteria: '零外链',
+    dshSessionId: null, status: 'running', revision: 0, result: null, artifacts: null,
+    attempts: 1, lastError: null, createdAt: '', updatedAt: '', phase: 'intent', loopState: {},
+  } as never;
+
+  function fixture() {
+    const root = mkdtempSync(join(tmpdir(), 'facts-'));
+    mkdirSync(join(root, 'drafts'));
+    mkdirSync(join(root, 'shots'));
+    mkdirSync(join(root, 'public'));
+    writeFileSync(join(root, 'NOTES.md'), '## 意图\n想做点安静的\n');
+    writeFileSync(join(root, 'drafts', 'a.html'), '<p>a');
+    writeFileSync(join(root, 'drafts', 'b.html'), '<p>b');
+    writeFileSync(join(root, 'shots', 'draft-a.png'), 'x');
+    writeFileSync(join(root, 'page.html'), '<p>full');
+    return root;
+  }
+
+  it('★ 读得出 notes/drafts/shots/builtPages', () => {
+    const root = fixture();
+    const f = collectFacts(root);
+    expect(f.notes).toContain('意图');
+    expect(f.drafts).toEqual(['a.html', 'b.html']);
+    expect(f.shots).toContain('draft-a.png');
+    expect(f.builtPages.map((p: { file: string }) => p.file)).toContain('page.html');
+    // 草稿不算"做出来的页面"
+    expect(f.builtPages.map((p: { file: string }) => p.file)).not.toContain('drafts/a.html');
+  });
+
+  it('★ published 只在 public/ 里出现同名页面时为真', () => {
+    const root = fixture();
+    expect(collectFacts(root).published).toBe(false);
+    writeFileSync(join(root, 'public', 'page.html'), '<p>full');
+    expect(collectFacts(root).published).toBe(true);
+  });
+
+  it('工作区不存在也不抛（返回空事实）', () => {
+    const f = collectFacts(join(tmpdir(), 'definitely-not-here-' + Date.now()));
+    expect(f.notes).toBe('');
+    expect(f.drafts).toEqual([]);
+    expect(f.builtPages).toEqual([]);
+  });
+
+  it('★ 阶段指令拼在任务正文后面，且**不覆盖**原始目标', () => {
+    const text = buildPhaseTask(TASK, '第二轮：只画草图');
+    expect(text).toContain('做一个页面');   // 原目标还在
+    expect(text).toContain('只画草图');     // 本轮指令也在
+    expect(text).toContain('这一轮只做这一件事');
+  });
+
+  it('没有阶段指令时 = 原样任务正文（一次性任务不受影响）', () => {
+    expect(buildPhaseTask(TASK, '')).toBe(buildTaskText(TASK));
   });
 });

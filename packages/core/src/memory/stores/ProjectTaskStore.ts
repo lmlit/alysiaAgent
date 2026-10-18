@@ -25,6 +25,12 @@
 import type Database from 'better-sqlite3';
 import { traceZeroRows } from '../../utils/write-trace.js';
 import { logger } from '../../utils/logger.js';
+// ★ 2026-10-18（change: `make-author-iterate`）：「做一件东西」的显式状态机
+import {
+  initialLoopState,
+  type LoopPhase,
+  type LoopState,
+} from '../project-task-loop.js';
 
 /** 任务状态。终态：`needs_review`（等验收）/ `completed` / `failed` / `unknown` */
 export type ProjectTaskStatus =
@@ -81,6 +87,13 @@ export interface ProjectTask {
   lastError: string | null;
   createdAt: string;
   updatedAt: string;
+  /**
+   * ★ 2026-10-18（change: `make-author-iterate`）：「做一件东西」的**当前阶段**。
+   * 老库迁移来的行默认 `intent`。
+   */
+  phase: LoopPhase;
+  /** 累积状态（rounds / visits / revisions） */
+  loopState: LoopState;
 }
 
 /** 建任务的结果 —— **判别式**，不压成布尔：三种情形调用方要说不同的话 */
@@ -146,6 +159,10 @@ function rowToTask(r: Record<string, unknown>): ProjectTask {
     lastError: typeof r.last_error === 'string' && r.last_error !== '' ? r.last_error : null,
     createdAt: String(r.created_at),
     updatedAt: String(r.updated_at),
+    // ★ 阶段：老行没有这两列的值时给安全默认（`intent` + 空状态）
+    phase: (typeof r.phase === 'string' && r.phase !== '' ? r.phase : 'intent') as LoopPhase,
+    loopState:
+      (parse(r.loop_state) as LoopState | null) ?? initialLoopState(),
   };
 }
 
@@ -216,17 +233,46 @@ export class ProjectTaskStore {
       lastError: null,
       createdAt: ts,
       updatedAt: ts,
+      // ★ 一切从这里开始：先写意图，再画草图（见 `project-task-loop.ts`）
+      phase: 'intent',
+      loopState: initialLoopState(),
     };
 
     this.db.prepare(
       `INSERT INTO project_tasks
          (task_id, request_key, project_id, origin_session_id, origin, goal, acceptance_criteria,
-          dsh_session_id, status, revision, result, artifacts, attempts, last_error, created_at, updated_at)
-       VALUES (@taskId, @requestKey, @projectId, @originSessionId, @origin, @goal, @acceptanceCriteria,
-               NULL, @status, @revision, NULL, NULL, @attempts, NULL, @createdAt, @updatedAt)`,
-    ).run(task as unknown as Record<string, unknown>);
+          dsh_session_id, status, revision, result, artifacts, attempts, last_error, created_at, updated_at,
+          phase, loop_state)
+        VALUES (@taskId, @requestKey, @projectId, @originSessionId, @origin, @goal, @acceptanceCriteria,
+                NULL, @status, @revision, NULL, NULL, @attempts, NULL, @createdAt, @updatedAt,
+                @phase, @loopStateJson)`,
+    ).run({
+      ...(task as unknown as Record<string, unknown>),
+      // JSON 列单独给：领域对象里是 `loopState`，SQL 里是 `loop_state`
+      loopStateJson: JSON.stringify(task.loopState),
+    });
 
     return { kind: 'created', task };
+  }
+
+  /**
+   * 推进「做一件东西」的状态机（★ change: `make-author-iterate`）。
+   *
+   * 只由服务端在**收集到文件事实之后**调用；`phase`/`loop_state` 是唯一写入口径。
+   */
+  setLoop(
+    taskId: string,
+    phase: LoopPhase,
+    loopState: LoopState,
+    now = new Date(),
+  ): ProjectTask | null {
+    const ts = now.toISOString();
+    this.db
+      .prepare(
+        `UPDATE project_tasks SET phase = ?, loop_state = ?, updated_at = ? WHERE task_id = ?`,
+      )
+      .run(phase, JSON.stringify(loopState), ts, taskId);
+    return this.get(taskId);
   }
 
   /**

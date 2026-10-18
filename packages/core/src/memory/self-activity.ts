@@ -119,12 +119,21 @@ export function selfActivityRequestKey(dateKey: string, projectId: string): stri
  *   她可以自己决定做什么、做成什么样；但"往公开站点上放东西"这一步留给对话里的人和事。
  *   理由：展示层要稳，才能可靠地反映"她做了什么"；偷偷上线会破坏这个前提。
  *   （`allowPublish: true` 时才会放开，且仍然是她自己在任务里跑 `publish.sh`。）
+ *
+ * ★ 2026-10-18 追加（用户指出「她调用工具生成的东西，没有她自己的味道」+「她和工具应该有交互」）：
+ *   把**循环**写进验收标准 —— 一次成型就交是不合格的。味道在来回里。
  */
 export function selfActivityAcceptanceCriteria(opts: { allowPublish: boolean }): string {
-  const base =
-    '页面是纯静态（零外链：不许 CDN / 外链字体 / 外部图片 / 外部脚本）；' +
-    '自己跑一次 ./shot.sh 看一眼；把做了什么说清楚';
+  const process =
+    '**必须走循环**：① 先在 NOTES.md 写三行意图（感觉/为什么/和上次哪里不同）；' +
+    '② 出 2-3 个草图（drafts/*.html，每个 ≤40 行，换的是根本性的东西）；' +
+    '③ 每个草图都 `./shot.sh drafts/x.html --name draft-x` **自己看**；' +
+    '④ 写下哪张最像你、为什么（要落到颜色/字体/留白/语气，不要写"感觉"）；' +
+    '⑤ 挑一张做完整版，**再拍一次**，挑一处最不满意的改掉（至少改一处）；' +
+    '⑥ 用一句话说出「这件东西哪里像我」，说不出来就别交。';
+  const quality =
+    '页面是纯静态（零外链：不许 CDN / 外链字体 / 外部图片 / 外部脚本）。';
   return opts.allowPublish
-    ? `${base}；用 ./publish.sh 发布，四条判据必须全过`
-    : `${base}；**不要发布**（不要跑 publish.sh）—— 做好留在工作区，等对话里再决定要不要放上去`;
+    ? `${quality}${process}；最后用 ./publish.sh 发布，四条判据必须全过`
+    : `${quality}${process}；**不要发布**（不要跑 publish.sh）—— 做好留在工作区，等对话里再决定要不要放上去`;
 }

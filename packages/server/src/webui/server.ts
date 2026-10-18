@@ -37,6 +37,7 @@ import { registerChatRoutes } from './chat.js';
 import { MAX_INGEST_BATCH, validateIngestEvent, normalizeIngestEvent } from '../ingest.js';
 import type { MemoryEvent } from '@alysia/core/memory';
 import { computeTaskWindow } from '@alysia/core/memory';
+import { PHASE_PROMPTS, type LoopPhase } from '@alysia/core/memory';
 import { existsSync, readFileSync, statSync, writeFileSync, unlinkSync, writeFileSync as writeFileSyncForVision } from 'fs';
 import { randomUUID } from 'crypto';
 import { tmpdir } from 'os';
@@ -71,6 +72,11 @@ export interface WebuiAuthOptions {
     peakWindows?: Array<[number, number]>;
     /** 【排障用】把窗口判定固定在这个时刻（ISO）；生产别配 */
     nowOverride?: string;
+    /**
+     * ★ 2026-10-18（change: `make-author-iterate`）：状态机里走到 `publish` 阶段时
+     * 是否允许她真的发布。默认 `false`（"上线"这一步留给人）。
+     */
+    allowPublish?: boolean;
   };
   /**
    * 时钟（**测试/排障用**）：可在固定时刻验证执行窗口，不必等到周一上午。
@@ -649,11 +655,63 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
     if (!task) return { ok: true, task: null };
     logger.info(`[project-task] 被认领：${task.taskId}（revision ${task.revision}，第 ${task.attempts} 次）`);
     // 把项目配置**随认领一起下发**：runner 不需要再读一份配置（单一来源）
-    return { ok: true, task, project };
+    // ★ 2026-10-18（make-author-iterate）：连同**这一轮该干什么**一起下发 ——
+    //   阶段指令只在这里定义（`PHASE_PROMPTS`），runner 不要在本地再抄一份。
+    const nextPrompt =
+      task.phase && task.phase !== 'done'
+        ? PHASE_PROMPTS[task.phase as Exclude<LoopPhase, 'done'>] ?? ''
+        : '';
+    return { ok: true, task, project, nextPrompt };
   });
 
-  app.get('/api/project-tasks/:id', async (req, reply) => {
+  /**
+   * 推进「做一件东西」的状态机（★ 2026-10-18，change: `make-author-iterate`）。
+   *
+   * runner 每跑完一个阶段，把**从文件系统读到的事实**发上来；服务端据此决定：
+   * 进下一阶段 / 原地重试（附原因）/ 收工。
+   * ⚠️ 事实由 runner 算（它能读工作区），但**判据在服务端**（纯函数 `advanceLoop`）——
+   *   执行端不能自己宣布"我改好了"。
+   */
+  app.post('/api/project-tasks/:id/advance', async (req, reply) => {
     const { id } = req.params as { id: string };
+    const b = req.body as { facts?: unknown } | undefined;
+    const facts = b?.facts;
+    if (!facts || typeof facts !== 'object') {
+      return reply.code(400).send({ ok: false, error: '缺 facts（由 runner 从工作区读出来）' });
+    }
+    const f = facts as {
+      notes?: unknown; drafts?: unknown; shots?: unknown;
+      builtPages?: unknown; published?: unknown;
+    };
+    const asStr = (v: unknown): string => (typeof v === 'string' ? v : '');
+    const asArr = (v: unknown): string[] =>
+      Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+    const builtPages = Array.isArray(f.builtPages)
+      ? (f.builtPages as Array<{ file?: unknown; mtime?: unknown }>)
+          .map(p => ({ file: asStr(p?.file), mtime: Number(p?.mtime ?? 0) }))
+          .filter(p => p.file !== '')
+      : [];
+
+    const out = core.memoryManager.advanceProjectTaskLoop(
+      id,
+      {
+        notes: asStr(f.notes),
+        drafts: asArr(f.drafts),
+        shots: asArr(f.shots),
+        builtPages,
+        published: f.published === true,
+      },
+      { allowPublish: taskWindowConfig?.allowPublish === true },
+    );
+    if (!out) return reply.code(404).send({ ok: false, error: `没有这个任务：${id}` });
+    logger.info(
+      `[project-task] ${id} 阶段推进：→ ${out.decision.next}` +
+        `${out.decision.done ? `（完成：${out.decision.outcome}）` : ''} · ${out.decision.detail}`,
+    );
+    return { ok: true, decision: out.decision, task: out.task };
+  });
+
+  app.get('/api/project-tasks/:id', async (req, reply) => {    const { id } = req.params as { id: string };
     const task = core.memoryManager.getProjectTask(id);
     if (!task) return reply.code(404).send({ ok: false, error: `没有这个任务：${id}` });
     return { ok: true, task };

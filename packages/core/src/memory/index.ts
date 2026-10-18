@@ -32,6 +32,17 @@ export {
   type SelfActivityDecisionInput,
   type SelfActivitySkipReason,
 } from './self-activity.js';
+// ★ 2026-10-18（change: `make-author-iterate`）：「做一件东西」的显式状态机（纯函数）
+export {
+  advanceLoop,
+  initialLoopState,
+  LOOP_PHASES,
+  PHASE_PROMPTS,
+  type LoopDecision,
+  type LoopFacts,
+  type LoopPhase,
+  type LoopState,
+} from './project-task-loop.js';
 export type {
   ProjectTask,
   ProjectTaskStatus,

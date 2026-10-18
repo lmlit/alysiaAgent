@@ -20,6 +20,12 @@ import type {
   SubmitResultInput,
 } from './stores/ProjectTaskStore.js';
 import { dialogueSpeaker } from './render-dialogue.js';
+// ★ 2026-10-18（change: `make-author-iterate`）：「做一件东西」的显式状态机
+import {
+  advanceLoop,
+  type LoopDecision,
+  type LoopFacts,
+} from './project-task-loop.js';
 // ★ 2026-10-18（change: return-project-task-result）：结果 → 记忆事件的纯构造
 import {
   buildProjectTaskResultEvent,
@@ -1476,8 +1482,7 @@ export class MemoryManager {
   }
 
   /**
-   * 还有活可干的、**最老**的那个项目 id（没有则 `null`）。
-   *
+   * 还有活可干的、**最老**的那个项目 id（没有则 `null`）。   *
    * ★ 2026-10-18（真机撞出来的）：runner 原先按项目起服务（`--project alysia-blog`），
    *   新登记的项目**永远没人认领**，任务一路 `queued` 而且**静默**（我实测等了 580 秒）。
    *   改成"一个 runner 服务所有项目"：认领方不指定项目时，由这里决定先做谁的活。
@@ -1485,6 +1490,32 @@ export class MemoryManager {
    */
   nextQueuedProject(): string | null {
     return this.projectTaskStore.nextQueuedProject();
+  }
+
+  /**
+   * 推进「做一件东西」的状态机（★ 2026-10-18，change: `make-author-iterate`）。
+   *
+   * 执行端跑完一个阶段后，服务端**按文件事实**判断能不能进下一阶段；
+   * 不能就原地重试（并把原因写进 detail），超过轮次上限就收工成 `needs_review`。
+   *
+   * ⚠️ `facts` 必须由**文件系统**算出，不能采信模型自述。
+   */
+  advanceProjectTaskLoop(
+    taskId: string,
+    facts: LoopFacts,
+    opts: { allowPublish: boolean; maxRounds?: number },
+  ): { decision: LoopDecision; task: ProjectTask | null } | null {
+    const task = this.projectTaskStore.get(taskId);
+    if (!task) return null;
+    const decision = advanceLoop({
+      phase: task.phase,
+      state: task.loopState,
+      facts,
+      allowPublish: opts.allowPublish,
+      maxRounds: opts.maxRounds,
+    });
+    const updated = this.projectTaskStore.setLoop(taskId, decision.next, decision.state);
+    return { decision, task: updated };
   }
 
   // ─────────────────────────────────────────────────────────────
