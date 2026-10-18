@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
-# preview-hub.py —— 生成「基站」首页：把她发布过的页面列成一张卡片墙。
+# preview-hub.py —— 生成「基站」首页：把她发布过的**每一个页面**列成卡片。
 #
 # ★ 为什么要生成而不是手写：
 #   「她每做一个新东西」都要能在总入口里被看到，而不是每次让人给她一个新地址。
 #   手写的首页一定会腐烂（新项目忘了加、删了没删）。
 #
+# ★ 2026-10-18 修正：原先**按项目**出卡（一个项目一张）。用户指出「基站列表没有更新」——
+#   她在同一个项目里加了第二个页面（slow-clock.html），基站上看不到。
+#   ⇒ 现在**按页面**列：`public/` 下每个 .html 都是一张卡（标题取该文件的 <title>）。
+#     `index.html` 的地址是 `/p/<项目>/`，其它页面是 `/p/<项目>/<文件名>`。
+#
 # 输入：/root/alysia/config.yml 的 projects.*（服务端登记的项目）
-# 判据：<workspace>/public/index.html 存在 ⇒ 这个项目"已发布"
+# 判据：<workspace>/public/ 下有 .html ⇒ 这些页面"已发布"
 # 产出：
 #   /srv/alysia-preview/p/<id>   → 符号链接到 <workspace>/public（只读地对外）
-#   /srv/alysia-preview/index.html → 卡片墙
+#   /srv/alysia-preview/index.html → 卡片墙（一页一卡）
 #
 # ⚠️ 它不是 web 服务，只是**生成器**：由 systemd timer 每 10s 跑一次（幂等）。
 # ⚠️ 以 root 跑：她要发布只能写自己工作区的 public/，**碰不到基站**（边界没破）。
@@ -24,6 +29,9 @@ from datetime import datetime
 CONFIG = "/root/alysia/config.yml"
 OUT_ROOT = "/srv/alysia-preview"
 PREFIX = "p"  # 页面 URL 前缀：/p/<id>/
+
+# 一页一卡；防御性上限（万一有人往 public/ 里塞几千个文件）
+MAX_PAGES = 200
 
 TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.I | re.S)
 
@@ -44,9 +52,9 @@ def load_projects():
     return projects if isinstance(projects, dict) else {}
 
 
-def page_title(index_html: str, fallback: str) -> str:
+def page_title(html_path: str, fallback: str) -> str:
     try:
-        with open(index_html, encoding="utf-8", errors="ignore") as f:
+        with open(html_path, encoding="utf-8", errors="ignore") as f:
             head = f.read(4096)
         m = TITLE_RE.search(head)
         if m:
@@ -100,7 +108,7 @@ HUB_HTML = """<!doctype html>
 
 CARD = """<a class="card" href="{href}">
   <p class="t">{title}</p>
-  <div class="id">{pid}</div>
+  <div class="id">{pid}{suffix}</div>
   <div class="meta"><span>更新于 {mtime}</span><span>打开 →</span></div>
 </a>"""
 
@@ -110,7 +118,7 @@ def main() -> int:
     os.makedirs(OUT_ROOT, exist_ok=True)
     prefix_dir = os.path.join(OUT_ROOT, PREFIX)
 
-    published = []
+    pages = []
     wanted_links = set()
 
     for pid, conf in projects.items():
@@ -120,13 +128,23 @@ def main() -> int:
         if not isinstance(ws, str) or not ws:
             continue
         public = os.path.join(ws, "public")
-        index = os.path.join(public, "index.html")
-        if not os.path.isfile(index):
+        if not os.path.isdir(public):
+            continue
+
+        # 该项目发布过的页面（只取顶层 .html；不递归，避免把别人的产物也列上）
+        try:
+            entries = sorted(os.listdir(public))
+        except OSError:
+            continue
+        htmls = [
+            e for e in entries
+            if e.lower().endswith(".html") and not e.startswith(".") and os.path.isfile(os.path.join(public, e))
+        ]
+        if not htmls:
             continue  # 还没发布过
 
         wanted_links.add(pid)
         link = os.path.join(prefix_dir, pid)
-        # 幂等：链接已指向正确目标就不动（避免每次 timer 都触发页面的 mtime 变化）
         if not (os.path.islink(link) and os.path.realpath(link) == os.path.realpath(public)):
             if os.path.islink(link) or os.path.isfile(link):
                 os.unlink(link)
@@ -134,14 +152,20 @@ def main() -> int:
                 shutil.rmtree(link)
             os.symlink(public, link)
 
-        published.append(
-            {
-                "id": pid,
-                "title": page_title(index, pid),
-                "href": f"/{PREFIX}/{pid}/",
-                "mtime": human_time(os.path.getmtime(index)),
-            }
-        )
+        # index.html 优先，其余按修改时间新→旧
+        htmls.sort(key=lambda e: (e != "index.html", -os.path.getmtime(os.path.join(public, e))))
+        for name in htmls:
+            full = os.path.join(public, name)
+            is_index = name == "index.html"
+            pages.append(
+                {
+                    "id": pid,
+                    "title": page_title(full, name if not is_index else pid),
+                    "href": f"/{PREFIX}/{pid}/" if is_index else f"/{PREFIX}/{pid}/{name}",
+                    "suffix": "" if is_index else f"/{name}",
+                    "mtime": os.path.getmtime(full),
+                }
+            )
 
     # 清掉已下线/改名的项目（基站的"自动"必须包括**移除**）
     if os.path.isdir(prefix_dir):
@@ -153,16 +177,19 @@ def main() -> int:
                 elif os.path.isdir(victim):
                     shutil.rmtree(victim)
 
-    published.sort(key=lambda p: p["mtime"], reverse=True)
-    if published:
+    pages.sort(key=lambda p: -p["mtime"])
+    pages = pages[:MAX_PAGES]
+
+    if pages:
         body = '<div class="grid">\n' + "\n".join(
             CARD.format(
                 href=p["href"],
                 title=html.escape(p["title"]),
                 pid=html.escape(p["id"]),
-                mtime=html.escape(p["mtime"]),
+                suffix=html.escape(p["suffix"]),
+                mtime=html.escape(human_time(p["mtime"])),
             )
-            for p in published
+            for p in pages
         ) + "\n</div>"
     else:
         body = '<div class="empty">还什么都没有。让她做一个吧。</div>'
@@ -170,14 +197,14 @@ def main() -> int:
     out = HUB_HTML.format(
         css=HUB_CSS,
         body=body,
-        count=len(published),
+        count=len(pages),
         now=datetime.now().strftime("%Y-%m-%d %H:%M"),
     )
     tmp = os.path.join(OUT_ROOT, ".index.html.tmp")
     with open(tmp, "w", encoding="utf-8") as f:
         f.write(out)
     os.replace(tmp, os.path.join(OUT_ROOT, "index.html"))  # 原子替换，避免读到半个页面
-    print(f"hub: {len(published)} page(s) → {[p['id'] for p in published]}")
+    print("hub: %d page(s) → %s" % (len(pages), [p["href"] for p in pages]))
     return 0
 
 
