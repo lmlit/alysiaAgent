@@ -7,7 +7,7 @@
 
 - **日期**: 2026-10-19
 - **类型**: FIX（静默失败 / 日志噪声）
-- **状态**: proposed → **applied** → archived
+- **状态**: **archived（2026-10-19）**
 - **影响 spec**: `memory-system`（新增契约：空查询不请求 embedding）
 
 ## 动机（为什么做）

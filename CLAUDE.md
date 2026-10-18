@@ -37,7 +37,7 @@ AI Agent 桌面应用：聊天模式 + 编程模式，搭载"昔涟"人格和记
 ## Current State
 
 **记忆系统核心 + 架构重构 + Feature Flag + AI 主动生活系统 + 模块化内核 + dsh 通道全部完成。**
-测试基线：**1575**（core 958 / server 371 / dsh-adapter 138 / dsh-console 8 / console 100）
+测试基线：**1743**（core 997 / server 400 / dsh-adapter 138 / dsh-console 8 / console 100）
 + **E2E 5/5**（真实 API）。★ 2026-10-19 实测全绿；**基线数字以 `docs/HANDOFF.md` 顶部为准**
 （它会随会话更新，本行只是快照）。⚠️ 跑测试**必须用 Node 24**（`E:\nodejs24\node.exe`），
 PATH 上的 node 是 v20，而 better-sqlite3 是给 24 编的 —— 否则 401 条全挂（`NODE_MODULE_VERSION` 不匹配）。

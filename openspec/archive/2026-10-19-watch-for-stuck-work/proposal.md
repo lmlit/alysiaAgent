@@ -7,7 +7,7 @@
 
 - **日期**: 2026-10-19
 - **类型**: NEW（自主性）+ FIX（"没人盯着"是今晚两次事故的共同形状）
-- **状态**: proposed → in_progress → applied → archived
+- **状态**: **archived（2026-10-19）**
 - **影响 spec**: `project-tasks`（§17 新增契约 68i/68j）；`module-kernel`（新增 `al:watchdog` 模块）
 
 ## 动机（为什么做）

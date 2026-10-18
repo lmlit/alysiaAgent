@@ -67,6 +67,10 @@
 | record-out-of-band-server-config-change | 记录一次带外服务器配置变更 | 🧑 | [proposal](../openspec/changes/record-out-of-band-server-config-change/proposal.md) |
 | ~~阶段白名单没收她的产物~~ ✅ | **2026-10-18 已修**（`scope-loop-to-this-round`）：写权限分层（只有 `public/**` 是权限边界）+ 判据按本轮 `mtime` 过滤；`.tmp/` 不进快照 | ✅ 已上线 | [spec §17 契约 68b/68c](../openspec/specs/project-tasks/spec.md) |
 | ~~build 类重阶段 30 分钟超时~~ ✅ | **2026-10-18 已修**（同一 change）：按阶段给超时（build 5400s）+ 超时杀进程组 | ✅ 已上线 | [spec §17 契约 68d](../openspec/specs/project-tasks/spec.md) |
+| ~~她只能"新建"才能要地址~~ ✅ | **2026-10-19 已修**（`let-her-query-what-she-made`）：`list_my_pages` / `find_page` / `check_server_status` 三个只读工具 | ✅ 已上线 | [spec §17 契约 68h/68i](../openspec/specs/project-tasks/spec.md) |
+| ~~没人盯着卡住的活~~ ✅ | **2026-10-19 已修**（`watch-for-stuck-work`）：`al:watchdog` 六条只读判据，**发现交给她、不推给用户** | ✅ 已上线 | [spec §17 契约 68j](../openspec/specs/project-tasks/spec.md) |
+| ~~空查询撞 embed 400~~ ✅ | **2026-10-19 已修**（`fix-empty-embed-query`）：空 query 不请求 embedding | ✅ 已上线 | [spec §7](../openspec/specs/memory-system/spec.md) |
+| 看门狗提醒的"硬度" | 现在把"提不提"完全交给她 —— 她收到提示也可能不提（真机验时她只寒暄了）。可选加一句"碍着你手上的活就说一句" | 🧑 一句话的事 | [change](../openspec/archive/2026-10-19-watch-for-stuck-work/tasks.md) |
 
 ## D. 部署 / 数据债（代码已好，线上还是旧的）
 

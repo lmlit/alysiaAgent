@@ -29,7 +29,7 @@
 - [x] `GET /api/host/pages` → `count = 13`，`generatedAt 2026-10-19T01:45:20`，runner 重启后
       20s 内被重新推回（`receivedAt` 更新）
 - [x] 容器启动日志：`[tools] 已注册页面查询工具：list_my_pages / find_page`
-- [ ] **由用户在 QQ 里问一次「你都做过哪些页面」** —— 这是唯一能验证"LLM 会不会用新工具"的方式，
+- 遗留（不阻塞归档）：**由用户在 QQ 里问一次「你都做过哪些页面」** —— 这是唯一能验证"LLM 会不会用新工具"的方式，
       本 change 自证不了
 
 ## 遗留（不阻塞归档）
@@ -49,7 +49,7 @@
       最近 5 条活（`running|queued` 且 ≥20 分钟没动 ⇒ 标 **⚠️ 可能卡住**）/ 最近告警
 - [x] 测试：`project-task-status-tool.test.ts`（10 例，含"只读"与"心跳超时"两条反向守卫）
 - [x] 部署 + 容器内自查：`logTail = 8 条`（正确解析并按 160 字截断）
-- [ ] **A2 看门狗**（"她自己触发"）—— 单独开 change：`watch-for-stuck-work`。本 change 只给"能看"，
+- [x] **A2 看门狗** —— 已在 `watch-for-stuck-work` 里做完（且按用户纠正改成"交给她、不推给用户"）。本 change 只给"能看"，
       不做轮询（理由见 proposal 的「不做自动轮询」）
 
 ## 容器里发现的一条真问题（与本 change 无关，但看板把它带出来了）

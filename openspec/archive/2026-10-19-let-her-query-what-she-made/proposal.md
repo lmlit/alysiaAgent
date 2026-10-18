@@ -7,7 +7,7 @@
 
 - **日期**: 2026-10-19
 - **类型**: NEW（只读能力）+ FIX（用"再造一次"回答"在哪"）
-- **状态**: proposed → in_progress → applied → archived
+- **状态**: **archived（2026-10-19）**
 - **影响 spec**: `project-tasks`（§17 新增契约 68h；§11 契约 38d 的清单有了消费者）
 
 ## 动机（为什么做）
