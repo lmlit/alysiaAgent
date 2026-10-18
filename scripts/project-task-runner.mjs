@@ -576,7 +576,46 @@ export function buildPhaseTask(task, prompt) {
   return `${base}\n\n=== 这一轮只做这一件事（做完就停，别抢后面的步骤） ===\n${prompt}`;
 }
 
+/** 首页清单文件（hub 生成器写的那份；可用 `ALYSIA_PAGES_INDEX` 覆盖） */
+const PAGES_INDEX_PATH = process.env.ALYSIA_PAGES_INDEX ?? '/srv/alysia-preview/pages.json';
+
+/**
+ * 把「基站生成器产出的页面清单」推给服务端（★ 2026-10-19，change: `let-her-query-what-she-made`）。
+ *
+ * 为什么由 runner 推：清单是**宿主机上**的文件（`/srv/alysia-preview/pages.json`，hub 每 10s 重建），
+ * 而服务端在容器里看不到宿主路径；runner 是唯一既是宿主、又能跟服务端说话的进程。
+ *
+ * ⚠️ 失败**不重试、不记错**（best-effort）：这一轮认领/执行不该因为"清单没传上去"受影响；
+ *    上一份清单留着，服务端会如实告诉她是"几分钟前"的。
+ *
+ * @returns {Promise<boolean>} 是否成功推上去
+ */
+export async function pushPagesIndex(cfg, log) {
+  let raw;
+  try {
+    raw = readFileSync(PAGES_INDEX_PATH, 'utf8');
+  } catch {
+    return false; // hub 还没跑过 / 路径不对：静默，别每 15s 刷一行
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    log(`  ⚠️ 页面清单不是合法 JSON（${PAGES_INDEX_PATH}）—— 跳过本次上报`);
+    return false;
+  }
+  const res = await api(cfg, 'POST', '/api/host/pages', parsed);
+  if (!res.ok) {
+    log(`  ⚠️ 页面清单上报失败（HTTP ${res.status}）：${res.json?.error ?? res.text?.slice(0, 120)}`);
+    return false;
+  }
+  return true;
+}
+
 async function tick(cfg, log) {
+  // ★ 每轮先把"她做过哪些页面"推给服务端（她在聊天里查链接靠它，见 pushPagesIndex）
+  await pushPagesIndex(cfg, log).catch(() => false);
+
   // ★ 不传 --project ⇒ 不带查询参数 ⇒ 服务端挑"还有活的最老的项目"（一个 runner 服务所有项目）
   const url = nextUrl(cfg.project);
   const claimed = await api(cfg, 'GET', url);

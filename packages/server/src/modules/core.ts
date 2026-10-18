@@ -11,6 +11,7 @@
 import { AlysiaCore } from '@alysia/core';
 import type { Module } from '@alysia/core/kernel';
 import type { RuntimeConfig } from './config.js';
+import { hostPagesCache } from '../host-pages.js';
 
 export const coreModule: Module = {
   name: 'al:core',
@@ -36,6 +37,12 @@ export const coreModule: Module = {
       projectIds: Object.keys(config.projects ?? {}),
     // ★ 2026-10-18（gate-project-tasks-to-offpeak）：工具回执要能说清"到点自己会跑"
     projectTasks: config.projectTasks,
+    /**
+     * ★ 2026-10-19（change: `let-her-query-what-she-made`）：她的页面清单（只读投影）。
+     * 数据结构单一来源是宿主上的 `pages.json`；容器看不到 ⇒ 由 runner 每轮
+     * `POST /api/host/pages` 推上来，这里读进程内缓存。
+     */
+    hostPages: () => hostPagesCache.get(),
     });
 
     await core.start();

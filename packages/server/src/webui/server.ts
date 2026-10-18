@@ -39,6 +39,7 @@ import type { MemoryEvent } from '@alysia/core/memory';
 import { computeTaskWindow } from '@alysia/core/memory';
 import { PHASE_PROMPTS, type LoopPhase } from '@alysia/core/memory';
 import { pickPageUrl } from './receipt-url.js';
+import { hostPagesCache, parseHostPagesInput } from '../host-pages.js';
 import { existsSync, readFileSync, statSync, writeFileSync, unlinkSync, writeFileSync as writeFileSyncForVision } from 'fs';
 import { randomUUID } from 'crypto';
 import { tmpdir } from 'os';
@@ -659,6 +660,33 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
    *   第一个问题一定是"我的任务为什么不动"。这个端点就是那个答案 ——
    *   它把判定依据（原因 / 现在 / 什么时候解禁 / 用的窗口配置）原样吐出来。
    */
+  /**
+   * ★ 2026-10-19（change: let-her-query-what-she-made）：宿主 runner 推上来的**页面清单**。
+   *
+   * 为什么要有这条上传：她在聊天里要回答"那页的网址呢"，而清单是宿主上的文件
+   * （`/srv/alysia-preview/pages.json`，基站生成器每 10s 重建）—— 容器看不到宿主目录。
+   * 由 runner 每轮推一份，这里只存最新（只读投影，真相仍在宿主的 pages.json / public/）。
+   *
+   * ⚠️ 形状不对就 **400**，别静默吞：上一份留着，工具里会如实说"是几分钟前的"。
+   */
+  app.post('/api/host/pages', async (req, reply) => {
+    const index = parseHostPagesInput(req.body);
+    if (!index) {
+      return reply.code(400).send({ ok: false, error: '形状不对：需要 {generatedAt, pages:[{projectId,file,title,url,published,updatedAt}]}' });
+    }
+    hostPagesCache.set(index);
+    logger.info(
+      `[host-pages] 收到页面清单：${index.pages.length} 页（生成于 ${index.generatedAt || '(未给)'}）`,
+    );
+    return { ok: true, count: index.pages.length };
+  });
+
+  /** 只读自查：她（或我们）能确认服务端手里那份清单有多新 */
+  app.get('/api/host/pages', async () => {
+    const idx = hostPagesCache.get();
+    return idx ? { ok: true, ...idx } : { ok: true, pages: [], note: '还没收到过（runner 没推 / hub 没跑）' };
+  });
+
   app.get('/api/project-tasks/window', async () => {
     const w = currentWindow();
     return {

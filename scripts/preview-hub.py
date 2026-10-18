@@ -24,6 +24,7 @@ import re
 import shutil
 import sys
 import html
+import json
 from datetime import datetime
 
 CONFIG = "/root/alysia/config.yml"
@@ -405,7 +406,28 @@ def main() -> int:
         now=datetime.now().strftime("%Y-%m-%d %H:%M"),
     )
     write_atomic(os.path.join(OUT_ROOT, "pages.html"), out2)
-    print("pages: %d 个（已上线 %d / 预览 %d）" % (len(all_pages), live_n, len(all_pages) - live_n))
+
+    # ★ 2026-10-19（change: `let-her-query-what-she-made`）：
+    #   机器可读的同一份清单 —— 她在**聊天里**要回答"那页在哪/给我链接"时用，
+    #   而不是为了问一个网址去**新建一个任务**（真机证据：她建过一个"核实地址"的任务）。
+    #   ⚠️ 容器读不到宿主目录 ⇒ 由宿主 runner 每轮把这份 json 传给服务端（见 `/api/host/pages`）。
+    index = [
+        {
+            "projectId": p["pid"],
+            "file": p["name"],
+            "title": p["title"],
+            "url": p["url"] or p["href"],
+            "published": p["kind"] == "live",
+            "updatedAt": datetime.fromtimestamp(p["mtime"]).strftime("%Y-%m-%dT%H:%M:%S"),
+        }
+        for p in all_pages
+    ]
+    write_atomic(
+        os.path.join(OUT_ROOT, "pages.json"),
+        json.dumps({"generatedAt": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"), "pages": index},
+                   ensure_ascii=False, indent=2) + "\n",
+    )
+    print("pages: %d 个（已上线 %d / 预览 %d）· json 已写" % (len(all_pages), live_n, len(all_pages) - live_n))
     return 0
 
 

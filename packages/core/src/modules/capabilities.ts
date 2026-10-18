@@ -16,7 +16,7 @@ import {
 } from '../tools/reminder.js';
 import { createSelfEvolveTools } from '../tools/self-evolve.js';
 // ★ 2026-10-17（change: add-project-task-delegation）：委托任务工具
-import { createProjectTaskTools } from '../tools/project-tasks.js';
+import { createProjectTaskTools, type PagesProvider } from '../tools/project-tasks.js';
 import { createShellExecTool } from '../tools/shell.js';
 import {
   createWriteFileTool,
@@ -56,6 +56,11 @@ export function registerChatTools(
    * 高峰时段（工作日 9-12 / 14-18）提交照样收，但回执会告诉模型"到点自己会跑"。
    */
   taskWindow?: { holidays?: string[]; peakWindows?: Array<[number, number]> },
+  /**
+   * ★ 2026-10-19（change: `let-her-query-what-she-made`）：她做过的页面清单（只读）。
+   * 缺省 ⇒ 不注册 `list_my_pages` / `find_page`。
+   */
+  hostPages?: PagesProvider,
 ): void {
   registry.register(createWebSearchTool());
   registry.register(createWeatherTool());
@@ -74,8 +79,12 @@ export function registerChatTools(
   }
   // ★ 2026-10-17（change: `add-project-task-delegation`）：委托任务工具。
   //   未登记任何项目 ⇒ 一个都不注册（能力开关：配置即开关，不另立布尔位）
-  for (const tool of createProjectTaskTools(memoryManager, { projectIds, taskWindow })) {
+  for (const tool of createProjectTaskTools(memoryManager, { projectIds, taskWindow, pages: hostPages })) {
     registry.register(tool);
+  }
+  // ★ 2026-10-19：页面查询工具挂没挂上必须能观测（否则"她不会查"与"没注册"同形）
+  if (projectIds.length > 0 && hostPages) {
+    log.info('[tools] 已注册页面查询工具：list_my_pages / find_page');
   }
   // 表情包不再注册为工具 — 改用文案内标记 [表情包:名字]，发送时解析（LLMAgentStage + adapter）
 }
@@ -137,6 +146,11 @@ export interface ToolsConfig {
    * 高峰时段只排队不执行；节假日表由配置给（**不内置**，猜错比没有更糟）。
    */
   taskWindow?: { holidays?: string[]; peakWindows?: Array<[number, number]> };
+  /**
+   * ★ 2026-10-19（change: `let-her-query-what-she-made`）：她做过的页面清单（只读投影）。
+   * 由宿主 runner 推上来（容器看不到宿主目录）。缺省 ⇒ 不注册查询工具。
+   */
+  hostPages?: PagesProvider;
 }
 
 /** 工具注册表。对应 `index.ts:200-204` */
@@ -153,6 +167,7 @@ export const toolsModule: Module<ToolsConfig> = {
       ctx.logger,
       cfg.projectIds ?? [],
       cfg.taskWindow,
+      cfg.hostPages,
     );
     if (cfg.features.codeMode) {
       registerCodeTools(registry, cfg.workspaceDir, cfg.features);

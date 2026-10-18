@@ -57,7 +57,35 @@ export interface ProjectTaskToolOptions {
    * 拒收等于让她记住时段，而排队不花钱、执行才花钱。
    */
   taskWindow?: TaskWindowInput;
+  /**
+   * ★ 2026-10-19（change: `let-her-query-what-she-made`）：**她做过哪些页面**的只读清单。
+   *
+   * 真机事故：用户问"给我链接"，她**新建了一个任务**去核实地址
+   * （`15:53 核实 island.html 当前真实的对外可访问地址…`）。
+   * 那件事该用**查询**，不该开一个会跑 dsh、会花钱、还会写工作区的任务。
+   *
+   * 数据来自宿主 runner 推上来的 `pages.json`（容器看不到宿主目录）。
+   * 不给 provider ⇒ 这两个查询工具不注册（保持"没数据就别给她假能力"）。
+   */
+  pages?: PagesProvider;
 }
+
+/**
+ * 页面清单提供者（★ 2026-10-19，change: `let-her-query-what-she-made`）。
+ * 返回 `null` = 现在读不到（宿主还没推 / 生成器没跑）—— 工具要**如实说**，不许假装知道。
+ */
+export type PagesProvider = () => {
+  generatedAt: string;
+  receivedAt?: string;
+  pages: Array<{
+    projectId: string;
+    file: string;
+    title: string;
+    url: string;
+    published: boolean;
+    updatedAt: string;
+  }>;
+} | null;
 
 /** 模型看到的结果文本上限 —— 别把整份文件塞回 prompt（TokenBudget 会先炸） */
 const MAX_RESULT_CHARS = 1200;
@@ -296,5 +324,95 @@ export function createProjectTaskTools(
     },
   };
 
-  return [start, get, cont];
+  /**
+   * ★ 2026-10-19（change: `let-her-query-what-she-made`）：**只读查询**她做过的页面。
+   *
+   * 为什么要有：用户问"给我链接"，她只能**新建一个任务**去核实（真机证据在
+   * `ProjectTaskToolOptions.pages` 的注释里）。那是用"再造一次"来回答"在哪"——
+   * 既慢又花钱，而且会往工作区写东西。查一下就够了。
+   *
+   * 只读、无副作用：不建任务、不跑 dsh、不写文件。
+   */
+  const pageLine = (p: { title: string; url: string; published: boolean; updatedAt: string }) =>
+    `- ${p.title}${p.published ? '' : '（预览）'} → ${p.url}` +
+    `${p.updatedAt ? ` · 更新于 ${p.updatedAt.replace('T', ' ').slice(0, 16)}` : ''}`;
+
+  /** 清单的"多旧"提示 —— 她是拿它回答用户的，别把旧数据说成现况 */
+  const freshness = (idx: { generatedAt: string; receivedAt?: string }): string => {
+    if (!idx.receivedAt) return '';
+    const min = Math.floor((Date.now() - Date.parse(idx.receivedAt)) / 60000);
+    if (!Number.isFinite(min) || min < 2) return '';
+    return `（这份清单是 ${min} 分钟前从宿主机收到的；要最新就以基站 /pages 为准）`;
+  };
+
+  const listPages: ToolDefinition = {
+    name: 'list_my_pages',
+    description:
+      '查**你自己做过哪些页面**（只读，不建任务、不跑执行端、不花时间也不花钱）。'
+      + '用户问「你都做过些什么」「上次那页呢」「全部在哪看」时用这个。'
+      + '每一条给标题、地址、是否已上线、更新时间；已上线的地址是 /p/…，没上线的走只读预览 /w/…。',
+    parameters: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string', description: '可选：只看某个项目（不填=全部）' },
+        limit: { type: 'number', description: '最多几条（默认 20）' },
+      },
+      required: [],
+    },
+    async handler(args) {
+      const idx = opts.pages?.() ?? null;
+      if (!idx) {
+        return '现在读不到页面清单（宿主 runner 还没推上来 / 基站生成器没在跑）——'
+          + '这种情况可以给基站总入口给用户，或者用 get_project_task 查具体某一轮。';
+      }
+      const pid = typeof args.projectId === 'string' ? args.projectId.trim() : '';
+      const limitRaw = typeof args.limit === 'number' ? args.limit : 20;
+      const limit = Math.min(Math.max(1, Math.trunc(limitRaw)), 50);
+      const all = idx.pages.filter(p => (pid ? p.projectId === pid : true));
+      if (all.length === 0) return pid ? `项目 ${pid} 下没有页面记录。` : '清单里还没有任何页面。';
+      const shown = all.slice(0, limit);
+      return [
+        `你做过 ${all.length} 个页面${pid ? `（项目 ${pid}）` : ''}${freshness(idx)}：`,
+        ...shown.map(pageLine),
+        ...(all.length > shown.length ? [`…还有 ${all.length - shown.length} 个，用 limit 取更多`] : []),
+        '',
+        '要链接就直接把上面那条地址给用户 —— **不要**为了一个网址去新建任务。',
+      ].join('\n');
+    },
+  };
+
+  const findPage: ToolDefinition = {
+    name: 'find_page',
+    description:
+      '按名字/关键词找**你自己做过的某一页**（只读）。用户说「海那页」「慢时钟」「那个日记」时用这个，'
+      + '拿到地址直接给他。**不要**为了查地址去 start_project_task。',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: '关键词：文件名（island）、标题词（海岛/慢时钟/随笔）都行' },
+      },
+      required: ['query'],
+    },
+    async handler(args) {
+      const idx = opts.pages?.() ?? null;
+      if (!idx) return '现在读不到页面清单（宿主的清单还没推上来）。可以先给基站总入口，或用 get_project_task 查那轮。';
+      const q = String((args as { query?: unknown })?.query ?? '').trim().toLowerCase();
+      if (!q) return '拒绝：query 不能为空';
+      const hit = idx.pages.filter(p =>
+        p.file.toLowerCase().includes(q) || p.title.toLowerCase().includes(q) || p.projectId.toLowerCase().includes(q),
+      );
+      if (hit.length === 0) {
+        return `没找到和「${q}」对得上的页面（共 ${idx.pages.length} 页）。`
+          + '可以换关键词，或用 list_my_pages 看全部 —— 真没有才是要做新的。';
+      }
+      return [
+        `找到 ${hit.length} 个${freshness(idx) ? ` ${freshness(idx)}` : '（清单较新）'}：`,
+        ...hit.slice(0, 5).map(pageLine),
+        ...(hit.length > 5 ? [`…还有 ${hit.length - 5} 个`] : []),
+      ].join('\n');
+    },
+  };
+
+  const withPages = opts.pages ? [listPages, findPage] : [];
+  return [start, get, cont, ...withPages];
 }
