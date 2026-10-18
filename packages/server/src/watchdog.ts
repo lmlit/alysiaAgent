@@ -175,7 +175,7 @@ export function evaluateWatchdogFacts(
   }
 
   // ── ⑥ 崩溃循环：一小时内重启 ≥3 次（只部署一次不算） ─────────────
-  if ((input.bootsLastHour ?? 0) >= 3) {
+  if ((input.bootsLastHour ?? 0) >= 5) {
     issues.push({
       key: 'fresh-restart',
       level: 'warn',

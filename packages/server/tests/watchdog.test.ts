@@ -148,9 +148,12 @@ describe('判据⑤：排队堆积', () => {
   })
 })
 
-describe('判据⑥：崩溃循环（一小时内重启 ≥3 次）', () => {
-  it('重启 3 次 ⇒ 报', () => {
-    expect(keys(base({ bootsLastHour: 3 }))).toContain('fresh-restart')
+describe('判据⑥：崩溃循环（一小时内重启 ≥5 次）', () => {
+  it('一小时内重启 5 次 ⇒ 报', () => {
+    expect(keys(base({ bootsLastHour: 5 }))).toContain('fresh-restart')
+  })
+  it('★ 连续部署三次（重启 3 次）⇒ 不报 —— 部署不等于崩溃循环', () => {
+    expect(keys(base({ bootsLastHour: 3 }))).toEqual([])
   })
   it('★ 只部署了一次（重启 1 次）⇒ 不报 —— 否则每次部署都发假警报', () => {
     expect(keys(base({ bootsLastHour: 1 }))).toEqual([])
@@ -267,7 +270,7 @@ describe('★ 第一轮不报"刚重启"（否则每次部署都发假警报）'
       intervalSec: 60,
       cooldownMs: 0,
       thresholds: DEFAULT_THRESHOLDS,
-      gather: () => base({ bootsLastHour: 3 }),
+      gather: () => base({ bootsLastHour: 5 }),
       notify: async (fresh) => { sent.push(fresh) },
       log: () => {},
     })
