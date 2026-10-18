@@ -44,6 +44,27 @@ export interface ServerConfig {
    *    （runner 从认领响应里拿到它，见 webui 的 `/api/project-tasks/next`）。
    */
   projects?: Record<string, { workspace: string; profile: string; publicUrl?: string }>;
+  /**
+   * ★ 2026-10-18（change: `gate-project-tasks-to-offpeak`）：委托任务的执行窗口。
+   *
+   * 规则（北京时间）：高峰 = 周一至周五（**不含**法定节假日）9:00–12:00、14:00–18:00；
+   * 其余全部（含周末与节假日全天）为空闲。**高峰时段只排队，不执行**（钱按执行时间算）。
+   *
+   * ⚠️ `holidays` **不内置**：法定节假日每年公布、还涉及调休，猜一份错的表比没有更糟。
+   *    未列出的日期按工作日处理 ⇒ 窗口照常生效 ⇒ 只会更省，不会多花。
+   */
+  projectTasks?: {
+    holidays?: string[];
+    peakWindows?: Array<[number, number]>;
+    /**
+     * 【**排障用**，生产别配】把窗口判定固定在这个时刻（ISO 8601）。
+     *
+     * 为什么需要它：高峰分支只在工作日 9-12/14-18 触发 ——
+     * 想在生产上验证"闸门真的拦得住"，只能等到周一上午，这不现实。
+     * 配了它会打 WARN（醒目到不会被忘掉）。
+     */
+    nowOverride?: string;
+  };
   /** ★ 8-10 采样参数统一配置（7 槽位，缺省走 core DEFAULT_SAMPLING floor） */
   sampling?: DeepPartial<SamplingConfig>;
 }
@@ -112,6 +133,8 @@ export function loadConfig(path: string): ServerConfig {
      *   服务端却回「已登记：无」。所以下面用显式映射 + 坏条目留痕。
      */
     projects: sanitizeProjects(data.projects),
+    // ★ 逐字段挑选：新增配置段**必须**在这里映射，否则就是"配置写了但没人看见"
+    projectTasks: sanitizeProjectTasks((data as { projectTasks?: unknown }).projectTasks),
   };
 }
 
@@ -119,8 +142,69 @@ export function loadConfig(path: string): ServerConfig {
  * 只接受 `{ <id>: { workspace, profile } }` 形状。
  * 坏条目**丢掉并留痕**（不静默通过 —— 否则「配了但不生效」永远查不出来）。
  */
-function sanitizeProjects(
+/**
+ * 执行窗口的配置清洗（★ change: `gate-project-tasks-to-offpeak`）。
+ *
+ * 只接受两种东西：`holidays`（`YYYY-MM-DD` 字符串数组）与 `peakWindows`（`[起, 止]` 分钟对）。
+ * **形状不对的一律忽略并留痕** —— 静默接受一个坏窗口会让"省钱"变成"根本没拦住"。
+ */
+export function sanitizeProjectTasks(
   raw: unknown,
+): { holidays?: string[]; peakWindows?: Array<[number, number]>; nowOverride?: string } | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const out: { holidays?: string[]; peakWindows?: Array<[number, number]>; nowOverride?: string } = {};
+
+  // 【排障用】固定时钟：只在能解析成有效时间时接受，且**大声留痕**
+  const ov = (raw as { nowOverride?: unknown }).nowOverride;
+  if (typeof ov === 'string' && ov.trim()) {
+    const t = Date.parse(ov.trim());
+    if (Number.isFinite(t)) {
+      out.nowOverride = new Date(t).toISOString();
+      logger.warn(
+        `[Config] ⚠️ projectTasks.nowOverride 生效：窗口判定被固定为 ${out.nowOverride} ` +
+          `（**排障用**，生产请删掉这一项）`,
+      );
+    } else {
+      logger.warn(`[Config] projectTasks.nowOverride 不是有效时间（"${ov}"），已忽略`);
+    }
+  }
+
+  const holidays = (raw as { holidays?: unknown }).holidays;
+  if (Array.isArray(holidays)) {
+    const ok = holidays.filter(
+      (d): d is string => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d.trim()),
+    );
+    if (ok.length !== holidays.length) {
+      logger.warn(
+        `[Config] projectTasks.holidays 有 ${holidays.length - ok.length} 项不是 YYYY-MM-DD，已忽略`,
+      );
+    }
+    if (ok.length > 0) out.holidays = ok.map(d => d.trim());
+  }
+
+  const peak = (raw as { peakWindows?: unknown }).peakWindows;
+  if (Array.isArray(peak)) {
+    const ok: Array<[number, number]> = [];
+    for (const item of peak) {
+      if (!Array.isArray(item) || item.length !== 2) continue;
+      const [a, b] = item as unknown[];
+      if (
+        typeof a === 'number' && typeof b === 'number' &&
+        Number.isFinite(a) && Number.isFinite(b) &&
+        a >= 0 && b <= 24 * 60 && a < b
+      ) {
+        ok.push([a, b]);
+      } else {
+        logger.warn(`[Config] projectTasks.peakWindows 有一项形状不对（要 [起,止] 分钟且起<止），已忽略`);
+      }
+    }
+    if (ok.length > 0) out.peakWindows = ok;
+  }
+
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function sanitizeProjects(  raw: unknown,
 ): Record<string, { workspace: string; profile: string; publicUrl?: string }> | undefined {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
   const out: Record<string, { workspace: string; profile: string; publicUrl?: string }> = {};

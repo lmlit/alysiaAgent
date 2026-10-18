@@ -51,6 +51,11 @@ export function registerChatTools(
    * **空 = 不注册委托工具**（这就是能力开关；见 `createProjectTaskTools`）。
    */
   projectIds: string[] = [],
+  /**
+   * ★ 2026-10-18（change: `gate-project-tasks-to-offpeak`）：执行窗口。
+   * 高峰时段（工作日 9-12 / 14-18）提交照样收，但回执会告诉模型"到点自己会跑"。
+   */
+  taskWindow?: { holidays?: string[]; peakWindows?: Array<[number, number]> },
 ): void {
   registry.register(createWebSearchTool());
   registry.register(createWeatherTool());
@@ -69,7 +74,7 @@ export function registerChatTools(
   }
   // ★ 2026-10-17（change: `add-project-task-delegation`）：委托任务工具。
   //   未登记任何项目 ⇒ 一个都不注册（能力开关：配置即开关，不另立布尔位）
-  for (const tool of createProjectTaskTools(memoryManager, { projectIds })) {
+  for (const tool of createProjectTaskTools(memoryManager, { projectIds, taskWindow })) {
     registry.register(tool);
   }
   // 表情包不再注册为工具 — 改用文案内标记 [表情包:名字]，发送时解析（LLMAgentStage + adapter）
@@ -127,6 +132,11 @@ export interface ToolsConfig {
    * 空/缺省 ⇒ 不注册委托工具（能力开关）。
    */
   projectIds?: string[];
+  /**
+   * 执行窗口（★ change: `gate-project-tasks-to-offpeak`）。
+   * 高峰时段只排队不执行；节假日表由配置给（**不内置**，猜错比没有更糟）。
+   */
+  taskWindow?: { holidays?: string[]; peakWindows?: Array<[number, number]> };
 }
 
 /** 工具注册表。对应 `index.ts:200-204` */
@@ -142,6 +152,7 @@ export const toolsModule: Module<ToolsConfig> = {
       ctx.get('al:db'),
       ctx.logger,
       cfg.projectIds ?? [],
+      cfg.taskWindow,
     );
     if (cfg.features.codeMode) {
       registerCodeTools(registry, cfg.workspaceDir, cfg.features);

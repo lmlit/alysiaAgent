@@ -173,3 +173,43 @@ describe('continue_project_task', () => {
     expect(await cont(makeHost()).handler({ taskId: 'pt-1', feedback: '  ' })).toContain('拒绝');
   });
 });
+
+// ★ 2026-10-18（change: `gate-project-tasks-to-offpeak`）
+//   高峰时段（北京时间工作日 9-12 / 14-18）**不拒收**任务，而是告诉她"到点自己会跑"。
+//   拒收等于让她记住时段；而排队不花钱、执行才花钱。
+describe('★ 高峰时段：照收，但要说清"几点之后才跑"', () => {
+  const start = (opts: Record<string, unknown>) =>
+    createProjectTaskTools(makeHost() as never, { projectIds: ['alysia-blog'], ...opts } as never)
+      .find(t => t.name === 'start_project_task')!;
+
+  it('★★ 高峰提交 → 回执里带"高峰"与"不用再交一次"（否则她会重复提交）', async () => {
+    const t = start({ taskWindow: { now: new Date('2026-10-19T02:15:00.000Z') } }); // 周一 10:15
+    const out = (await t.handler(
+      { projectId: 'alysia-blog', goal: 'x', acceptanceCriteria: 'y' },
+      's1',
+    )) as string;
+    expect(out).toContain('已提交'); // 仍然收下
+    expect(out).toContain('高峰');
+    expect(out).toContain('12:00'); // 几点之后
+    expect(out).toContain('不用再交一次');
+  });
+
+  it('★ 空闲时段提交 → 不提"高峰"（别在无关的时候吓她）', async () => {
+    const t = start({ taskWindow: { now: new Date('2026-10-19T04:15:00.000Z') } }); // 周一 12:15 午休
+    const out = (await t.handler(
+      { projectId: 'alysia-blog', goal: 'x', acceptanceCriteria: 'y' },
+      's1',
+    )) as string;
+    expect(out).toContain('已提交');
+    expect(out).not.toContain('高峰');
+  });
+
+  it('周末提交 → 不提"高峰"', async () => {
+    const t = start({ taskWindow: { now: new Date('2026-10-24T02:15:00.000Z') } }); // 周六
+    const out = (await t.handler(
+      { projectId: 'alysia-blog', goal: 'x', acceptanceCriteria: 'y' },
+      's1',
+    )) as string;
+    expect(out).not.toContain('高峰');
+  });
+});

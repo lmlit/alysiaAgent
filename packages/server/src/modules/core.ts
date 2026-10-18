@@ -34,6 +34,8 @@ export const coreModule: Module = {
        * ⚠️ 只给 id：工作目录与 dsh profile 留在服务端（runner 从认领响应里拿）。
        */
       projectIds: Object.keys(config.projects ?? {}),
+    // ★ 2026-10-18（gate-project-tasks-to-offpeak）：工具回执要能说清"到点自己会跑"
+    projectTasks: config.projectTasks,
     });
 
     await core.start();

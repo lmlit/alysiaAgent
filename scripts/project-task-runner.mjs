@@ -201,6 +201,9 @@ function runDsh({ workspace, profile, task, timeoutSec }) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/** 上一次"暂停认领"的日志内容 —— 避免每轮刷同一行 */
+let lastPauseLine = '';
+
 /**
  * 认领请求的 URL。
  *
@@ -221,8 +224,23 @@ async function tick(cfg, log) {
     log(`认领失败（HTTP ${claimed.status}）：${claimed.json?.error ?? claimed.text?.slice(0, 200)}`);
     return { didWork: false };
   }
-  const { task, project } = claimed.json ?? {};
+  const { task, project, paused } = claimed.json ?? {};
+
+  // ★ 2026-10-18（change: `gate-project-tasks-to-offpeak`）：
+  //   高峰时段（北京时间工作日 9-12 / 14-18）服务端**不认领**。
+  //   这不是错误，是省钱：DeepSeek 的价按执行时间算，排队不花钱。
+  //   ⚠️ 别每轮都刷同一行日志（15s 一条会淹没真正的问题）——只在"说法变了"时打。
+  if (paused) {
+    const line = `⏸ 暂停认领（高峰时段）：${paused.message}`;
+    if (line !== lastPauseLine) {
+      log(line);
+      lastPauseLine = line;
+    }
+    return { didWork: false };
+  }
+
   if (!task) return { didWork: false };   // 空闲是常态
+  lastPauseLine = '';                     // 恢复执行时清掉，下次暂停还能再报一次
 
   log(`认领到 ${task.taskId}（revision ${task.revision}，第 ${task.attempts} 次）`);
   const dshArgs = buildDshArgs(task, project.profile);

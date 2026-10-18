@@ -78,6 +78,7 @@ export const webuiModule: Module<WebuiModuleOptions> = {
         requireAuth,
         staticDist,
         projects: config.projects,
+        projectTasks: config.projectTasks,
         push: push as never,
         vision: vision as never,
       });

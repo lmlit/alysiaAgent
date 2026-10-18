@@ -404,8 +404,85 @@ describe('★ 结果回送原会话（return-project-task-result）', () => {
 // ★ 2026-10-18 真机撞出来的：runner 按项目起服务 ⇒ 新登记的项目**永远没人认领**，
 //   任务一路 queued 且静默（实测 580 秒）。修法：projectId 变可选，服务端挑最老的活。
 // ─────────────────────────────────────────────────────────────
-describe('★ 认领不指定项目（一个 runner 服务所有项目）', () => {
-  it('★ 不带 projectId → 先问"谁有最老的活"，再认领那个项目', async () => {
+// ─────────────────────────────────────────────────────────────
+// ★ 2026-10-18（change: `gate-project-tasks-to-offpeak`）
+//   DeepSeek 的高峰时段（北京时间工作日 9-12 / 14-18）**只排队不执行**。
+//   钱按执行时间算，排队不花；而拒收任务等于让用户与模型都去记时段。
+// ─────────────────────────────────────────────────────────────
+describe('★ 高峰时段不认领（执行窗口）', () => {
+  /**
+   * 用**注入时钟**锁死时刻：2026-10-19 周一 10:15（北京时间）—— 正经的高峰。
+   * ⚠️ 不能靠"跑测试那天恰好是工作日"：周末判定会在高峰之前短路，
+   *    那样这条用例在周日会假通过/假失败。
+   */
+  const MON_PEAK = () => new Date('2026-10-19T02:15:00.000Z'); // = 北京 10:15
+  const MON_OFFPEAK = () => new Date('2026-10-19T04:15:00.000Z'); // = 北京 12:15（午休）
+
+  it('★★ 高峰（周一 10:15）→ 200 + task:null + paused，且**不许**认领', async () => {
+    const h = makeHarness();
+    const app = await buildApp(h.core, { clock: MON_PEAK });
+    const res = await app.inject({ method: 'GET', url: '/api/project-tasks/next' });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.task).toBeNull();
+    expect(body.paused.reason).toBe('peak');
+    expect(body.paused.message).toContain('高峰');
+    expect(body.paused.until).toBe('2026-10-19T04:00:00.000Z'); // 北京 12:00
+    expect(h.mm.claimNextProjectTask, '高峰还去认领了 —— 等于白烧钱').not.toHaveBeenCalled();
+  });
+
+  it('★ 工作日午休（12:15）→ 照常认领（空闲窗口不能把正常链路拦住）', async () => {
+    const h = makeHarness();
+    const app = await buildApp(h.core, { clock: MON_OFFPEAK });
+    const res = await app.inject({ method: 'GET', url: '/api/project-tasks/next' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().task).not.toBeNull();
+    expect(res.json().paused).toBeUndefined();
+    expect(h.mm.claimNextProjectTask).toHaveBeenCalled();
+  });
+
+  it('★ 法定节假日的高峰时刻 → 照常认领（节假日全天算空闲）', async () => {
+    const h = makeHarness();
+    const app = await buildApp(h.core, { clock: MON_PEAK, projectTasks: { holidays: ['2026-10-19'] } });
+    const res = await app.inject({ method: 'GET', url: '/api/project-tasks/next' });
+    expect(res.json().task).not.toBeNull();
+  });
+
+  it('★ 周末的高峰时刻 → 照常认领（按用户规则：周末全天算空闲）', async () => {
+    const h = makeHarness();
+    const app = await buildApp(h.core, { clock: () => new Date('2026-10-24T02:15:00.000Z') }); // 周六 10:15
+    const res = await app.inject({ method: 'GET', url: '/api/project-tasks/next' });
+    expect(res.json().task).not.toBeNull();
+  });
+
+  // 「我的任务为什么不动」是闸门上线后第一个问题 —— 这个端点就是答案
+  it('★ GET /api/project-tasks/window 说清判定依据（含用的配置）', async () => {
+    const h = makeHarness();
+    const app = await buildApp(h.core, {
+      clock: MON_PEAK,
+      projectTasks: { holidays: ['2026-01-01'], peakWindows: [[540, 720]] },
+    });
+    const res = await app.inject({ method: 'GET', url: '/api/project-tasks/window' });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.window.offPeak).toBe(false);
+    expect(body.window.reason).toBe('peak');
+    expect(body.window.until).toBe('2026-10-19T04:00:00.000Z');
+    expect(body.config.peakWindows).toEqual([[540, 720]]);
+    expect(body.config.holidays).toEqual(['2026-01-01']);
+  });
+
+  it('★ 排障用 nowOverride（config）与 clock 等价，且 config 里能看见它在生效', async () => {
+    const h = makeHarness();
+    const app = await buildApp(h.core, {
+      projectTasks: { nowOverride: '2026-10-19T02:15:00.000Z' }, // 周一 10:15
+    });
+    const res = await app.inject({ method: 'GET', url: '/api/project-tasks/next' });
+    expect(res.json().paused?.reason).toBe('peak');
+  });
+});
+
+describe('★ 认领不指定项目（一个 runner 服务所有项目）', () => {  it('★ 不带 projectId → 先问"谁有最老的活"，再认领那个项目', async () => {
     const h = makeHarness({ nextQueuedProject: vi.fn(() => 'alysia-blog') });
     const app = await buildApp(h.core);
     const res = await app.inject({ method: 'GET', url: '/api/project-tasks/next' });

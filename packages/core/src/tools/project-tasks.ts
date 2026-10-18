@@ -19,6 +19,7 @@
 import type { ToolDefinition } from './registry.js';
 import type { ProjectTask, CreateOutcome, SubmitResultInput } from '../memory/stores/ProjectTaskStore.js';
 import { logger } from '../utils/logger.js';
+import { computeTaskWindow, type TaskWindowInput } from '../memory/project-task-window.js';
 
 /**
  * 工具需要的那一小片能力。
@@ -47,6 +48,13 @@ export interface ProjectTaskToolOptions {
    *   不另立布尔位，避免「开关开着但没有项目」这种自相矛盾的状态）。
    */
   projectIds: string[];
+  /**
+   * 执行窗口（★ 2026-10-18，change: `gate-project-tasks-to-offpeak`）。
+   *
+   * 高峰时段提交**不拒绝**，只在回执里告诉她"到点自己会跑" ——
+   * 拒收等于让她记住时段，而排队不花钱、执行才花钱。
+   */
+  taskWindow?: TaskWindowInput;
 }
 
 /** 模型看到的结果文本上限 —— 别把整份文件塞回 prompt（TokenBudget 会先炸） */
@@ -179,12 +187,23 @@ export function createProjectTaskTools(
       }
 
       logger.info(`[ProjectTask] 工具提交：${out.task.taskId}（项目 ${projectId}，会话 ${sessionId ?? '?'}）`);
-      return [
+
+      // ★ 2026-10-18（change: `gate-project-tasks-to-offpeak`）：
+      //   高峰时段提交**不拒绝**（拒收等于让她记住时间），而是告诉她"到点自己会跑"。
+      //   钱按实际执行时间算，排队本身不花。
+      const w = computeTaskWindow(opts.taskWindow);
+      const lines = [
         `已提交：${out.task.taskId}`,
         `项目：${projectId} · 状态：${out.task.status}（等执行端认领）`,
+      ];
+      if (!w.offPeak) {
+        lines.push('', `⏳ ${w.message}`);
+      }
+      lines.push(
         '',
         '它不会立刻做完——之后用 get_project_task 查进展；要改就用 continue_project_task。',
-      ].join('\n');
+      );
+      return lines.join('\n');
     },
   };
 

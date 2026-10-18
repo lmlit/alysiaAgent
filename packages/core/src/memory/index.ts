@@ -14,6 +14,15 @@ export type { LifeEvent, LifeState } from './stores/LifeStore.js';
 //   导出到 barrel 是**必须的**：server 侧只能经 `@alysia/core/memory` 这个入口拿它
 //   （core 的 package.json exports 不暴露深路径）。
 export { ProjectTaskStore } from './stores/ProjectTaskStore.js';
+// ★ 2026-10-18（change: `gate-project-tasks-to-offpeak`）：执行窗口判定
+//   （纯函数；服务端 `/next` 与工具回执共用同一份规则，避免"两处各判一次"）
+export {
+  computeTaskWindow,
+  DEFAULT_PEAK_WINDOWS,
+  type TaskWindow,
+  type TaskWindowInput,
+  type TaskWindowReason,
+} from './project-task-window.js';
 export type {
   ProjectTask,
   ProjectTaskStatus,

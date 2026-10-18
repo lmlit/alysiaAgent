@@ -138,6 +138,7 @@ export class AlysiaCore {
         workspaceDir: this.opts.workspaceDir,
         // ★ 2026-10-17（change: add-project-task-delegation）：空列表 ⇒ 不注册委托工具
         projectIds: this.opts.projectIds ?? [],
+        taskWindow: this.opts.projectTasks,
       })
       .use(commandsModule, { ownerId: this.opts.ownerId })
       .use(pipelineModule, { sampling: this.sampling, ownerId: this.opts.ownerId })

@@ -36,6 +36,7 @@ import { logger } from '@alysia/core';
 import { registerChatRoutes } from './chat.js';
 import { MAX_INGEST_BATCH, validateIngestEvent, normalizeIngestEvent } from '../ingest.js';
 import type { MemoryEvent } from '@alysia/core/memory';
+import { computeTaskWindow } from '@alysia/core/memory';
 import { existsSync, readFileSync, statSync, writeFileSync, unlinkSync, writeFileSync as writeFileSyncForVision } from 'fs';
 import { randomUUID } from 'crypto';
 import { tmpdir } from 'os';
@@ -62,6 +63,21 @@ export interface WebuiAuthOptions {
    */
   projects?: Record<string, { workspace: string; profile: string; publicUrl?: string }>;
   /**
+   * ★ 2026-10-18（change: `gate-project-tasks-to-offpeak`）：执行窗口。
+   * 高峰时段（工作日 9-12 / 14-18，北京时间）**只排队不认领**。
+   */
+  projectTasks?: {
+    holidays?: string[];
+    peakWindows?: Array<[number, number]>;
+    /** 【排障用】把窗口判定固定在这个时刻（ISO）；生产别配 */
+    nowOverride?: string;
+  };
+  /**
+   * 时钟（**测试/排障用**）：可在固定时刻验证执行窗口，不必等到周一上午。
+   * 生产不传 ⇒ 用真实时间。
+   */
+  clock?: () => Date;
+  /**
    * 主动推送通道（`al:push`）。★ 2026-10-18（change: `return-project-task-result`）：
    * 委托任务结束后要**回到原会话告诉她**。缺省 = 无通道（桌面端/无 QQ 时），只记日志不推。
    */
@@ -85,6 +101,16 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
    *    而不是假装受理（否则提交方以为任务排上了，其实没人会跑）。
    */
   const projects = opts.projects ?? {};
+  /** 执行窗口（高峰只排队；缺省=空配置 ⇒ 按默认高峰窗口） */
+  const taskWindowConfig = opts.projectTasks;
+  /** 只在测试/排障时注入；生产走真实时间 */
+  const nowOverride = opts.clock?.();
+
+  /** 当前执行窗口（认领闸门与 `/api/project-tasks/window` 共用，保证两处判断一致） */
+  const currentWindow = () => {
+    const fixed = nowOverride ?? (taskWindowConfig?.nowOverride ? new Date(taskWindowConfig.nowOverride) : undefined);
+    return computeTaskWindow({ ...(taskWindowConfig ?? {}), ...(fixed ? { now: fixed } : {}) });
+  };
   /** 主动推送通道（可能不存在 —— 桌面端/无 QQ 时是空实现） */
   const push = opts.push;
   /** 视觉桥（可能不存在 —— 没配视觉模型时不可用） */
@@ -557,9 +583,41 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
    *   但先注册能少一个「为什么 /next 被当成 id」的排查。
    * 空闲时返回 `{ ok: true, task: null }` —— **空转是常态，不是错误**。
    */
+  /**
+   * 当前执行窗口（**只读**）。
+   *
+   * ★ 2026-10-18（change: `gate-project-tasks-to-offpeak`）：加了闸门之后，
+   *   第一个问题一定是"我的任务为什么不动"。这个端点就是那个答案 ——
+   *   它把判定依据（原因 / 现在 / 什么时候解禁 / 用的窗口配置）原样吐出来。
+   */
+  app.get('/api/project-tasks/window', async () => {
+    const w = currentWindow();
+    return {
+      ok: true,
+      window: w,
+      config: {
+        peakWindows: taskWindowConfig?.peakWindows ?? null,
+        holidays: taskWindowConfig?.holidays ?? null,
+        nowOverride: taskWindowConfig?.nowOverride ?? null,
+      },
+    };
+  });
+
   app.get('/api/project-tasks/next', async (req, reply) => {
     const q = req.query as { projectId?: unknown } | undefined;
     const asked = typeof q?.projectId === 'string' ? q.projectId : '';
+
+    // ★ 2026-10-18（change: `gate-project-tasks-to-offpeak`）：
+    //   **高峰时段不认领**。任务留在 queued，等窗口过去再跑 —— 钱按执行时间算，
+    //   排队本身不花；而拒收任务等于让用户和模型都去记时段。
+    const win = currentWindow();
+    if (!win.offPeak) {
+      return {
+        ok: true,
+        task: null,
+        paused: { reason: win.reason, until: win.until, message: win.message },
+      };
+    }
 
     // ★ 2026-10-18（真机撞出来的）：`projectId` 现在**可选**。
     //   起因：runner 按项目起服务（`--project alysia-blog`）⇒ 新登记的项目**永远没人认领**，
