@@ -27,14 +27,37 @@ PORT = int(os.environ.get('PREVIEW_PORT', '3389'))
 
 class Handler(SimpleHTTPRequestHandler):
     def log_message(self, fmt, *args):
-        # 安静：只记 4xx/5xx
-        code = str(args[1]) if len(args) > 1 else ''
+        # 只记 4xx/5xx（正常访问不刷屏），但**必须 flush**：
+        # stderr 被 systemd 重定向到文件时是块缓冲的，不 flush 就"日志里什么都没有"
+        # （2026-10-18 真机踩过：服务明明返回 404，日志一条没写，白查半天）。
+        try:
+            code = str(args[1]) if len(args) > 1 else ''
+        except Exception:
+            code = ''
         if code[:1] in ('4', '5'):
             sys.stderr.write('%s - %s\n' % (self.address_string(), fmt % args))
+            sys.stderr.flush()
 
     def list_directory(self, path):
         self.send_error(404, 'Not Found')
         return None
+
+    def send_head(self):
+        # ★ 便利：`/foo` 不存在但 `/foo.html` 存在 ⇒ **301 过去**。
+        #   真机踩过：手打链接少写 `.html` 得到 404 —— 这种"差一点点"不该是死路。
+        #   （只补 `.html`，不猜别的东西；仍然只会 serve 根目录下的真实文件。）
+        try:
+            target = self.translate_path(self.path)
+            if not os.path.exists(target) and not self.path.endswith('/'):
+                if os.path.isfile(target + '.html'):
+                    self.send_response(301)
+                    self.send_header('Location', self.path + '.html')
+                    self.send_header('Content-Length', '0')
+                    self.end_headers()
+                    return None
+        except Exception:
+            pass  # 兜底逻辑出错就退回标准行为，别把正常请求搞坏
+        return super().send_head()
 
     def translate_path(self, path):
         # 标准库已规范化 `..`（这是防越狱的主防线）。
