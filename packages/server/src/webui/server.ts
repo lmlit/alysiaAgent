@@ -493,6 +493,18 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
     } catch (err: any) {
       logger.warn(`[project-task] ${task.taskId} 通知措辞生成异常：${err?.message ?? err}`);
     }
+    // ★ 2026-10-18（补）：把**生成的措辞**记进日志（不等推送）。
+    //   理由：部署后要能无副作用地确认"通知像不像她"——不该为了验收真给用户发一条 QQ。
+    if (notice) {
+      logger.info(
+        `[project-task] ${task.taskId} 通知草稿（${notice.length} 字）：${notice.replace(/\n/g, ' ⏎ ')}`,
+      );
+    }
+    if (selfStatement) {
+      logger.info(
+        `[project-task] ${task.taskId} 她自己的话（${selfStatement.length} 字）：${selfStatement.slice(0, 160)}`,
+      );
+    }
 
     try {
       await core.memoryManager.recordProjectTaskResult({
