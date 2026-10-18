@@ -1,5 +1,9 @@
 # Alysia ↔ dsh Alysia 模式打通实施计划
 
+> status: record · updated: 2026-10-17 · audience: ai
+> ⚠️ 时点记录 + **被 `specs/project-tasks/spec.md` §1 引用为"上游计划"**：**不要移动或删除本文件**。
+> 计划本身**已执行完毕**（阶段 A–E 均已落地），现状看 `dsh-adapter` / `project-tasks` 两个 spec。
+
 > **来源**：外部（ChatGPT-6-Astra）草拟，2026-10-17 由用户交给本仓预存。
 > **本文件是原文存档，逐字保留（含原始版本号与措辞），未做技术性修订。**
 > 对它的逐条核查结论见 [`ALYSIA-DSH-BRIDGE-FEASIBILITY.md`](ALYSIA-DSH-BRIDGE-FEASIBILITY.md)。

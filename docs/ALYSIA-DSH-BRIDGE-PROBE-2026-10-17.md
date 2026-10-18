@@ -1,5 +1,8 @@
 # dsh 调用面实测报告（2026-10-17）
 
+> status: record · updated: 2026-10-17 · audience: ai
+> ⚠️ 时点记录 + **被 `specs/dsh-adapter/spec.md` §2.7 引用为证据**：**不要移动或删除本文件**。
+
 > 起因：[`ALYSIA-DSH-BRIDGE-FEASIBILITY.md`](ALYSIA-DSH-BRIDGE-FEASIBILITY.md) 判定
 > 「A05 是本计划唯一真正决定成败的未知项」。本报告就是 A05 的**实测**结果。
 > 全部测试跑在**隔离探测区** `E:\workSpace\alysiaAgent\.probe\`（已加 `.gitignore`），

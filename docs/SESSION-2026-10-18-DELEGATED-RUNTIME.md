@@ -1,5 +1,8 @@
 # 会话归档：委托执行链路（2026-10-18）
 
+> status: record · updated: 2026-10-18 · audience: ai
+> ⚠️ 时点记录：契约在 `openspec/specs/project-tasks/spec.md`；本文只记"怎么走到这里的"。
+
 > 这是一份**记录**，不是契约。契约在 `openspec/specs/project-tasks/spec.md`（§1–§17，76 条）。
 > 保留它的理由：这次会话里的**两次事故、十二个坑**比功能本身更值钱，
 > 而那些坑的判据散落在提交信息里，半年后没人会翻提交信息。
@@ -153,6 +156,41 @@ statement → done（ready）
 10. 她的 `AGENTS.md`/`publish.sh` 源在 gitignored 目录 ⇒ 变更无法 diff
 11. `dsh-console` 测试脆弱（固定 `sleep`，应轮询）
 12. 中途插话/暂停（已登记 backlog，用户决定**先不设计**）
+
+### 四补、当晚真机复核发现的三个结构性问题（2026-10-18 23:0x–23:4x）
+
+> 起因：用户 QQ 实测「让她做个网站」→ 回执给的链接打开是她凌晨做的「月光花园」。
+> 修链接时在服务器上把整条链路跑通看了一遍，撞出下面三条。**链接已修**（change
+> `fix-receipt-link-to-produced-page`），这三条**只登记不改**。
+
+| # | 问题 | 判据（可复现） | 为什么难自己发现 |
+|---|---|---|---|
+| 1 | **阶段白名单会把她的真页面没收** | `sketch` 阶段允许的只有 `drafts/*.html` + `shots/draft-*`；她在 sketch 轮把整页写进根目录 ⇒ 轮末 `rollbackOutOfPhase` 把它移进 `.phases/violations/<r>/`。两次实测：**988 个文件**（含她自己 17 张 shots + `vendor/three.min.js`）、**53 个文件**（含 `island.html` 整页） | 日志只说「阶段外写入 N 处（已移出）」，看起来"没删就行"；但页面从工作区消失了 ⇒ 回执里的地址会 404 |
+| 2 | **闸门判据不区分任务** | `sketch` 只要求「`drafts/` 有 ≥2 个 html 且各有 `shots/draft-*.png`」，读的是**整个工作区**。同一工作区做第二个任务时，上一轮的 `a/b/c.html` 与截图还在 ⇒ **这一轮什么都不做也能过**（10-18 14:28 日志「6 个草图都有截图」就是旧文件）；`review` 的「## 自评」「## 选的」同理 | 判决写的是"通过"，看不出它读的是旧文件 |
+| 3 | **build 类重阶段 1800s 必超时** | `runDsh` 的 `timeoutSec` 默认 1800；海岛那轮 build 卡在 npm 下 three.js + 反复截图，**1801s 被 SIGKILL** ⇒ `mapOutcome` 判 `unknown`（**有意不自动重投**）⇒ 任务永久卡死，只能让用户重开，而重开又从 `intent` 走一遍六阶段（成本 6 倍） | 用户侧只看到"她一直在跑" |
+
+**共同根因**：状态机假设「每个任务都在干净工作区从头做」，实际是**同一个工作区反复做同一类东西** ——
+判据看全工作区文件、白名单按路径不按权限，两边都不带"这一轮"的坐标。
+
+**✅ 2026-10-18 深夜已全部修掉**（change `scope-loop-to-this-round`，契约见
+[`specs/project-tasks` §17 契约 68b/68c/68d](../../openspec/specs/project-tasks/spec.md)）：
+
+| # | 修法 |
+|---|---|
+| 1 | **写权限分层**：`public/**` 是唯一权限边界（只有 `publish` 阶段可写）；`NOTES*.md` / `drafts/` / `shots/` / `vendor/` / 根目录页面**任何阶段都许写**。提前写整页属于过程纪律，杠杆是判据，不是没收文件 |
+| 2 | **判据只看本轮**：`drafts`/`shots`/`builtPages` 按 `mtime ≥ 本轮开始` 过滤；`NOTES.md` 的四节要 `notesMtime ≥ sinceMs` |
+| 3 | **超时按阶段**：`build` 5400s、`sketch` 2400s、`revise` 3600s、`intent/review/statement` 900s；`--timeout` 显式覆盖；超时杀**进程组**（`detached` + `kill(-pid)`），不留孤儿 chromium |
+| 附加 | `.tmp/` 不进快照（工具缓存；原来是每轮上千条"阶段外写入"噪音的来源） |
+
+真机验证：`/advance` 带旧 `notesMtime` ⇒ 原地重试「「## 意图」是上一轮留下的」；
+带新的 ⇒ 正常前进；两个字段都不带 ⇒ 老行为（向后兼容）。
+
+
+**当初的建议**（已按此实现，留档对照）：
+- 判据按**本轮起点**过滤（只算本轮开始后变的草稿/截图/NOTES 节）—— ✅ 用了 `sinceMs` 过滤，没走"移进 prev/"
+- 白名单改按**权限**分层：`public/**` 只有 `publish` 阶段许写，其余是她的工作产物 —— ✅
+- 重阶段超时按阶段给 —— ✅（`build` 5400s）；"超时前先落快照"**没做**（产物已不会被没收，快照意义不大）
+
 
 ---
 

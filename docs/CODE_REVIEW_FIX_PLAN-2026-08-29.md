@@ -1,5 +1,8 @@
 # alysiaAgent 代码审查修复计划（2026-08-29）
 
+> status: record · updated: 2026-10-11 · audience: human
+> ⚠️ 时点记录：P0 三件套已修；未修条目已迁入 `docs/KNOWN-ISSUES.md` 与 `docs/TODO.md`。
+
 > ★ **2026-10-02 注**：文中 `packages/webui` 相关的条目（#27 悬空 import、#30 乱码表情名等）
 > 所述的**文件已随包删除**（change: `remove-packages-webui`）。当时均已修复；本记录保留作历史。
 >

@@ -1,5 +1,8 @@
 # Alysia ↔ dsh 打通计划：可行性核查（2026-10-17）
 
+> status: record · updated: 2026-10-17 · audience: ai
+> ⚠️ 时点记录 + **被活 spec 引用（`specs/dsh-adapter` §2.7 一带）**：**不要移动或删除本文件**。
+
 > 对象：[`ALYSIA-DSH-BRIDGE-PLAN.md`](ALYSIA-DSH-BRIDGE-PLAN.md)（ChatGPT-6-Astra 草拟）。
 > 本文只做**核查与判定**，不改代码、不部署、不连服务器。
 > 核查方式：本仓 spec / KNOWN-ISSUES / HANDOFF 只读比对 + 已安装 dsh 发行版（`E:\dsh\resources\app.asar`）

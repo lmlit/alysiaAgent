@@ -1,5 +1,8 @@
 # WebUI 产品需求文档（PRD）
 
+> status: dead · updated: 2026-10-02 · audience: —
+> ⚠️ **对象已删除**（`packages/webui`），仅作历史参考，不要据此开发。
+
 > ★ **2026-10-02：本文档描述的对象 `packages/webui`（Vue）已整体删除**（change: remove-packages-webui）。
 > 现行前端为 `packages/console`，契约见 `openspec/specs/alysia-console/spec.md`。
 > 本文档保留作**历史参考**（其中的产品需求多数已被 console 承接或不再适用）。

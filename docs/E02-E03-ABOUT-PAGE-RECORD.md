@@ -1,5 +1,8 @@
 # E02 / E03 实验记录：「关于我」页面（2026-10-18）
 
+> status: record · updated: 2026-10-18 · audience: ai
+> ⚠️ 时点记录：一次实验的过程与结论，不是契约（契约在 `openspec/specs/project-tasks/spec.md`）。
+
 > 环境：生产 `alysia-server`（北京 `<server>`）+ 宿主常驻 runner（`alysia-runner`，非 root）。
 > 上游计划：`ALYSIA-DSH-BRIDGE-PLAN.md` 阶段 E。
 

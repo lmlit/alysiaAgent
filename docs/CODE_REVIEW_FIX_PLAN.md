@@ -1,5 +1,8 @@
 # alysiaAgent 代码修复计划
 
+> status: superseded · updated: 2026-07-30 · audience: human
+> ⚠️ 时点记录：**已全部修完**，不是待办。判断现状请看 `docs/TODO.md`。
+
 > 基于 2026-07-30 代码自检报告，按优先级逐一修复。
 > 修复完成时间: 2026-07-30。全部 187 个测试通过。
 
