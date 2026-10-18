@@ -109,6 +109,8 @@ export interface ServerConfig {
     queueDepth?: number;
     /** runner 心跳断多久算它挂了（秒，默认 90） */
     runnerHoleSec?: number;
+    /** ailed/unknown 这类不自己好的活，隔多久再提一次（小时，默认 6） */
+    failedCooldownHours?: number;
   };
 }
 
@@ -271,6 +273,7 @@ export function sanitizeWatchdog(raw: unknown): {
   queueOldestMinutes?: number;
   queueDepth?: number;
   runnerHoleSec?: number;
+  failedCooldownHours?: number;
 } {
   const out: ReturnType<typeof sanitizeWatchdog> = {};
   if (!raw || typeof raw !== 'object') return out;
@@ -282,6 +285,8 @@ export function sanitizeWatchdog(raw: unknown): {
   };
   const interval = num(r.intervalSec, 15, 3600);
   if (interval !== undefined) out.intervalSec = Math.round(interval);
+  const failedCd = num(r.failedCooldownHours, 1, 24 * 7);
+  if (failedCd !== undefined) out.failedCooldownHours = Math.round(failedCd);
   const cooldown = num(r.cooldownMinutes, 1, 24 * 60);
   if (cooldown !== undefined) out.cooldownMinutes = Math.round(cooldown);
   const stuck = num(r.stuckMinutes, 5, 24 * 60);

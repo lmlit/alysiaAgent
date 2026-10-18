@@ -96,13 +96,13 @@ const ACTIVE = new Set(['running', 'queued']);
 /**
  * 算出这一轮有什么不对。
  *
- * @param prevKeys 上一轮已经报过的 key（用来只报**新**出现的失败任务，
- *                 以及给"恢复"留出对比基础）
+ * ⚠️ 这里**不做**"报过就不报"的抑制：那是 `WatchdogService` 的冷却/持久化的职责。
+ * 早先在这里按 `prevKeys` 跳过已报问题，结果它们从 issue 列表里**消失** ⇒
+ * 下一轮被当成"恢复" ⇒ 给用户发了一条假的"好了"（真机踩过）。**问题还在就必须还在列表里。**
  */
 export function evaluateWatchdogFacts(
   input: WatchdogInput,
   thresholds: WatchdogThresholds = DEFAULT_THRESHOLDS,
-  prevKeys: ReadonlySet<string> = new Set<string>(),
 ): WatchdogIssue[] {
   const issues: WatchdogIssue[] = [];
   const { nowMs, tasks } = input;
@@ -123,10 +123,9 @@ export function evaluateWatchdogFacts(
     });
   }
 
-  // ── ② 新的失败/未知：只报"上次之后新出现的" ─────────────────────
+  // ── ② 失败/未知：**每轮都列出来**（去重交给 service 的冷却 + 持久化） ──────
   for (const t of tasks) {
     if (t.status !== 'failed' && t.status !== 'unknown') continue;
-    if (prevKeys.has(`failed:${t.taskId}`)) continue; // 报过就不重复
     issues.push({
       key: `failed:${t.taskId}`,
       level: 'error',
@@ -245,6 +244,30 @@ export interface WatchdogServiceOptions {
   /** 定时器实现（测试注入，避免真定时） */
   setInterval?: (fn: () => void, ms: number) => unknown;
   clearInterval?: (handle: ReturnType<typeof setInterval>) => void;
+  /**
+   * ★ 2026-10-19（真机踩出来的）：**冷却状态必须能跨重启**。
+   *
+   * 第一版把它放在内存里 ⇒ 每重启一次就看门狗"忘了自己说过"，把同一件事重发一遍
+   * （真机一小时内发了 4 条，其中还夹着一条假的"恢复了"——因为上一轮状态是空的）。
+   * 由调用方提供持久化（模块写 `watchdog-state.json`）。
+   */
+  loadState?: () => WatchdogPersistedState | null;
+  saveState?: (state: WatchdogPersistedState) => void;
+  /**
+   * `failed:` / `unknown:` 这类"已经结束但没结果"的活的冷却（默认 6 小时）。
+   * 它们不会自己好，但也不该每半小时提醒一次 —— 那叫骚扰。
+   */
+  failedCooldownMs?: number;
+}
+
+/** 落盘的看门狗状态（跨重启保持一致 —— 不重复、不谎报"恢复"） */
+export interface WatchdogPersistedState {
+  /** key → 上次通知时间（ms） */
+  lastNotified: Record<string, number>;
+  /** 上一轮还在的问题：key → title */
+  prev: Record<string, string>;
+  /** 已经发过恢复通知的 key */
+  recovered: string[];
 }
 
 export class WatchdogService {
@@ -264,6 +287,32 @@ export class WatchdogService {
 
   constructor(opts: WatchdogServiceOptions) {
     this.opts = opts;
+    const restored = opts.loadState?.() ?? null;
+    if (restored) {
+      for (const [k, v] of Object.entries(restored.lastNotified ?? {})) {
+        if (typeof v === 'number') this.lastNotified.set(k, v);
+      }
+      for (const [k, v] of Object.entries(restored.prev ?? {})) {
+        if (typeof v === 'string') this.prev.set(k, v);
+      }
+      for (const k of restored.recovered ?? []) {
+        if (typeof k === 'string') this.recoveredAlready.add(k);
+      }
+    }
+  }
+
+  /** 把当前状态交给调用方落盘（失败不影响判据） */
+  private persist(): void {
+    if (!this.opts.saveState) return;
+    try {
+      this.opts.saveState({
+        lastNotified: Object.fromEntries(this.lastNotified),
+        prev: Object.fromEntries(this.prev),
+        recovered: [...this.recoveredAlready],
+      });
+    } catch {
+      // 落盘失败不能让看门狗停摆：下一轮还会再试
+    }
   }
 
   start(): void {
@@ -291,18 +340,24 @@ export class WatchdogService {
     this.running = true;
     try {
       const input = this.opts.gather();
-      let issues = evaluateWatchdogFacts(input, this.opts.thresholds, new Set<string>(this.prev.keys()));
-      if (this.firstRun) {
+      const isFirst = this.firstRun;
+      let issues = evaluateWatchdogFacts(input, this.opts.thresholds);
+      if (isFirst) {
         // 第一轮：把"刚重启"当成背景事实，不当作警报（见 firstRun 的注释）
         issues = issues.filter(i => i.key !== 'fresh-restart');
         this.firstRun = false;
       }
 
       // 上一轮有、这一轮没了 ⇒ 恢复
+      //
+      // ⚠️ 第一轮**不发恢复**：刚启动时 `prev` 可能是空的或过期的，把"还没扫到"当成
+      //    "好了"会发出假好消息（真机踩过：重启后连发一条"刚才那件事好了：…×5"）。
       const currentKeys = new Set<string>(issues.map(i => i.key as string));
-      const disappeared = [...this.prev.entries()]
-        .filter(([key]) => !currentKeys.has(key))
-        .map(([key, title]) => ({ key, title }));
+      const disappeared = isFirst
+        ? []
+        : [...this.prev.entries()]
+            .filter(([key]) => !currentKeys.has(key))
+            .map(([key, title]) => ({ key, title }));
 
       const plan = planWatchdogNotifications({
         issues,
@@ -311,6 +366,13 @@ export class WatchdogService {
         cooldownMs: this.opts.cooldownMs,
         disappeared,
         recoveredAlready: this.recoveredAlready,
+      });
+      // `failed:` 类问题单独用更长的冷却（它不会自己好，但也不该半小时念一次）
+      const failedCd = this.opts.failedCooldownMs ?? 6 * 60 * 60 * 1000;
+      plan.fresh = plan.fresh.filter(issue => {
+        if (!issue.key.startsWith('failed:')) return true;
+        const last = this.lastNotified.get(issue.key);
+        return last === undefined || input.nowMs - last >= failedCd;
       });
 
       if (plan.fresh.length > 0 || plan.recovered.length > 0) {
@@ -322,6 +384,7 @@ export class WatchdogService {
 
       // 恢复过的 key 从 prev 里清掉，避免"恢复了又出现"时被当成老的
       this.prev = new Map(issues.map(i => [i.key, i.title]));
+      this.persist();
       return { checked: issues.length, fresh: plan.fresh, recovered: plan.recovered };
     } finally {
       this.running = false;

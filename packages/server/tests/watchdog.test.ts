@@ -53,8 +53,7 @@ const base = (over: Partial<WatchdogInput> = {}): WatchdogInput => ({
   ...over,
 })
 
-const keys = (inp: WatchdogInput, prev: string[] = []) =>
-  evaluateWatchdogFacts(inp, DEFAULT_THRESHOLDS, new Set(prev)).map(i => i.key)
+const keys = (inp: WatchdogInput) => evaluateWatchdogFacts(inp, DEFAULT_THRESHOLDS).map(i => i.key)
 
 describe('判据：什么都不该报的时候', () => {
   it('一切正常 ⇒ 零条（不误报）', () => {
@@ -91,15 +90,17 @@ describe('判据①：卡住 / 没人开工', () => {
   })
 })
 
-describe('判据②：新的失败/未知', () => {
-  it('unknown ⇒ 报一次；上一轮报过就不再报', () => {
+describe('判据②：失败/未知', () => {
+  it('unknown ⇒ 每轮都列出来（抑制是 service 的职责，不在这里）', () => {
     const t = task({ status: 'unknown', lastError: 'undici 崩了' })
     const first = evaluateWatchdogFacts(base({ tasks: [t] }), DEFAULT_THRESHOLDS)
     expect(first.map(i => i.key)).toEqual([`failed:${t.taskId}`])
     expect(first[0].detail).toContain('undici 崩了')
 
-    const again = evaluateWatchdogFacts(base({ tasks: [t] }), DEFAULT_THRESHOLDS, new Set([`failed:${t.taskId}`]))
-    expect(again).toEqual([])
+    // ⚠️ 第二轮**仍然列出**：早先在 evaluator 里按"报过就不再报"跳过，
+    //    会让问题从列表消失 ⇒ 被当成"恢复" ⇒ 给用户发一条假的"好了"（真机踩过）。
+    const again = evaluateWatchdogFacts(base({ tasks: [t] }), DEFAULT_THRESHOLDS)
+    expect(again.map(i => i.key)).toEqual([`failed:${t.taskId}`])
   })
 })
 
@@ -274,5 +275,83 @@ describe('★ 第一轮不报"刚重启"（否则每次部署都发假警报）'
     expect(r1.fresh).toEqual([])
     const r2 = await svc.runOnce()
     expect(r2.fresh.map(i => i.key)).toEqual(['fresh-restart'])
+  })
+})
+describe('★ 跨重启不重复通知（真机踩过：一小时发了 4 条）', () => {
+  it('上一轮的状态能恢复：同一个问题重启后不再说', async () => {
+    const persisted = {
+      lastNotified: { 'site-down': NOW - 60_000 },
+      prev: { 'site-down': '站点打不开' },
+      recovered: [],
+    }
+    const sent: unknown[] = []
+    const svc = new WatchdogService({
+      intervalSec: 60,
+      cooldownMs: 30 * 60000,
+      thresholds: DEFAULT_THRESHOLDS,
+      gather: () => base({ site: { ok: false, status: 500, checkedAt: '' } }),
+      notify: async (fresh) => { sent.push(fresh) },
+      log: () => {},
+      loadState: () => persisted,
+    })
+    await svc.runOnce()
+    expect(sent).toEqual([])
+  })
+
+  it('★ 重启后的第一轮不发"恢复"（那时 prev 是过期的，会假报好消息）', async () => {
+    const persisted = {
+      lastNotified: { 'site-down': NOW - 60_000 },
+      prev: { 'site-down': '站点打不开' },
+      recovered: [],
+    }
+    const sent: Array<{ fresh: unknown[]; recovered: unknown[] }> = []
+    const svc = new WatchdogService({
+      intervalSec: 60,
+      cooldownMs: 30 * 60000,
+      thresholds: DEFAULT_THRESHOLDS,
+      gather: () => base({ site: { ok: true, status: 200, checkedAt: '' } }),
+      notify: async (fresh, recovered) => { sent.push({ fresh, recovered }) },
+      log: () => {},
+      loadState: () => persisted,
+    })
+    // 第一轮：不发恢复 —— 上一轮的状态是**过期的**，分不清"修好了"还是"刚重启"
+    await svc.runOnce()
+    expect(sent).toEqual([])
+    // 第二轮：上一轮已干净、prev 已重建 ⇒ 也不会冒出"恢复"（宁可不报，也不发假好消息）
+    await svc.runOnce()
+    expect(sent).toEqual([])
+  })
+
+  it('状态在每轮结束后落盘（下一轮/下次启动能接着用）', async () => {
+    const saved: Array<{ lastNotified: Record<string, number> }> = []
+    const svc = new WatchdogService({
+      intervalSec: 60,
+      cooldownMs: 30 * 60000,
+      thresholds: DEFAULT_THRESHOLDS,
+      gather: () => base({ site: { ok: false, status: 500, checkedAt: '' } }),
+      notify: async () => {},
+      log: () => {},
+      saveState: (st) => { saved.push(st as { lastNotified: Record<string, number> }) },
+    })
+    await svc.runOnce()
+    expect(saved).toHaveLength(1)
+    expect(Object.keys(saved[0].lastNotified)).toContain('site-down')
+  })
+
+  it('★ failed 类用更长冷却（默认 6 小时），不会半小时念一次', async () => {
+    const t = task({ status: 'unknown', updatedAt: new Date().toISOString() })
+    const sent: Array<Array<{ key: string }>> = []
+    const svc = new WatchdogService({
+      intervalSec: 60,
+      cooldownMs: 0,
+      failedCooldownMs: 6 * 60 * 60 * 1000,
+      thresholds: DEFAULT_THRESHOLDS,
+      gather: () => base({ tasks: [t] }),
+      notify: async (fresh) => { sent.push(fresh as Array<{ key: string }>) },
+      log: () => {},
+    })
+    await svc.runOnce()
+    await svc.runOnce()
+    expect(sent).toHaveLength(1)
   })
 })

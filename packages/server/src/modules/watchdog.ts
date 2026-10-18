@@ -30,6 +30,7 @@ import {
   WatchdogService,
   type WatchdogInput,
   type WatchdogIssue,
+  type WatchdogPersistedState,
 } from '../watchdog.js';
 
 /** 通知里最多带几条事实（多了就不像"随口说一句"，也吃 QQ 分段） */
@@ -150,12 +151,32 @@ const watchdogModule: Module = {
     };
     const bootsLastHour = registerBoot();
 
+    /** 看门狗状态：跨重启保持"说过什么"，否则每次部署都会把同一件事重发一遍（真机踩过） */
+    const stateFile = `${config.server.dataDir}/watchdog-state.json`;
+    const loadState = (): WatchdogPersistedState | null => {
+      try {
+        return JSON.parse(readFileSync(stateFile, 'utf8')) as WatchdogPersistedState;
+      } catch {
+        return null;
+      }
+    };
+    const saveState = (state: WatchdogPersistedState): void => {
+      try {
+        writeFileSync(stateFile, JSON.stringify(state), 'utf8');
+      } catch (err: any) {
+        ctx.logger.warn(`[Watchdog] 状态写不进 ${stateFile}：${err?.message ?? err}（重启后会重复通知）`);
+      }
+    };
+
     const service = new WatchdogService({
       intervalSec: wd.intervalSec ?? 60,
       cooldownMs: (wd.cooldownMinutes ?? 30) * 60000,
       thresholds,
       gather,
       notify,
+      loadState,
+      saveState,
+      failedCooldownMs: (wd.failedCooldownHours ?? 6) * 60 * 60 * 1000,
       log: (m: string) => logger.info(m),
     });
     ctx.effect(() => {
