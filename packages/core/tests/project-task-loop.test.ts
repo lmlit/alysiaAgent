@@ -226,3 +226,40 @@ describe('状态累积（reducer 语义：只增不清）', () => {
     expect(st.visits.sketch).toBe(2);
   });
 });
+
+// ★ 2026-10-18（change: `scope-loop-to-this-round`）
+//   真机事故：同一工作区做第二个任务时，上一轮写好的「## 自评」「## 选的」「## 哪里像我」
+//   还在 NOTES.md 里 ⇒ review / statement 闸门直接放行（日志写着"通过"，读的却是旧文件）。
+//   现在要求 `notesMtime ≥ sinceMs`：**这一轮的笔记必须是这一轮写的**。
+describe('★★ 判据只看这一轮（上一轮的笔记不算数）', () => {
+  const SINCE = 1_000_000;
+  const STALE = SINCE - 5000; // 上一轮写的
+  const FRESH = SINCE + 5000; // 这一轮写的
+
+  it.each([['intent'], ['review'], ['statement']] as const)(
+    '%s：笔记是上一轮留下的 → 原地重试，且说清原因',
+    (phase) => {
+      const d = run(phase, { notesMtime: STALE, sinceMs: SINCE });
+      expect(d.done).toBe(false);
+      expect(d.next).toBe(phase);
+      expect(d.detail).toContain('上一轮');
+    },
+  );
+
+  it.each([['intent'], ['review'], ['statement']] as const)(
+    '%s：笔记是这一轮写的 → 照常前进（合法路径不许误伤）',
+    (phase) => {
+      const d = run(phase, { notesMtime: FRESH, sinceMs: SINCE });
+      expect(d.detail).not.toContain('上一轮');
+      // ⚠️ `statement` 在 `allowPublish=false` 时本来就**收工**（outcome=ready），
+      //    所以这里不能一律断言 done=false —— 只看"有没有被误判成上一轮"。
+      if (phase !== 'statement') expect(d.done).toBe(false);
+      else expect(d.done && d.outcome === 'ready', 'statement 应正常收工为 ready').toBe(true);
+    },
+  );
+
+  it('两个字段都没给 → 按老行为（不破坏既有调用方 / 老 runner）', () => {
+    const d = run('review');
+    expect(d.next).toBe('build');
+  });
+});

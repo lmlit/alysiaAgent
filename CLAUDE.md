@@ -37,7 +37,10 @@ AI Agent 桌面应用：聊天模式 + 编程模式，搭载"昔涟"人格和记
 ## Current State
 
 **记忆系统核心 + 架构重构 + Feature Flag + AI 主动生活系统 + 模块化内核 + dsh 通道全部完成。**
-测试基线：**965**（常规，含 `dsh-adapter` / `dsh-console`）+ **E2E 5/5**（真实 API）。
+测试基线：**1575**（core 958 / server 371 / dsh-adapter 138 / dsh-console 8 / console 100）
++ **E2E 5/5**（真实 API）。★ 2026-10-19 实测全绿；**基线数字以 `docs/HANDOFF.md` 顶部为准**
+（它会随会话更新，本行只是快照）。⚠️ 跑测试**必须用 Node 24**（`E:\nodejs24\node.exe`），
+PATH 上的 node 是 v20，而 better-sqlite3 是给 24 编的 —— 否则 401 条全挂（`NODE_MODULE_VERSION` 不匹配）。
 ★ 2026-10-02 起**编程模式由 dsh 承接，四层通道（人格 / 记忆读 / 记忆写 / 结算）全通**。
 
 ### Tech Stack
@@ -130,8 +133,8 @@ src/
 ## Next（待做）
 
 > ★ 2026-10-02 重写：原列表**已全部过期**（Web UI 已上线 / Reminder 已持久化 /
-> 流式已接 / Electron 壳已砍）。**真正的待做以 `openspec/specs/index.md` 的 📌 Backlog
-> 与 `docs/KNOWN-ISSUES.md` 为准**，本节只留指针，不再重复维护。
+> 流式已接 / Electron 壳已砍）。★ **2026-10-18 起唯一在办入口是 `docs/TODO.md`**
+> （逐条导航，指向 KI 登记册 / spec Backlog / changes 的权威正文）；本节只留指针。
 
 1. **调召回系数** `tune-recall-with-runtime-data` —— 阻塞已解除（摘要修好 + 存量回填干净），
    但**先积累运行数据再调**，别拍脑袋改系数（部分指标现在还没日志）
@@ -194,9 +197,11 @@ source .env && npx vitest run
 
 ## 设计文档
 - **治理宪法（必读）**: `openspec/project.md` — OpenSpec 流程与对账规则
-- **Spec 索引**: `openspec/specs/index.md`（21 个子系统，新功能实现前先查这里）
+- **Spec 索引**: `openspec/specs/index.md`（**24** 个子系统，新功能实现前先查这里）
 - **Backlog**: `openspec/specs/index.md` 📌 Backlog 节（doc 声明 impl 未接的登记）
-- **总索引**: `docs/README.md`（所有文档入口）
+- **总索引**: `docs/README.md`（所有文档入口 + A–H 分类 + 每篇 status/时效）
+- **待办总表**: `docs/TODO.md`（唯一在办入口；不新建编号，沿用 KI-xx / change 名）
+- **静默失败族**: `docs/SILENT-FAILURE.md`（根因与修复顺序，族内 6 条未清）
 - Web 契约: `docs/Web-API-Design.md`（新增/修改 core 方法必须对照）
 - 部署 SOP: `docs/Docker-Deployment.md`（版本更新流程）
 - 历史归档: `openspec/archive/`（已完成 change + legacy 迁移文档）

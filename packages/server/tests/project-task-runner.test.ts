@@ -7,11 +7,11 @@
 //
 // ⚠️ 真正的**副作用**（spawn dsh、HTTP 轮询）不在这里测 —— 那是真机验收的事。
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, utimesSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 // @ts-expect-error —— 宿主脚本是 .mjs，没有类型声明（故意的：它要能被 node 直跑）
-import { buildDshArgs, buildTaskText, parseRunEvents, mapOutcome, nextUrl, collectFacts, buildPhaseTask, phaseAllowlist, snapshotTree, rollbackOutOfPhase, extractSection } from '../../../scripts/project-task-runner.mjs';
+import { buildDshArgs, buildTaskText, parseRunEvents, mapOutcome, nextUrl, collectFacts, buildPhaseTask, snapshotTree, inspectPhaseWrites, extractSection, timeoutForPhase } from '../../../scripts/project-task-runner.mjs';
 
 const task = {
   taskId: 'pt-1', goal: '做一个关于我页面', acceptanceCriteria: '能构建', revision: 0, dshSessionId: null,
@@ -173,6 +173,47 @@ describe('★ 阶段推进：从工作区读事实', () => {
     expect(f.builtPages).toEqual([]);
   });
 
+  // ★ 2026-10-18（change: `scope-loop-to-this-round`）：同一工作区做第二个任务时，
+  //   上一轮的 drafts / 截图 / 页面不能算这一轮的 —— 否则闸门"什么都不做也能过"。
+  it('★★ 给了 sinceMs ⇒ 只返回这一轮动过的（上一轮的草稿不算）', () => {
+    const root = fixture();
+    const past = (Date.now() - 3600_000) / 1000;
+    // 把 fixture 里的一切都装成"上一轮的"
+    for (const rel of ['NOTES.md', 'drafts/a.html', 'drafts/b.html', 'shots/draft-a.png', 'page.html']) {
+      utimesSync(join(root, rel), past, past);
+    }
+    const since = Date.now() - 60_000;
+    const f = collectFacts(root, since);
+    expect(f.drafts).toEqual([]);
+    expect(f.shots).toEqual([]);
+    expect(f.builtPages).toEqual([]);
+    expect(f.notesMtime, '上一轮的笔记时间戳要能读出来').toBeLessThan(since);
+
+    // 这一轮写了新草稿 + 拍图 + 做了页面
+    writeFileSync(join(root, 'drafts', 'c.html'), '<p>c');
+    writeFileSync(join(root, 'shots', 'draft-c.png'), 'x');
+    writeFileSync(join(root, 'island.html'), '<p>toy');
+    const f2 = collectFacts(root, since);
+    expect(f2.drafts).toEqual(['c.html']);
+    expect(f2.shots).toEqual(['draft-c.png']);
+    expect(f2.builtPages.map((p: { file: string }) => p.file)).toEqual(['island.html']);
+  });
+
+  it('不给 sinceMs ⇒ 老行为（全工作区，兼容单测与旧 runner）', () => {
+    const root = fixture();
+    expect(collectFacts(root).drafts).toEqual(['a.html', 'b.html']);
+  });
+
+  it('★ 超时按阶段给（build 必须比 intent 宽得多）', () => {
+    expect(timeoutForPhase('build')).toBeGreaterThan(timeoutForPhase('intent'));
+    expect(timeoutForPhase('build')).toBeGreaterThanOrEqual(3600);
+    expect(timeoutForPhase('intent')).toBeGreaterThanOrEqual(600);
+    // 显式 --timeout 统一覆盖（排障要能压短）
+    expect(timeoutForPhase('build', 120)).toBe(120);
+    // 未知阶段有兜底
+    expect(timeoutForPhase('something-new')).toBe(1800);
+  });
+
   it('★ 阶段指令拼在任务正文后面，且**不覆盖**原始目标', () => {
     const text = buildPhaseTask(TASK, '第二轮：只画草图');
     expect(text).toContain('做一个页面');   // 原目标还在
@@ -185,61 +226,66 @@ describe('★ 阶段推进：从工作区读事实', () => {
   });
 });
 
-// ★ 2026-10-18 补丁：**阶段外写入**要拦（真机事故：statement 轮她多做了一整页并发布）
-describe('★ 阶段外写入：白名单 + 回滚', () => {
-  it('statement 只许动 NOTES.md（lift.html / public/ 都不许）', () => {
-    const allow = phaseAllowlist('statement');
-    expect(allow.some((re: RegExp) => re.test('NOTES.md'))).toBe(true);
-    expect(allow.some((re: RegExp) => re.test('lift.html'))).toBe(false);
-    expect(allow.some((re: RegExp) => re.test('public/lift.html'))).toBe(false);
+// ★ 2026-10-19（change: `give-her-a-publish-tool`）：**"事后没收"整个废掉了。**
+//
+// 三次真机代价（都记在这条 describe 里，防止以后有人把没收加回来）：
+//   ① sketch 轮她写了整页 ⇒ 988 / 53 个文件被搬走（含 63 张她拍的截图）
+//   ② 我的枚举式白名单漏了 `AGENTS.md`，又在轮次中间改它 ⇒ 她的说明书被搬走，那轮没有 workspace instructions
+//   ③ 她按任务要求**把页面发布进 `public/`** ⇒ 整站 7 个文件被搬走，**站点断了一分钟**
+//
+// 结论：路径白名单不是能力边界（她本来就能 `cp`；真边界是 dsh 的 bwrap 沙箱），
+// 唯一有效的作用是把她的成果弄坏。⇒ 现在**只记账、不搬文件**；上线走 `publish_page` 工具。
+describe('★ 阶段写入：只记账，不搬文件', () => {
+  it('★★ 改了 AGENTS.md / 写了整页 ⇒ 一个文件都不动', () => {
+    const root = mkdtempSync(join(tmpdir(), 'writes-'));
+    writeFileSync(join(root, 'AGENTS.md'), '# 旧说明\n');
+    const before = snapshotTree(root);
+    writeFileSync(join(root, 'AGENTS.md'), '# 旧说明\n\n新加的一节\n');
+    writeFileSync(join(root, 'island.html'), '<p>她提前写的整页');
+    const rb = inspectPhaseWrites(root, before, 'sketch', 1);
+    expect(rb.violations, '工作区里的东西不算"越界"').toEqual([]);
+    expect(rb.moved).toEqual([]);
+    expect(existsSync(join(root, 'AGENTS.md')), '文档被搬走了').toBe(true);
+    expect(existsSync(join(root, 'island.html')), '页面被搬走了').toBe(true);
+    expect(readFileSync(join(root, 'AGENTS.md'), 'utf8')).toContain('新加的一节');
   });
 
-  it('sketch 只许 drafts/ 与 draft-*.png', () => {
-    const allow = phaseAllowlist('sketch');
-    expect(allow.some((re: RegExp) => re.test('drafts/a.html'))).toBe(true);
-    expect(allow.some((re: RegExp) => re.test('shots/draft-a.png'))).toBe(true);
-    expect(allow.some((re: RegExp) => re.test('index.html'))).toBe(false);
+  it('★ `.tmp/` 不进快照（工具缓存，否则每轮上千条噪音）', () => {
+    const root = mkdtempSync(join(tmpdir(), 'skip-tmp-'));
+    mkdirSync(join(root, '.tmp', 'npm-cache'), { recursive: true });
+    writeFileSync(join(root, '.tmp', 'npm-cache', 'x.json'), '{}');
+    writeFileSync(join(root, '.tmp', 'scratch.js'), 'x');
+    writeFileSync(join(root, 'island.html'), '<p>她的页面');
+    const snap = snapshotTree(root);
+    expect(Object.keys(snap)).toEqual(['island.html']);
   });
 
-  it('★ 越界的**新增**被移出工作区（不是删掉：移进 .phases/violations）', () => {
-    const root = mkdtempSync(join(tmpdir(), 'phase-'));
+  it('★ 绕过 publish_page 直接写 public/ ⇒ 记账（不搬），并说清该走工具', () => {
+    const root = mkdtempSync(join(tmpdir(), 'pubtouch-'));
     writeFileSync(join(root, 'NOTES.md'), '## 意图\n原来就有\n');
     const before = snapshotTree(root);
 
-    writeFileSync(join(root, 'NOTES.md'), '## 意图\n原来就有\n## 哪里像我\n像我不说话\n');
-    writeFileSync(join(root, 'lift.html'), '<p>偷偷做的一页');
+    writeFileSync(join(root, 'island.html'), '<p>这一轮做的页面');
     mkdirSync(join(root, 'public'), { recursive: true });
-    writeFileSync(join(root, 'public', 'lift.html'), '<p>偷偷发布');
+    writeFileSync(join(root, 'public', 'island.html'), '<p>她直接 cp 进去的');
 
-    const rb = rollbackOutOfPhase(root, before, 'statement', 6);
-    expect(rb.violations.length).toBe(2);
-    expect(rb.moved.sort()).toEqual(['lift.html', 'public/lift.html']);
-    expect(existsSync(join(root, 'lift.html'))).toBe(false);
-    expect(existsSync(join(root, 'public', 'lift.html'))).toBe(false);
-    // **没销毁**：在隔离区里
-    expect(existsSync(join(root, '.phases', 'violations', 'r6', 'lift.html'))).toBe(true);
-    expect(readFileSync(join(root, 'NOTES.md'), 'utf8')).toContain('哪里像我');
+    const rb = inspectPhaseWrites(root, before, 'statement', 6);
+    expect(rb.violations.length, '只记 public/ 那一处').toBe(1);
+    expect(rb.violations[0]).toContain('public/island.html');
+    expect(rb.moved).toEqual([]);
+    // ★ 关键：**发布出去的东西没被搬走**（上次就是这么把站点弄断的）
+    expect(existsSync(join(root, 'public', 'island.html')), '发布物被搬走了').toBe(true);
+    expect(existsSync(join(root, 'island.html'))).toBe(true);
   });
 
-  it('★ 越界的**改动**也被移出（改过的文件不在原位）', () => {
-    const root = mkdtempSync(join(tmpdir(), 'phase2-'));
-    writeFileSync(join(root, 'NOTES.md'), '## 意图\nA\n');
-    writeFileSync(join(root, 'index.html'), '<p>v1');
+  it('publish 阶段动 public/ 是正常动作 ⇒ 不记账', () => {
+    const root = mkdtempSync(join(tmpdir(), 'pubok-'));
+    mkdirSync(join(root, 'public'), { recursive: true });
     const before = snapshotTree(root);
-    writeFileSync(join(root, 'index.html'), '<p>v2 改了一大截内容');
-    const rb = rollbackOutOfPhase(root, before, 'statement', 2);
-    expect(rb.violations.some((v: string) => v.includes('index.html'))).toBe(true);
-    expect(existsSync(join(root, 'index.html'))).toBe(false);
-  });
-
-  it('全在允许范围内 → 不动任何文件', () => {
-    const root = mkdtempSync(join(tmpdir(), 'phase3-'));
-    writeFileSync(join(root, 'NOTES.md'), 'A\n');
-    const before = snapshotTree(root);
-    writeFileSync(join(root, 'NOTES.md'), 'A\nB\n');
-    const rb = rollbackOutOfPhase(root, before, 'statement', 1);
+    writeFileSync(join(root, 'public', 'island.html'), '<p>发布');
+    const rb = inspectPhaseWrites(root, before, 'publish', 3);
     expect(rb.violations).toEqual([]);
-    expect(existsSync(join(root, 'NOTES.md'))).toBe(true);
+    expect(existsSync(join(root, 'public', 'island.html'))).toBe(true);
   });
 
   it('extractSection 取出「哪里像我」（与服务端同规则）', () => {

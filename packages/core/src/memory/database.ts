@@ -252,6 +252,13 @@ export function initializeDatabase(db: Database.Database): void {
     `ALTER TABLE project_tasks ADD COLUMN phase TEXT NOT NULL DEFAULT 'intent'`);
   addColumnIfMissing(db, 'project_tasks', 'loop_state',
     `ALTER TABLE project_tasks ADD COLUMN loop_state TEXT`);
+  // ★ 2026-10-19（change: `let-tasks-declare-their-kind`）：任务**类型**。
+  //   'build'  = 做一件新东西 ⇒ 走六阶段循环（味道长在来回里）
+  //   'action' = 做一件事（发布 / 核实 / 改一处）⇒ **单轮执行**，做完就交
+  //   起因：真机上一个"只发布"的任务被套上六阶段，在 intent 空转 7 轮（闸门要求写「## 意图」，
+  //   而目标写的是"别改文件"），连调 5 次 publish_page 都成功却被反复打回。
+  addColumnIfMissing(db, 'project_tasks', 'kind',
+    `ALTER TABLE project_tasks ADD COLUMN kind TEXT NOT NULL DEFAULT 'build'`);
 
   // Migration: add memory_config to existing persona table (v2)
   addColumnIfMissing(db, 'persona', 'memory_config',    `ALTER TABLE persona ADD COLUMN memory_config TEXT NOT NULL DEFAULT '{"retention_bias":0.2,"decay_rate":0.3,"importance_threshold":0.4,"recency_weight":0.3,"confirmation_bias":0.3}'`);

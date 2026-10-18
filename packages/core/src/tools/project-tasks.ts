@@ -35,6 +35,8 @@ export interface ProjectTaskHost {
     acceptanceCriteria?: string;
     originSessionId?: string;
     origin?: 'user' | 'delegated';
+    /** ★ 2026-10-19：`build`（六阶段） / `action`（单轮） */
+    kind?: 'build' | 'action';
   }): CreateOutcome;
   getProjectTask(taskId: string): ProjectTask | null;
   addProjectTaskRevision(taskId: string, feedback: string): ProjectTask | null;
@@ -64,7 +66,7 @@ const MAX_RESULT_CHARS = 1200;
 function describeStatus(t: ProjectTask): string {
   switch (t.status) {
     case 'queued':
-      return '已排队，等执行端认领';
+      return '已排队（宿主 runner 会来认领）';
     case 'running':
       return '正在执行';
     case 'needs_review':
@@ -80,7 +82,15 @@ function describeStatus(t: ProjectTask): string {
   }
 }
 
-/** 任务 → 模型可读的一段（不含任何服务器路径/凭据） */
+/**
+ * 任务 → 模型可读的一段（不含任何服务器路径/凭据）。
+ *
+ * ★ 2026-10-18（change: `unify-her-voice-across-engineering`）：
+ *   ① 措辞改第一人称 ——「你那一轮」而不是「执行端」（那一轮是她自己）
+ *   ② **带地址**：`artifacts[].url` 由 runner 从 `publicUrl` 派生（契约 38c），
+ *      以前只给相对路径 ⇒ 用户问"给我链接"时她只能凭空拼 `/p/<项目>/<文件名>`，
+ *      而未发布时那条路是 404。地址由代码给，她只负责原样抄（契约 26）。
+ */
 function renderTask(t: ProjectTask): string {
   const lines = [
     `任务 ${t.taskId}（项目 ${t.projectId}，第 ${t.revision + 1} 轮）`,
@@ -93,14 +103,21 @@ function renderTask(t: ProjectTask): string {
     const paths = artifacts
       .map(a => (a && typeof a === 'object' && 'path' in a ? String((a as { path: unknown }).path) : null))
       .filter((p): p is string => Boolean(p));
-    if (paths.length > 0) lines.push(`产物（相对工作区）：${paths.slice(0, 10).join(', ')}`);
+    if (paths.length > 0) lines.push(`你这一轮做出来的文件（相对工作区）：${paths.slice(0, 10).join(', ')}`);
+
+    // ★ 地址：**只抄不拼**。优先给第一个带 url 的产物（= 本轮那个页面）
+    const url = artifacts
+      .map(a => (a && typeof a === 'object' && 'url' in a ? String((a as { url: unknown }).url ?? '') : ''))
+      .map(u => u.trim())
+      .find(u => u.length > 0);
+    if (url) lines.push(`页面地址（原样转给用户，不要改写）：${url}`);
   }
 
   if (t.result && typeof t.result === 'object' && 'final' in t.result) {
     const final = String((t.result as { final: unknown }).final ?? '');
     if (final) {
       const clipped = final.length > MAX_RESULT_CHARS ? `${final.slice(0, MAX_RESULT_CHARS)}…（已截断）` : final;
-      lines.push('', '执行端最后一段话：', clipped);
+      lines.push('', '你那一轮最后写下的交代：', clipped);
     }
   }
   return lines.join('\n');
@@ -119,7 +136,8 @@ export function createProjectTaskTools(
   const start: ToolDefinition = {
     name: 'start_project_task',
     description:
-      `把一个工程任务交给编码环境（dsh）去执行。只能提交到已登记的项目：${listIds()}。` +
+      `在工程环境里**自己**去做一件事（同一个你，只是换了个干活的场所 —— 不是派人，也不是另一个角色）。` +
+      `只能提交到已登记的项目：${listIds()}。` +
       '提交后**立刻**返回任务 id，不会等它做完；之后用 get_project_task 查进展。' +
       '同一个项目同时只能有一个在途任务——如果它正忙，会返回那个正在跑的任务。',
     parameters: {
@@ -132,11 +150,20 @@ export function createProjectTaskTools(
         },
         goal: {
           type: 'string',
-          description: '要做什么。写目标与边界，**不要**替执行端规定每个实现细节（她会自己决定做法）。',
+          description: '要做什么。写目标与边界，**不要**替那一轮的你规定每个实现细节——到了那边你会自己决定做法。',
         },
         acceptanceCriteria: {
           type: 'string',
-          description: '可验收的标准（例如「能构建通过」「页面能预览」）。执行端会看到它。',
+          description: '可验收的标准（例如「能构建通过」「页面能预览」）。你在那条任务里会看到它。',
+        },
+        kind: {
+          type: 'string',
+          enum: ['build', 'action'],
+          description:
+            '这条任务是什么类型。**build**（默认）= 做一件新东西（新页面/新玩具/重做一版），'
+            + '会走「先想→画草图→自评→做完整版→改一轮→说出哪里像我」的来回；'
+            + '**action** = 做一件事（发布某个页面、核实一个地址、改一处小地方），'
+            + '**单轮做完就交**，不会要求你写意图/草图。选错了只会让你白跑几轮，别乱选。',
         },
       },
       required: ['projectId', 'goal'],
@@ -145,12 +172,13 @@ export function createProjectTaskTools(
       const projectId = typeof args.projectId === 'string' ? args.projectId : '';
       const goal = typeof args.goal === 'string' ? args.goal.trim() : '';
       const acceptanceCriteria = typeof args.acceptanceCriteria === 'string' ? args.acceptanceCriteria.trim() : '';
+      const kind = args.kind === 'action' ? 'action' : 'build';
 
       if (!ids.includes(projectId)) {
         // 不猜、不兜底：说清可选范围（模型下一轮就能改对）
         return `拒绝：未知项目「${projectId || '(空)'}」。已登记的项目只有：${listIds()}`;
       }
-      if (!goal) return '拒绝：goal 不能为空（要做什么必须说清楚，否则执行端只能猜）';
+      if (!goal) return '拒绝：goal 不能为空（要做什么必须说清楚，否则到了那边你只能猜）';
 
       /**
        * 去重键：**同一次调用重试**靠它。
@@ -172,6 +200,8 @@ export function createProjectTaskTools(
         // ★ 是**她**在对话里决定把活交出去的（不是用户在别处下的命令）；
         //   与将来的「定时维护」等自主入口区分开。
         origin: 'delegated',
+        // ★ 2026-10-19：任务类型决定"要不要来回六轮"（详见参数说明）
+        kind,
       });
 
       if (out.kind === 'busy') {
@@ -194,7 +224,7 @@ export function createProjectTaskTools(
       const w = computeTaskWindow(opts.taskWindow);
       const lines = [
         `已提交：${out.task.taskId}`,
-        `项目：${projectId} · 状态：${out.task.status}（等执行端认领）`,
+        `项目：${projectId} · 状态：${out.task.status}（已排队，宿主 runner 会来认领）`,
       ];
       if (!w.offPeak) {
         lines.push('', `⏳ ${w.message}`);
@@ -261,7 +291,7 @@ export function createProjectTaskTools(
       return [
         `已排入第 ${after.revision + 1} 轮：${taskId}`,
         `会在**同一个工程会话**（${after.dshSessionId ?? '待建立'}）里继续，不会重新搭。`,
-        `状态：${after.status}（等执行端认领）`,
+        `状态：${after.status}（已排队，宿主 runner 会来认领）`,
       ].join('\n');
     },
   };

@@ -74,6 +74,15 @@ export interface ProjectTask {
    * - `self`：**她自己**发起的（生活/闲置活动，★ 2026-10-18 `let-her-start-her-own-projects`）
    */
   origin: 'user' | 'delegated' | 'self';
+  /**
+   * ★ 2026-10-19（change: `let-tasks-declare-their-kind`）：任务**类型**。
+   * - `build`：做一件新东西 ⇒ 走六阶段循环（intent…statement/publish）
+   * - `action`：做一件事（发布 / 核实 / 改一处）⇒ **单轮执行**，做完就交
+   *
+   * 为什么需要：真机上"只发布 island.html"这种任务被套上六阶段，在 `intent` 空转 7 轮
+   * （闸门要「## 意图」，目标却写"别改文件"），连着 5 次发布成功却被反复打回。
+   */
+  kind: 'build' | 'action';
   goal: string;
   acceptanceCriteria: string;
   /** `null` = 还没有工程会话（首次执行前）——此时**不许**带 `--session-id` */
@@ -112,6 +121,8 @@ export interface CreateInput {
   acceptanceCriteria?: string;
   originSessionId?: string;
   origin?: 'user' | 'delegated' | 'self';
+  /** ★ 2026-10-19：任务类型；缺省 `build`（走六阶段循环） */
+  kind?: 'build' | 'action';
 }
 
 /** runner 回传的结果 */
@@ -148,6 +159,7 @@ function rowToTask(r: Record<string, unknown>): ProjectTask {
     projectId: String(r.project_id),
     originSessionId: String(r.origin_session_id ?? ''),
     origin: (r.origin === 'delegated' || r.origin === 'self' ? r.origin : 'user'),
+    kind: r.kind === 'action' ? 'action' : 'build',
     goal: String(r.goal),
     acceptanceCriteria: String(r.acceptance_criteria ?? ''),
     dshSessionId: typeof r.dsh_session_id === 'string' && r.dsh_session_id !== '' ? r.dsh_session_id : null,
@@ -222,6 +234,7 @@ export class ProjectTaskStore {
       projectId: input.projectId,
       originSessionId: input.originSessionId ?? '',
       origin: input.origin ?? 'user',
+      kind: input.kind === 'action' ? 'action' : 'build',
       goal: input.goal,
       acceptanceCriteria: input.acceptanceCriteria ?? '',
       dshSessionId: null,
@@ -240,10 +253,10 @@ export class ProjectTaskStore {
 
     this.db.prepare(
       `INSERT INTO project_tasks
-         (task_id, request_key, project_id, origin_session_id, origin, goal, acceptance_criteria,
+         (task_id, request_key, project_id, origin_session_id, origin, kind, goal, acceptance_criteria,
           dsh_session_id, status, revision, result, artifacts, attempts, last_error, created_at, updated_at,
           phase, loop_state)
-        VALUES (@taskId, @requestKey, @projectId, @originSessionId, @origin, @goal, @acceptanceCriteria,
+        VALUES (@taskId, @requestKey, @projectId, @originSessionId, @origin, @kind, @goal, @acceptanceCriteria,
                 NULL, @status, @revision, NULL, NULL, @attempts, NULL, @createdAt, @updatedAt,
                 @phase, @loopStateJson)`,
     ).run({

@@ -64,7 +64,12 @@ describe('★ 标记位（少一个就有一条泄漏路径）', () => {
   });
 
   it('★ 正文第一行就标明来源（人/模型一眼看出这是回执）', () => {
-    expect(String(ev().payload.content)).toMatch(/^【工程回执·来自 dsh 执行端】/);
+    // ★ 2026-10-18（change: `unify-her-voice-across-engineering`）：
+    //   用户原话「其实工程也是她自己」—— 首行从「工程回执·来自 dsh 执行端」
+    //   改成「我这次的执行记录」：那一轮就是她本人（dsh 里注入的是她的人格）。
+    //   **归因仍是 engine**（上面那条用例钉着），改的只是称呼。
+    expect(String(ev().payload.content)).toMatch(/^【我这次的执行记录】/);
+    expect(String(ev().payload.content)).not.toContain('执行端');
   });
 
   it('★ 落回的会话就是发起它的那个会话', () => {
@@ -180,6 +185,31 @@ describe('★ 她的口吻：提示词', () => {
     const { system } = buildNoticePrompts({ projectId: 'p', revision: 0, status: 'needs_review' });
     expect(system).toContain('别突然变成另一个人');
   });
+
+  // ★ 2026-10-18（change: `unify-her-voice-across-engineering`）
+  //   用户原话：「虽然她调用的是工程，但**其实工程也是她自己**」。
+  //   真机证据：她那两条通知里写着「工程那边说天空的颜色终于调对了……人家也没敢说做好了」——
+  //   她把自己正在干的事当成别人的汇报。这里把两条禁令钉住。
+  it('★★ 第一人称：那一轮就是你自己（不再说"交给工程环境的活儿"）', () => {
+    const { system } = buildNoticePrompts({ projectId: 'p', revision: 0, status: 'needs_review' });
+    expect(system).toContain('你自己');
+    expect(system).not.toContain('交给工程环境的活儿');
+  });
+
+  it('★★ 两条禁令必须在 system 里（不许说"工程那边/执行端"、不许用"人家"指代那一轮）', () => {
+    const { system } = buildNoticePrompts({ projectId: 'p', revision: 0, status: 'needs_review' });
+    expect(system).toContain('不许说');
+    expect(system).toContain('工程那边');
+    expect(system).toContain('执行端');
+    expect(system).toContain('人家');
+  });
+
+  it('★ 事实段也用第二人称（"你那一轮最后写下的交代"，不是"工程环境那边"）', () => {
+    const { user } = P();
+    expect(user).toContain('你那一轮最后写下的交代');
+    expect(user).not.toContain('工程环境那边');
+    expect(user).toContain('你这一轮做出来的文件');
+  });
 });
 
 describe('★ 她的口吻：收口（finalizeNotice）', () => {
@@ -221,7 +251,11 @@ describe('★ 她的口吻：收口（finalizeNotice）', () => {
 //              **她以为是我命令输出的**」。
 //   旧行为：回执写成 role=assistant，且允许塞入"她的措辞"当正文 ——
 //   两处都在**伪造归属**：那不是她说的，也不是用户说的。
-//   新契约：role=engine + 正文以「工程回执」开头；她的措辞**只用于 QQ 推送**。
+//   新契约：role=engine + 正文以「我这次的执行记录」开头；她的措辞**只用于 QQ 推送**。
+//
+// ★ 2026-10-18（change: `unify-her-voice-across-engineering`）：
+//   用户接着说「**其实工程也是她自己**」⇒ 正文首行不再把她自己说成第三方
+//   （见上「正文第一行就标明来源」那条）；归因**仍然是 engine**，没有退回 assistant。
 describe('★ 归属：回执不是她的话（也不是用户的话）', () => {
   it('★★ 就算传了 notice，也**不许**写进正文（不许替她说话）', () => {
     const e = buildProjectTaskResultEvent({
@@ -231,12 +265,12 @@ describe('★ 归属：回执不是她的话（也不是用户的话）', () => 
     } as never)!;
     const text = String(e.payload.content);
     expect(text, '她的措辞被塞进记忆回执了').not.toContain('页面弄好啦');
-    expect(text).toContain('工程回执');
+    expect(text).toContain('我这次的执行记录');
   });
 
   it('★ 没有 notice 时也是同一副面孔（规格统一，不靠"回落"）', () => {
     const text = String(buildProjectTaskResultEvent(BASE)!.payload.content);
-    expect(text).toContain('工程回执');
+    expect(text).toContain('我这次的执行记录');
     expect(text).toContain('needs_review');
   });
 

@@ -38,6 +38,7 @@ import { MAX_INGEST_BATCH, validateIngestEvent, normalizeIngestEvent } from '../
 import type { MemoryEvent } from '@alysia/core/memory';
 import { computeTaskWindow } from '@alysia/core/memory';
 import { PHASE_PROMPTS, type LoopPhase } from '@alysia/core/memory';
+import { pickPageUrl } from './receipt-url.js';
 import { existsSync, readFileSync, statSync, writeFileSync, unlinkSync, writeFileSync as writeFileSyncForVision } from 'fs';
 import { randomUUID } from 'crypto';
 import { tmpdir } from 'os';
@@ -431,6 +432,23 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
    *
    * 取不到返回 `null`，调用方据此**跳过推送**——宁可不推，也不往错误的 openid 发。
    */
+  /**
+   * ★ 2026-10-19（change: `give-her-a-publish-tool`）：**这次任务能不能上线**。
+   *
+   * 在此之前是全局 `allowPublish` 一把闸刀，造成死锁：`public/` 只在 publish 阶段可写，
+   * 而 `allowPublish: false` ⇒ 她永远走不到 publish 阶段 ⇒ 用户委托"把这个发布出去"
+   * 她一做就是违规、轮末还被没收（真机上把整站搬走过一次）。
+   *
+   * 正确口径：**"她能不能自己决定上线"与"用户让她上线"是两件事。**
+   * - `origin === 'self'`（她自己发起的小项目）⇒ 由配置 `allowPublish` 决定（默认拒）；
+   * - `user` / `delegated`（用户要的）⇒ **允许**。
+   *
+   * 消费者三处：认领响应（runner 透传成 `ALYSIA_ALLOW_PUBLISH` 给 `publish_page` 工具）、
+   * 阶段推进（能不能进 publish 阶段）、回执措辞。
+   */
+  const allowPublishForTask = (t: { origin?: string } | null | undefined): boolean =>
+    t?.origin === 'self' ? taskWindowConfig?.allowPublish === true : true;
+
   const openidOfSession = (sessionId: string): string | null => {
     if (!sessionId.startsWith('qq')) return null;
     const last = sessionId.split(':').pop() ?? '';
@@ -476,6 +494,12 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
     //   这条事件是 `role: 'assistant'` —— 它以**她说过的话**的身份进她的对话史。
     //   所以**先让她自己说一遍**（人格 + 事实），再落库；模型失败才回落模板。
     const publicUrl = projects[task.projectId]?.publicUrl;
+    /**
+     * ★ 2026-10-18（change: `fix-receipt-link-to-produced-page`）：带**本轮产物页**的地址，
+     *   不是项目门牌（契约 38）。真机上用户点门牌看到的是她自己半夜做的「月光花园」。
+     *   runner 上报 `artifacts[{path,published,url}]`（它能读工作区，容器不能）。
+     */
+    const receiptUrl = pickPageUrl(publicUrl, task.artifacts);
     let notice: string | null = null;
     try {
       notice = await core.memoryManager.composeProjectTaskNotice({
@@ -484,7 +508,7 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
         status: task.status,
         summary: final,
         artifacts: Array.isArray(task.artifacts) ? (task.artifacts as unknown[]) : null,
-        publicUrl,
+        publicUrl: receiptUrl,
         // ★ 2026-10-18（补）：通知也要有"她跟这个人怎么说话"的上下文，
         //   否则它是**通用人格**（聊天回复有记忆/最近对话，通知原先没有）。
         originSessionId: task.originSessionId,
@@ -517,9 +541,10 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
         summary: final,
         artifacts: Array.isArray(task.artifacts) ? (task.artifacts as unknown[]) : null,
         // ★ 地址随回执一起给她：真机上用户问过"给我链接"，她答"我没存下地址"
-        publicUrl,
+        // ★ 2026-10-18（fix-receipt-link-to-produced-page）：这里的地址已经是**本轮产物页**
+        publicUrl: receiptUrl,
         // ★ 2026-10-18（attribute-engine-receipts）：**不再**把她的措辞塞进记忆回执。
-        //   记忆里那条是「工程回执」（role=engine），借她的口吻等于伪造归属。
+        //   记忆里那条是「我这次的执行记录」（role=engine），借她的聊天口吻等于伪造归属。
         //   她的措辞只用于下面那一步 **QQ 推送**（那里真的是她在说话）。
       });
     } catch (err: any) {
@@ -544,12 +569,14 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
     // ★ 优先用**她自己的话**（`notice`）；模型失败才用机械模板（干，但诚实）
     let text = notice?.trim() ?? '';
     if (!text) {
+      // ★ 机械回落：措辞也用第一人称（change: `unify-her-voice-across-engineering`）——
+      //   那一轮是她自己做的，"委托任务结束了"会把她自己说成第三方。
       const lines = [
-        `委托任务结束了：${task.projectId} 第 ${task.revision + 1} 轮 → ${task.status}`,
+        `我这一轮跑完了：${task.projectId} 第 ${task.revision + 1} 轮 → ${task.status}`,
       ];
-      if (paths.length > 0) lines.push(`产物：${paths.slice(0, 5).join('、')}`);
+      if (paths.length > 0) lines.push(`做出来的文件：${paths.slice(0, 5).join('、')}`);
       if (final) lines.push('', final.length > 300 ? `${final.slice(0, 300)}…` : final);
-      const url = projects[task.projectId]?.publicUrl;
+      const url = receiptUrl;
       if (url) lines.push('', `外网地址：${url}`);
       text = lines.join('\n');
     }
@@ -600,6 +627,9 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
       acceptanceCriteria: typeof b?.acceptanceCriteria === 'string' ? b.acceptanceCriteria : '',
       originSessionId: typeof b?.originSessionId === 'string' ? b.originSessionId : '',
       origin: b?.origin === 'delegated' ? 'delegated' : 'user',
+      // ★ 2026-10-19（`let-tasks-declare-their-kind`）：'action' = 做一件事（单轮），
+      //   'build' = 做一件新东西（六阶段）。缺省 build，老调用方行为不变。
+      kind: b?.kind === 'action' ? 'action' : 'build',
     });
 
     if (out.kind === 'busy') {
@@ -688,11 +718,27 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
     // 把项目配置**随认领一起下发**：runner 不需要再读一份配置（单一来源）
     // ★ 2026-10-18（make-author-iterate）：连同**这一轮该干什么**一起下发 ——
     //   阶段指令只在这里定义（`PHASE_PROMPTS`），runner 不要在本地再抄一份。
+    // ★ 2026-10-19（`let-tasks-declare-their-kind`）：`action`（做一件事）**不下发阶段指令** ——
+    //   否则她会被"这一轮只做这一件事：写「## 意图」…"带偏（真机就是这样：让她发布，她跑去写意图）。
     const nextPrompt =
-      task.phase && task.phase !== 'done'
-        ? PHASE_PROMPTS[task.phase as Exclude<LoopPhase, 'done'>] ?? ''
-        : '';
-    return { ok: true, task, project, nextPrompt };
+      task.kind === 'action' || !task.phase || task.phase === 'done'
+        ? ''
+        : PHASE_PROMPTS[task.phase as Exclude<LoopPhase, 'done'>] ?? '';
+    /**
+     * ★ 2026-10-19（change: `give-her-a-publish-tool`）：**按任务来源**判"这次能不能上线"。
+     *
+     * 起因是一个死锁：`public/` 只在 publish 阶段可写，而 `allowPublish: false`
+     * ⇒ 她**永远走不到** publish 阶段 ⇒ 用户委托她"把这个发布出去"，她一做就是违规、
+     * 轮末还被没收（真机上把整站搬走过一次）。
+     *
+     * 正确口径：**"她能不能自己决定上线"和"用户让她上线"是两件事。**
+     * - `origin === 'self'`（她自己发起的）⇒ 由配置 `allowPublish` 决定（默认拒）；
+     * - 用户委托（`user` / `delegated`）⇒ **允许**（他要的就是这个）。
+     *
+     * 消费者三处：runner 透传成 `ALYSIA_ALLOW_PUBLISH`（给 `publish_page` 工具）、
+     * 阶段推进（能不能进 publish 阶段）、回执措辞。
+     */
+    return { ok: true, task, project, nextPrompt, allowPublish: allowPublishForTask(task) };
   });
 
   /**
@@ -713,8 +759,14 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
     const f = facts as {
       notes?: unknown; drafts?: unknown; shots?: unknown;
       builtPages?: unknown; published?: unknown;
+      /** ★ 2026-10-18（change: `scope-loop-to-this-round`）：判"这一轮的笔记动了没有" */
+      notesMtime?: unknown; sinceMs?: unknown;
     };
     const asStr = (v: unknown): string => (typeof v === 'string' ? v : '');
+    const asNum = (v: unknown): number | undefined => {
+      const n = typeof v === 'number' ? v : Number(v);
+      return Number.isFinite(n) ? n : undefined;
+    };
     const asArr = (v: unknown): string[] =>
       Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
     const builtPages = Array.isArray(f.builtPages)
@@ -722,6 +774,12 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
           .map(p => ({ file: asStr(p?.file), mtime: Number(p?.mtime ?? 0) }))
           .filter(p => p.file !== '')
       : [];
+    const notesMtime = asNum(f.notesMtime);
+    const sinceMs = asNum(f.sinceMs);
+
+    // ★ 2026-10-19（`give-her-a-publish-tool`）：能不能进 publish 阶段，同样**按任务来源**判
+    const existing = core.memoryManager.getProjectTask(id);
+    if (!existing) return reply.code(404).send({ ok: false, error: `没有这个任务：${id}` });
 
     const out = core.memoryManager.advanceProjectTaskLoop(
       id,
@@ -731,8 +789,11 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
         shots: asArr(f.shots),
         builtPages,
         published: f.published === true,
+        // 两个都缺 ⇒ `advanceLoop` 按老行为处理（不破坏旧调用方）
+        ...(notesMtime !== undefined ? { notesMtime } : {}),
+        ...(sinceMs !== undefined ? { sinceMs } : {}),
       },
-      { allowPublish: taskWindowConfig?.allowPublish === true },
+      { allowPublish: allowPublishForTask(existing) },
     );
     if (!out) return reply.code(404).send({ ok: false, error: `没有这个任务：${id}` });
     logger.info(

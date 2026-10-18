@@ -355,7 +355,10 @@ describe('★ 结果回送原会话（return-project-task-result）', () => {
     expect(arg).not.toHaveProperty('notice');
     expect(arg).toEqual(expect.objectContaining({ taskId: 'pt-1', status: 'needs_review' }));
     const [, text] = h.push.sendProactive.mock.calls[0] as unknown as [string, string];
-    expect(text).toContain('委托任务结束了'); // 推送回落口径：干，但诚实
+    // ★ 2026-10-19（`unify-her-voice-across-engineering`）：回落口径也改第一人称 ——
+    //   「委托任务结束了」把她自己说成第三方；现在是「我这一轮跑完了」。
+    //   仍然"干，但诚实"：机械模板 + 逐字地址。
+    expect(text).toContain('我这一轮跑完了');
     expect(text).toContain('http://example.test:3389/');
   });
 

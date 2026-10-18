@@ -53,15 +53,26 @@ export function initialLoopState(): LoopState {
 export interface LoopFacts {
   /** NOTES.md 全文；空串=没有这个文件 */
   notes: string;
-  /** `drafts/` 下的 .html 文件名 */
+  /** `drafts/` 下的 .html 文件名（★ 只应有**这一轮**动过的，见 `sinceMs`） */
   drafts: string[];
-  /** `shots/` 下的图片文件名 */
+  /** `shots/` 下的图片文件名（同上） */
   shots: string[];
-  /** 工作区根下（不在 drafts/ 里）的 .html：文件名 + mtime(ms) */
+  /** 工作区根下（不在 drafts/ 里）的 .html：文件名 + mtime(ms)（同上） */
   builtPages: Array<{ file: string; mtime: number }>;
   /** 是否已出现在 public/（发布成功） */
   published: boolean;
+  /**
+   * ★ 2026-10-18（change: `scope-loop-to-this-round`）：`NOTES.md` 的 mtime。
+   *
+   * 真机事故：同一工作区做第二个任务时，上一轮写好的「## 自评」「## 选的」还在 ⇒
+   * review 闸门直接放行，**这一轮什么都没做也能推进**。
+   * 有了它就能判"这一轮的笔记动过没有"。
+   */
+  notesMtime?: number;
+  /** 本轮开始时刻（ms）。给了 ⇒ 与 `notesMtime` 配合，判"这节是不是这一轮写的" */
+  sinceMs?: number;
 }
+
 
 export interface LoopDecision {
   /** 下一步该做什么阶段 */
@@ -99,7 +110,10 @@ export const PHASE_PROMPTS: Record<Exclude<LoopPhase, 'done'>, string> = {
   statement:
     '最后：在 NOTES.md 里写「## 哪里像我」一节——**用一句话说这件东西哪里像你**。\n' +
     '说不出来就说明它只是"一个能打开的页面"，那就回去再改，别硬写。',
-  publish: '可以发布了：跑 `./publish.sh`（如果页面不是 index.html/style.css，自己把它复制进 public/），把输出贴出来。',
+  publish:
+    '可以发布了：调用 **`publish_page`** 工具（参数 files 写你要上线的页面，例如 `["island.html"]`；' +
+    '如果这页要当站点首页，再加 `home`）。它会把页面和它引用的 css/js 一起复制进 `public/`，' +
+    '并自己访问一遍确认真的打得开。**不要**手写 cp —— 那不叫发布，也不会被当成发布。',
 };
 
 const MAX_ROUNDS_DEFAULT = 8;
@@ -150,6 +164,20 @@ export interface AdvanceInput {
 export function advanceLoop(input: AdvanceInput): LoopDecision {
   const maxRounds = input.maxRounds ?? MAX_ROUNDS_DEFAULT;
   const notes = input.facts.notes ?? '';
+  /**
+   * ★ 2026-10-18（change: `scope-loop-to-this-round`）：**这一轮动过 NOTES.md 没有**。
+   *
+   * 真机事故：同一工作区做第二个任务时，上一轮写好的「## 自评」「## 选的」「## 哪里像我」
+   * 还在文件里 ⇒ review / statement 闸门直接放行（日志写着"通过"，可它读的是旧文件）。
+   * 现在要求 `notesMtime ≥ sinceMs` —— **这一轮的笔记必须是这一轮写的**。
+   * 两个字段都没给时按老行为（`true`），不破坏既有调用方与单测。
+   */
+  const notesTouchedThisRound = (): boolean => {
+    const since = input.facts.sinceMs;
+    const mt = input.facts.notesMtime;
+    if (!Number.isFinite(since) || !Number.isFinite(mt)) return true;
+    return (mt as number) + 1 >= (since as number); // +1：容 1ms 精度抖动
+  };
   const state: LoopState = {
     ...input.state,
     rounds: (input.state.rounds ?? 0) + 1,
@@ -191,10 +219,30 @@ export function advanceLoop(input: AdvanceInput): LoopDecision {
     );
   }
 
+  /**
+   * ★ 2026-10-19（change: `let-tasks-declare-their-kind`）**防空转**：
+   * 同一个阶段**连续卡住 4 次**（`visits` 含本次）就收工交给人，别烧到 `maxRounds`。
+   *
+   * 真机事故：一个"只发布 island.html"的任务被套上六阶段，闸门要「## 意图」而目标写"别改文件"
+   * ⇒ 在 `intent` **空转 7 轮**（每轮都真跑了 dsh、真调了 `publish_page` 5 次）。
+   * 4 次足够容纳正常来回（草图通常 1~2 轮），又不至于让错误目标烧掉整晚。
+   */
+  const STUCK_LIMIT = 4;
+  if ((state.visits[input.phase] ?? 0) >= STUCK_LIMIT) {
+    return finish(
+      'needs_review',
+      `卡在「${input.phase}」已经 ${state.visits[input.phase]} 次没有前进` +
+        `（${input.facts.notes ? '文件事实不满足闸门' : '没有可读的事实'}）—— 交给人看，别再空转`,
+    );
+  }
+
   switch (input.phase) {
     case 'intent': {
       const intent = section(notes, '意图');
       if (intent.length < 10) return stay('NOTES.md 里还没有「## 意图」（或太短）');
+      if (!notesTouchedThisRound()) {
+        return stay('「## 意图」是上一轮留下的 —— 这一轮还没动过 NOTES.md');
+      }
       return go('sketch', `意图已写（${intent.length} 字）`);
     }
 
@@ -214,6 +262,10 @@ export function advanceLoop(input: AdvanceInput): LoopDecision {
       const critique = section(notes, '自评');
       const chosen = section(notes, '选的').split('\n')[0]?.trim() ?? '';
       if (critique.length < 10) return stay('NOTES.md 里还没有「## 自评」');
+      if (!notesTouchedThisRound()) {
+        // 真机事故：上一轮的自评还在文件里 ⇒ 这一轮什么都没看也能过闸
+        return stay('「## 自评」是上一轮留下的 —— 这一轮还没动过 NOTES.md');
+      }
       if (!chosen) return stay('NOTES.md 里还没有「## 选的」（要写一个草稿名）');
       if (!input.facts.drafts.some(d => d.replace(/\.html$/i, '') === chosen || d === chosen)) {
         return stay(`「## 选的」写的 "${chosen}" 不在 drafts/ 里`);
@@ -254,6 +306,9 @@ export function advanceLoop(input: AdvanceInput): LoopDecision {
     case 'statement': {
       const stmt = section(notes, '哪里像我');
       if (stmt.length < 6) return stay('NOTES.md 里还没有「## 哪里像我」（说不出就别交）');
+      if (!notesTouchedThisRound()) {
+        return stay('「## 哪里像我」是上一轮留下的 —— 这一轮还没动过 NOTES.md');
+      }
       if (!input.allowPublish) {
         return finish('ready', `已经说得出来：${stmt.slice(0, 60)}`);
       }

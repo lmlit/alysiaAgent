@@ -87,7 +87,9 @@ export function buildNoticePrompts(input: {
   const name = input.personaName?.trim() || '昔涟';
 
   const system = [
-    `你叫${name}，正在跟用户说话。刚刚有一件交给工程环境的活儿跑完了一轮，你要**用你自己的口吻**告诉用户结果。`,
+    `你叫${name}，正在跟用户说话。`,
+    '刚刚**你自己**在工程环境里跑完了一轮（同一件事，换了个干活的场所，不是别人替你做）。',
+    '现在用你自己的口吻，把这一轮的结果告诉用户。',
     '',
     '要求：',
     '- 2~3 句，一句话也行；不要列表、不要小标题、不要「回执」这类机器词。',
@@ -96,7 +98,12 @@ export function buildNoticePrompts(input: {
     '- 只说**事实里有的**：不要编造完成情况、不要替用户验收、不要承诺没做的事。',
     '- 如果这一轮其实失败了或结果不明，要如实说，不许粉饰成"做好了"。',
     '- 如果给了访问地址，**把它原样抄一遍**（一个字符都不要改），放在最后。',
-    '- 不要提"委托任务""任务表""状态机"这类内部概念。',
+    '- 不要提"委托任务""任务表""状态机""执行端"这类内部概念。',
+    // ★ 2026-10-18（change: `unify-her-voice-across-engineering`）：
+    //   用户原话「其实工程也是她自己」。这两条禁令是本次修改的**行为要件**：
+    //   那一轮就是她，说成"工程那边/执行端"等于把自己当成别人给自己汇报。
+    '- ⛔ **不许说"工程那边""执行端""系统说"**——那一轮就是你本人，直接说"我做了/我改了/我发现"；',
+    '- ⛔ **不许用"人家"来指代那一轮的你**（那会变成第三个人）。',
     '- **不要描述通知/回执机制本身**（例如"通知已经发出来了""系统告诉我"），直接说结果就好。',
   ].join('\n');
 
@@ -115,10 +122,10 @@ export function buildNoticePrompts(input: {
     `这是第 ${input.revision + 1} 轮`,
     `这一轮的结果状态：${input.status}`,
   );
-  if (paths.length > 0) facts.push(`产出的文件：${paths.slice(0, 8).join('、')}`);
+  if (paths.length > 0) facts.push(`你这一轮做出来的文件：${paths.slice(0, 8).join('、')}`);
   const summary = typeof input.summary === 'string' ? input.summary.trim() : '';
   if (summary) {
-    facts.push('', '工程环境那边最后说的话（可以取材，但要用你自己的语气重说）：', summary.slice(0, 600));
+    facts.push('', '你那一轮最后写下的交代（可以取材，但要用你自己的语气重说）：', summary.slice(0, 600));
   }
   if (input.publicUrl) facts.push('', `访问地址（必须原样抄进你的话里）：${input.publicUrl}`);
 
@@ -172,12 +179,17 @@ export function buildProjectTaskResultEvent(input: ProjectTaskResultInput): Memo
 
   // ★ 2026-10-18（change: `attribute-engine-receipts`）：这条**不是她说的话**。
   //   用户原话：「不如让自己调工程的回复，她以为是我命令输出的」——
-  //   所以正文以「工程回执」开头，把来源摆在第一行，且不再借她的口吻。
+  //   所以正文把**来源**摆在第一行，且不再借她的聊天口吻。
   //   （她的口吻只留给 QQ 推送：那时真的是她在对用户说话。）
+  //
+  // ★ 2026-10-18（change: `unify-her-voice-across-engineering`）：
+  //   用户接着指出「**其实工程也是她自己**」。所以首行从「工程回执·来自 dsh 执行端」
+  //   改成「**我这次的执行记录**」：那一轮就是她本人（dsh 里注入的是她 6375 字人格）。
+  //   归因仍是 `engine`（不是聊天发言），但**不再把她自己说成第三方**。
   const lines: string[] = [
-    `【工程回执·来自 dsh 执行端】项目 ${input.projectId} 第 ${input.revision + 1} 轮已结束：${input.status}。`,
+    `【我这次的执行记录】项目 ${input.projectId} 第 ${input.revision + 1} 轮已结束：${input.status}。`,
   ];
-  if (paths.length > 0) lines.push(`产物：${paths.slice(0, 8).join('、')}`);
+  if (paths.length > 0) lines.push(`我这次做出来的文件：${paths.slice(0, 8).join('、')}`);
 
   const summary = typeof input.summary === 'string' ? input.summary.trim() : '';
   if (summary) {

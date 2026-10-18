@@ -100,13 +100,26 @@ describe('alysia-adapter 插件', () => {
   it('apply 注册 recall_memory 工具(带 output 硬约束)', () => {
     const { ctx, register } = makeMockCtx()
     apply(ctx)
-    expect(register).toHaveBeenCalledTimes(1)
-    const tool = register.mock.calls[0][0]
+    // ★ 2026-10-19（`give-her-a-publish-tool`）：现在注册**两个**工具 ——
+    //   `recall_memory`（查记忆）+ `publish_page`（上线）。顺序固定，后面按名字找。
+    expect(register).toHaveBeenCalledTimes(2)
+    const names = register.mock.calls.map(c => (c[0] as { name: string }).name)
+    expect(names).toEqual(['recall_memory', 'publish_page'])
+    const tool = register.mock.calls[0][0] as {
+      name: string
+      output: { schema: unknown; render: unknown }
+      execute: unknown
+    }
     expect(tool.name).toBe('recall_memory')
     expect(tool.output).toBeDefined()
     expect(typeof tool.output.schema).toBe('object')
     expect(typeof tool.output.render).toBe('function')
     expect(typeof tool.execute).toBe('function')
+    // publish_page 同样受 dsh 的 output 硬约束（没有 output 的定义会被拒）
+    const pub = register.mock.calls[1][0] as { name: string; output: { schema: unknown; render: unknown } }
+    expect(pub.name).toBe('publish_page')
+    expect(typeof pub.output.schema).toBe('object')
+    expect(typeof pub.output.render).toBe('function')
   })
 
   it('apply 监听 session/event 与 session/disposed', () => {

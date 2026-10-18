@@ -21,7 +21,7 @@
  *     --once              只轮询一轮（验收/调试用）
  *     --dry-run           认领但**不执行**，只打印将要跑的命令（不提交结果）
  *     --interval <sec>    轮询间隔（默认 10）
- *     --timeout <sec>     单个任务的执行上限（默认 1800）
+ *     --timeout <sec>     单轮执行上限；**默认按阶段**（见 PHASE_TIMEOUT_SEC），显式给就统一压过
  *     --base <url>        alysia 基址（默认 http://127.0.0.1:6186）
  *
  * ## 契约（与 server 侧对齐，别在这里改口径）
@@ -38,9 +38,8 @@
  */
 
 import { spawn } from 'node:child_process';
-import { readFileSync, readdirSync, statSync, mkdirSync, renameSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import * as path from 'node:path';
 
 // ── 参数 ────────────────────────────────────────────────────────
 
@@ -50,7 +49,12 @@ function parseArgs(argv) {
     base: process.env.ALYSIA_BASE_URL ?? 'http://127.0.0.1:6186',
     token: process.env.ALYSIA_WEBUI_TOKEN ?? '',
     intervalSec: 10,
-    timeoutSec: 1800,
+    /**
+     * 单轮执行上限（秒）。
+     * ★ 2026-10-18（change: `scope-loop-to-this-round`）：默认改为 **null**（= 按阶段取
+     *   `PHASE_TIMEOUT_SEC`），显式 `--timeout N` 才统一压过所有阶段。
+     */
+    timeoutSec: null,
     once: false,
     dryRun: false,
   };
@@ -76,7 +80,7 @@ function printHelp() {
                     传了则只认领该项目的任务（用于隔离/调试）。
   --base <url>      alysia 基址（默认 http://127.0.0.1:6186）
   --interval <sec>  轮询间隔（默认 10）
-  --timeout <sec>   单任务执行上限（默认 1800）
+  --timeout <sec>   单轮执行上限（默认**按阶段**：intent/review/statement 900s、sketch 2400s、revise 3600s、build 5400s；显式给就统一覆盖）
   --once            只轮询一轮
   --dry-run         认领但不执行、不回传（打印将要跑的命令）
 凭据（环境变量）：ALYSIA_WEBUI_TOKEN（调 alysia API）、DEEPSEEK_API_KEY（dsh 跑模型）`);
@@ -126,6 +130,89 @@ export function buildDshArgs(task, profile) {
   return args;
 }
 
+// ── 回执地址：本轮产出的**那个页面**（★ 纯函数）────────────────
+
+/**
+ * `/p/<id>/` → `/w/<id>/`（基站的**只读预览通道**）。
+ *
+ * ★ 2026-10-18（change: `fix-receipt-link-to-produced-page`）：
+ *   契约 38 要求回执带"她刚做的那个页面"，但 `allowPublish` 默认 false ⇒
+ *   多数轮次产物**没进 `public/`**，`/p/<id>/<文件>` 会是 404。
+ *   于是同一份工作区另开一条只读通道 `/w/<id>/`（扩展名白名单，见 `preview-serve.py`），
+ *   让"还没上线"的页面也点得开 —— 而不是靠自动发布绕过 allowPublish（违反契约 62/72）。
+ *
+ * ⚠️ 约定优于配置：`/p/` 与 `/w/` 是同一个基站的两个前缀（`preview-hub.py` 同时生成），
+ *   不在 config 里再加一个 `previewUrl` —— 那要让 `loadConfig()` 多映射一个字段，
+ *   而"新配置段静默丢弃"这个坑本仓踩过两次。
+ *
+ * @returns 预览前缀（形如 `http://host:3389/w/<id>/`）；publicUrl 形状不认识 ⇒ 原样返回
+ */
+export function previewBase(publicUrl) {
+  const u = typeof publicUrl === 'string' ? publicUrl.trim() : '';
+  if (!u) return '';
+  const m = /^(.*)\/p\/([^/]+)\/?$/.exec(u);
+  return m ? `${m[1]}/w/${m[2]}/` : u;
+}
+
+/**
+ * 本轮产出的页面（工作区**根目录**的 `*.html`，`mtime ≥ sinceMs`，最新优先）。
+ *
+ * 判据为什么是 mtime 而不是"她说的"：契约 68 —— 判据取文件事实，不取自述。
+ * 为什么不递归 `drafts/`：草稿是过程物，不是"她做出来的那个页面"（阶段白名单同口径）。
+ *
+ * @param {string} workspace 工作区绝对路径
+ * @param {number} sinceMs   本轮开始时刻（ms）
+ * @param {(rel: string) => boolean} isPublished 该页面是否已在 `public/` 里
+ * @param {(rel: string) => number} mtimeOf      取 mtime（便于单测注入）
+ * @returns {Array<{ path: string, published: boolean }>} 新 → 旧
+ */
+export function artifactPages(workspace, sinceMs, isPublished, mtimeOf) {
+  const out = [];
+  let names = [];
+  try {
+    names = readdirSync(workspace);
+  } catch {
+    return out;
+  }
+  for (const name of names) {
+    if (!/\.html$/i.test(name)) continue;
+    const rel = name;
+    let mt;
+    try {
+      mt = mtimeOf ? mtimeOf(rel) : statSync(join(workspace, rel)).mtimeMs;
+    } catch {
+      continue;
+    }
+    if (!Number.isFinite(mt) || mt + 1 < sinceMs) continue; // +1：容 1ms 精度抖动
+    let published = false;
+    try {
+      published = Boolean(isPublished(rel));
+    } catch {
+      published = false;
+    }
+    out.push({ path: rel, published });
+  }
+  out.sort((a, b) => {
+    // 最新优先；`index.html` 在并列时让位（它是项目门牌的落点，不是"这一件的名字"）
+    if (a.path === 'index.html' && b.path !== 'index.html') return 1;
+    if (b.path === 'index.html' && a.path !== 'index.html') return -1;
+    return 0;
+  });
+  return out;
+}
+
+/**
+ * 页面 → 可点开的地址（已发布走 `/p/`，没发布走 `/w/` 预览；`index.html` = 目录本身）。
+ */
+export function pageUrl(publicUrl, page) {
+  const base = typeof publicUrl === 'string' ? publicUrl.trim() : '';
+  const rel = typeof page?.path === 'string' ? page.path : '';
+  if (!base || !rel) return base;
+  if (/^index\.html$/i.test(rel)) return base;
+  const dir = base.endsWith('/') ? base : `${base}/`;
+  return `${(page.published ? dir : previewBase(base)) + rel}`;
+}
+
 // ── 解析 dsh 的 `--json` 事件流（★ 纯函数）──────────────────────
 
 /**
@@ -171,20 +258,31 @@ export function mapOutcome({ reason, timedOut }) {
 
 // ── 执行 ───────────────────────────────────────────────────────
 
-function runDsh({ workspace, profile, task, timeoutSec }) {
+function runDsh({ workspace, profile, task, timeoutSec, allowPublish }) {
   return new Promise((resolve) => {
     const args = buildDshArgs(task, profile);
     const child = spawn('dsh', args, {
       cwd: workspace,
-      env: process.env,
+      // ★ 2026-10-19（change: `give-her-a-publish-tool`）：把"这次允不允许上线"
+      //   透传给她手上的 `publish_page` 工具（`ALYSIA_ALLOW_PUBLISH=0` ⇒ 工具直接拒绝）。
+      //   来源：服务端在**认领响应**里按任务来源判好（自发起 = 由配置决定；用户委托 = 允许）。
+      env: { ...process.env, ALYSIA_ALLOW_PUBLISH: allowPublish === false ? '0' : '1' },
       stdio: ['ignore', 'pipe', 'pipe'],
+      // ★ 2026-10-18（change: `scope-loop-to-this-round`）：起**独立进程组**，
+      //   超时时整组杀。dsh 会拉起 bwrap/chromium（她自己截图用的），
+      //   只杀父进程会留下孤儿 chrome 吃内存（实测一次 13 个进程、几百 MB）。
+      detached: true,
     });
     let stdout = '';
     let stderr = '';
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill('SIGKILL');
+      try {
+        process.kill(-child.pid, 'SIGKILL');   // 负号 = 整个进程组
+      } catch {
+        child.kill('SIGKILL');                  // 兜底（组已经不存在等）
+      }
     }, timeoutSec * 1000);
 
     child.stdout.on('data', (d) => { stdout += d.toString(); });
@@ -224,8 +322,18 @@ export function nextUrl(project) {
  *
  * ★ 为什么在 runner 这边算：只有它能读宿主上的工作区。
  *   但**判据在服务端**（纯函数 `advanceLoop`）—— 执行端不能自己宣布"我改好了"。
+ *
+ * ★★ 2026-10-18（change: `scope-loop-to-this-round`）：**只报"这一轮动过的"**。
+ *
+ * 真机事故：同一工作区做第二个任务时，上一轮留下的 `drafts/a,b,c.html` 与
+ * `shots/draft-*.png` 还在 ⇒ sketch 闸门「6 个草图都有截图」直接放行，
+ * 于是**这一轮什么都没做也能推进**；`NOTES.md` 的「自评」「选的」同理。
+ *
+ * @param {string} workspace 工作区绝对路径
+ * @param {number} [sinceMs] 本轮开始时刻（ms）。给了 ⇒ 只算 `mtime ≥ sinceMs` 的文件；
+ *                           不给 ⇒ 老行为（全工作区，仅供单测/兼容）
  */
-export function collectFacts(workspace) {
+export function collectFacts(workspace, sinceMs) {
   const read = (p) => {
     try {
       return readFileSync(p, 'utf8');
@@ -235,7 +343,15 @@ export function collectFacts(workspace) {
   };
   const list = (dir, re) => {
     try {
-      return readdirSync(dir).filter((f) => re.test(f)).sort();
+      return readdirSync(dir)
+        .filter((f) => re.test(f))
+        .filter((f) => {
+          if (!Number.isFinite(sinceMs)) return true;
+          const st = stat(join(dir, f));
+          // +1：容 1ms 精度抖动（她可能在开工同一毫秒里落第一个文件）
+          return st ? st.mtimeMs + 1 >= sinceMs : false;
+        })
+        .sort();
     } catch {
       return [];
     }
@@ -248,6 +364,7 @@ export function collectFacts(workspace) {
     }
   };
 
+  const notesStat = stat(join(workspace, 'NOTES.md'));
   const notes = read(join(workspace, 'NOTES.md'));
   const drafts = list(join(workspace, 'drafts'), /\.html$/i);
   const shots = list(join(workspace, 'shots'), /\.(png|jpe?g|webp)$/i);
@@ -257,7 +374,10 @@ export function collectFacts(workspace) {
     for (const f of readdirSync(workspace)) {
       if (!/\.html$/i.test(f)) continue;
       const st = stat(join(workspace, f));
-      if (st) builtPages.push({ file: f, mtime: st.mtimeMs });
+      if (!st) continue;
+      // 同样只认本轮动过的（否则上一轮的页面会让 build 闸门直接放行）
+      if (Number.isFinite(sinceMs) && st.mtimeMs + 1 < sinceMs) continue;
+      builtPages.push({ file: f, mtime: st.mtimeMs });
     }
   } catch {
     /* 工作区都读不到就只能报空 */
@@ -268,38 +388,64 @@ export function collectFacts(workspace) {
   const publishedNames = list(join(workspace, 'public'), /\.html$/i);
   const published = builtPages.some((p) => publishedNames.includes(p.file));
 
-  return { notes, drafts, shots, builtPages, published };
+  return {
+    notes,
+    drafts,
+    shots,
+    builtPages,
+    published,
+    // ★ 这一轮的笔记动过没有（`advanceLoop` 用它挡"上一轮的自评"）
+    notesMtime: notesStat ? notesStat.mtimeMs : 0,
+    ...(Number.isFinite(sinceMs) ? { sinceMs } : {}),
+  };
 }
 
 /**
- * 每个阶段**只许写这些路径**（★ 2026-10-18 补丁）。
+ * ⚠️ 2026-10-19（change: `give-her-a-publish-tool`）：**阶段写路径白名单已删除。**
  *
- * 真机事故：第 6 轮是 `statement`（只该在 NOTES.md 里写一节），她却顺手做了一整页
- * `lift.html` 并发布 —— 越过了 `allowPublish` 的闸门，还花了预算外的钱。
+ * 它原本做的事是"轮末把阶段外写的文件搬进 `.phases/violations/`"。真机三次代价：
+ * 988 / 53 个文件被搬走、`AGENTS.md` 被搬走（那一轮她没有 workspace instructions）、
+ * 她按任务要求发布进 `public/` 导致**整站被搬走、站点断了一分钟**。
+ *
+ * 结论：路径白名单不是能力边界（她本来就能 `cp`；真边界是 dsh 的 bwrap），
+ * 它唯一有效的作用是把她的成果弄坏。⇒ 改成两件事：
+ *   ① 工作区随便写，**不搬任何文件**（`inspectPhaseWrites` 只记账）
+ *   ② "上线"走能力工具 `publish_page`（`packages/dsh-adapter/src/publish-page.ts`）
  */
-export function phaseAllowlist(phase) {
-  switch (phase) {
-    case 'intent':
-    case 'review':
-    case 'statement':
-      return [/^NOTES\.md$/];
-    case 'sketch':
-      return [/^drafts\/.+\.html$/i, /^shots\/draft-.+\.(png|jpe?g|webp)$/i];
-    case 'build':
-    case 'revise':
-      return [
-        /^[^/]+\.(html|css|js|mjs|svg)$/i,
-        /^shots\/revise-\d+\.(png|jpe?g|webp)$/i,
-        /^NOTES\.md$/,
-      ];
-    case 'publish':
-      return [/^public\/.+$/, /^NOTES\.md$/];
-    default:
-      return [/.*/];
-  }
+
+/**
+ * 每个阶段自己的执行上限（秒）。
+ *
+ * ★ 2026-10-18（change: `scope-loop-to-this-round`）：原来全阶段共用 1800s，
+ * 而 build 要 npm 下 three.js + 反复截图 ⇒ **实测 1801s 被 SIGKILL** ⇒ `unknown`（不自动重投）
+ * ⇒ 任务卡死，用户重开又从 `intent` 走一遍六阶段。这不是"执行端不听话"，是**给了必然不够的预算**。
+ * ⚠️ `--timeout` 显式传入时仍然统一覆盖（排障/演示要能压短）。
+ */
+export const PHASE_TIMEOUT_SEC = {
+  intent: 900,
+  review: 900,
+  statement: 900,
+  sketch: 2400,
+  revise: 3600,
+  publish: 1200,
+  build: 5400,
+};
+
+export function timeoutForPhase(phase, forced) {
+  if (Number.isFinite(forced) && forced > 0) return forced; // --timeout 显式压过一切
+  return PHASE_TIMEOUT_SEC[phase] ?? 1800;
 }
 
-const SKIP_DIRS = new Set(['node_modules', '.git', '.phases', 'dist', '.cache']);
+const SKIP_DIRS = new Set([
+  'node_modules',
+  '.git',
+  '.phases',
+  'dist',
+  '.cache',
+  // ★ `.tmp/` 是**工具缓存**（npm-cache、chrome 日志、她的临时脚本）。
+  //   不进快照 ⇒ 不会被判"阶段外写入"，也不会每轮刷出上千条噪音（实测 988 条）。
+  '.tmp',
+]);
 
 /** 快照：相对路径 → `size:mtime`（只判"变没变"，不做内容校验） */
 export function snapshotTree(workspace, rel = '') {
@@ -331,43 +477,73 @@ export function snapshotTree(workspace, rel = '') {
 }
 
 /**
- * 把**阶段外**的改动拦下来（硬拦，但**不销毁**：越界文件移进 `.phases/violations/r<N>/`）。
+ * 读她通过 `publish_page` **工具**发出去的文件（本轮的）。
  *
- * @returns `{ violations: string[], moved: string[] }`
+ * ★ 2026-10-19：工具会往 `<工作区>/.alysia-publish-log.jsonl` 追加 `{at, files}`。
+ * 没有这个标记，回执会把"走正路"也写成"绕过工具直接动了 public/" —— 那是冤枉她。
+ *
+ * @returns `Set<string>`：本轮（`sinceMs` 之后）由工具发布的 `public/` 相对路径
  */
-export function rollbackOutOfPhase(workspace, before, phase, round) {
-  const after = snapshotTree(workspace);
-  const allow = phaseAllowlist(phase);
-  const allowed = (p) => allow.some((re) => re.test(p));
-  const quarantine = join(workspace, '.phases', 'violations', `r${round}`);
-
-  const violations = [];
-  const moved = [];
-  const moveAway = (rel) => {
+export function readPublishLog(workspace, sinceMs = 0) {
+  const out = new Set();
+  let text = '';
+  try {
+    text = readFileSync(join(workspace, '.alysia-publish-log.jsonl'), 'utf8');
+  } catch {
+    return out;
+  }
+  for (const line of text.split('\n')) {
+    const s = line.trim();
+    if (!s) continue;
+    let ev;
     try {
-      mkdirSync(join(quarantine, path.dirname(rel)), { recursive: true });
-      renameSync(join(workspace, rel), join(quarantine, rel));
-      moved.push(rel);
+      ev = JSON.parse(s);
     } catch {
-      /* 移不动就留着，至少记下来 */
+      continue;
     }
-  };
+    const at = Date.parse(String(ev?.at ?? ''));
+    if (!Number.isFinite(at) || at + 1000 < sinceMs) continue;
+    for (const f of Array.isArray(ev?.files) ? ev.files : []) {
+      if (typeof f === 'string' && f) out.add(`public/${f}`);
+    }
+  }
+  return out;
+}
 
-  for (const rel of Object.keys(after)) {
-    if (allowed(rel)) continue;
-    const was = before[rel];
-    if (was === undefined) {
-      violations.push(`新增 ${rel}`);
-      moveAway(rel);
-    } else if (was !== after[rel]) {
-      violations.push(`改动 ${rel}`);
-      moveAway(rel);
+/**
+ * 阶段结束后的**记账**（★ 2026-10-19，change: `give-her-a-publish-tool` 重写）。
+ *
+ * 原名 `rollbackOutOfPhase`：把"阶段外写入"**移出**工作区（`.phases/violations/`，不删）。
+ * 那个机制真机上把她的东西搬走过三次：
+ *   ① sketch 轮她写了整页 ⇒ 988 / 53 个文件被搬走（含 63 张她拍的截图）
+ *   ② 我的枚举式白名单漏了 `AGENTS.md`，又在轮次中间改它 ⇒ 她的说明书被搬走，那一轮没有 workspace instructions
+ *   ③ 她按任务要求**把页面发布进 `public/`** ⇒ **整站 7 个文件被搬走，站点断了一分钟**
+ *
+ * 结论：路径白名单不是能力边界（她本来就能 `cp` 进 `public/`；真边界是 dsh 的 bwrap 沙箱），
+ * 它唯一有效的作用是**把她的成果弄坏**。⇒ 现在**只记账、不搬文件**：
+ * 唯一值得记的是「`public/` 在非 publish 阶段被动过、且**不是**通过 `publish_page`」——
+ * 那才是"绕过正路直接上线"的痕迹。
+ *
+ * @param explained 经由工具发布的文件（`readPublishLog` 的结果）—— 从账单里排除，别冤枉她
+ * @returns `{ violations: string[], moved: [] }`（`moved` 恒空，保留字段避免改回执渲染）
+ */
+export function inspectPhaseWrites(workspace, before, phase, round, explained = new Set()) {
+  const after = snapshotTree(workspace);
+  const violations = [];
+  void round;
+
+  const touchedPublic = (rel) => /^public\//.test(rel);
+  if (phase !== 'publish') {
+    for (const rel of Object.keys(after)) {
+      if (!touchedPublic(rel) || explained.has(rel)) continue;
+      if (before[rel] === undefined) violations.push(`新增 ${rel}`);
+      else if (before[rel] !== after[rel]) violations.push(`改动 ${rel}`);
+    }
+    for (const rel of Object.keys(before)) {
+      if (touchedPublic(rel) && !(rel in after) && !explained.has(rel)) violations.push(`删除 ${rel}`);
     }
   }
-  for (const rel of Object.keys(before)) {
-    if (!(rel in after) && !allowed(rel)) violations.push(`删除 ${rel}`);
-  }
-  return { violations, moved };
+  return { violations, moved: [] };
 }
 
 /** 从 NOTES.md 里取某个 `## 小节` 的正文（与服务端同规则，逐行扫） */
@@ -408,7 +584,9 @@ async function tick(cfg, log) {
     log(`认领失败（HTTP ${claimed.status}）：${claimed.json?.error ?? claimed.text?.slice(0, 200)}`);
     return { didWork: false };
   }
-  const { task, project, paused, nextPrompt } = claimed.json ?? {};
+  const claimedBody = claimed.json ?? {};
+  const { task, project, paused, allowPublish } = claimedBody;
+  let nextPrompt = claimedBody.nextPrompt ?? '';
 
   // ★ 2026-10-18（change: `gate-project-tasks-to-offpeak`）：
   //   高峰时段（北京时间工作日 9-12 / 14-18）服务端**不认领**。
@@ -427,7 +605,21 @@ async function tick(cfg, log) {
   lastPauseLine = '';                     // 恢复执行时清掉，下次暂停还能再报一次
 
   log(`认领到 ${task.taskId}（revision ${task.revision}，第 ${task.attempts} 次）`);
-  log(`  阶段：${task.phase ?? '(无)'}${nextPrompt ? '（按阶段推进）' : '（一次性任务）'}`);
+  /**
+   * ★ 2026-10-19（change: `let-tasks-declare-their-kind`）：
+   *   `action`（发布 / 核实 / 改一处）是**做一件事**，不套六阶段循环 —— 单轮跑完就交。
+   *   起因：真机上"只发布 island.html"被套上 intent/sketch/…，在 `intent` **空转 7 轮**
+   *   （闸门要「## 意图」，目标却写"别改文件"），连着 5 次发布成功却被反复打回。
+   */
+  const singleShot = task.kind === 'action';
+  if (singleShot) {
+    log('  类型：action（单轮任务 —— 做完就交，不套六阶段）');
+    // ★ 防御：单轮任务**绝不**拼阶段指令。服务端已经不下发（`nextPrompt` 空），
+    //   这里再挡一次 —— 真机踩过：让她"发布"，她照着 intent 指令跑去写「## 意图」了。
+    nextPrompt = '';
+  } else {
+    log(`  阶段：${task.phase ?? '(无)'}${nextPrompt ? '（按阶段推进）' : '（一次性任务）'}`);
+  }
   log(`  工作区：${project.workspace}`);
 
   if (cfg.dryRun) {
@@ -436,6 +628,14 @@ async function tick(cfg, log) {
   }
 
   // ── 阶段循环（★ 2026-10-18：一次成型不合格，要来回）────────────────────
+  /**
+   * ★ 2026-10-18（change: `fix-receipt-link-to-produced-page`）：回传时要知道
+   *   「本轮从什么时候开始」才能判"哪个页面是这一轮做出来的"。
+   *   放进模块级变量是为了不改 5 处 `submit()` 调用点 —— runner 一次只跑一个任务
+   *   （单并发，契约 5），所以没有并发歧义。
+   */
+  runContext = { workspace: project.workspace, publicUrl: project.publicUrl, sinceMs: Date.now() };
+
   const maxRounds = cfg.loopMaxRounds ?? 8;
   let phasePrompt = nextPrompt ?? '';
   let currentPhase = task.phase ?? 'intent';
@@ -459,7 +659,9 @@ async function tick(cfg, log) {
       workspace: project.workspace,
       profile: project.profile,
       task: { ...runTask, goal: buildPhaseTask(task, phasePrompt) },
-      timeoutSec: cfg.timeoutSec,
+      timeoutSec: timeoutForPhase(currentPhase, cfg.timeoutSec),
+      // 服务端按**任务来源**判好的（自发起=配置决定；用户委托=允许），透传给 publish_page
+      allowPublish: allowPublish !== false,
     });
     const parsed = parseRunEvents(run.stdout);
     const outcome = mapOutcome({ reason: parsed.reason, timedOut: run.timedOut });
@@ -471,10 +673,12 @@ async function tick(cfg, log) {
         (parsed.badLines ? `，NDJSON 坏行 ${parsed.badLines}` : ''),
     );
 
-    // ★ 阶段外写入：硬拦（移到 .phases/violations/，不销毁）
-    const rb = rollbackOutOfPhase(project.workspace, beforeSnapshot, currentPhase, rounds);
+    // ★ 记账（**不搬文件**）：非 publish 阶段动了 `public/` 就记一笔；
+    //   经由 `publish_page` 发出去的那部分**不算**（别冤枉她走正路）
+    const toolPublished = readPublishLog(project.workspace, started);
+    const rb = inspectPhaseWrites(project.workspace, beforeSnapshot, currentPhase, rounds, toolPublished);
     if (rb.violations.length > 0) {
-      const line = `阶段外写入 ${rb.violations.length} 处（已移出：${rb.moved.join(', ') || '（无法移动）'}）`;
+      const line = `直接动了 public/ ${rb.violations.length} 处（没搬走；正常该用 publish_page 工具）：${rb.violations.join('、')}`;
       violationsSeen.push(`第 ${rounds} 轮（${currentPhase}）：${rb.violations.join('；')}`);
       log(`    ⚠️ ${line}`);
     }
@@ -493,8 +697,25 @@ async function tick(cfg, log) {
       });
     }
 
+    // ★ 单轮任务（`kind: 'action'`）：跑完一轮就交，**不进阶段闸门**
+    //   她做完那件事就算完成；不再要求她写「## 意图」/草图（那是"做新东西"的仪式）
+    if (singleShot) {
+      log('    单轮任务完成 —— 直接回传（不判阶段）');
+      return await submit(cfg, log, task, {
+        status: 'needs_review',
+        sessionId,
+        finalText,
+        secs,
+        exitCode: run.code,
+        loopNote: '单轮任务（action）：做完就交，不套六阶段',
+        violations: violationsSeen,
+        selfStatement: extractSection(collectFacts(project.workspace, runContext?.sinceMs).notes, '哪里像我'),
+      });
+    }
+
     // 收集事实 → 让服务端判能不能进下一阶段
-    const facts = collectFacts(project.workspace);
+    // ★ 只报**这一轮**动过的（`runContext.sinceMs`）：上一轮的 drafts / 自评不再算数
+    const facts = collectFacts(project.workspace, runContext?.sinceMs);
     const adv = await api(cfg, 'POST', `/api/project-tasks/${task.taskId}/advance`, { facts });
     if (!adv.ok) {
       log(`    推进失败（HTTP ${adv.status}）：${adv.json?.error ?? adv.text?.slice(0, 160)}`);
@@ -544,17 +765,47 @@ async function tick(cfg, log) {
   }
 }
 
+/** 回传时用到的"本轮上下文"（工作区 / 项目地址 / 起始时刻）；由 `tick()` 在认领后设置 */
+let runContext = null;
+
 /** 回传统一入口（把阶段信息拼进 final，回执里能看见过程） */
 async function submit(cfg, log, task, o) {
   const notes = [];
   if (o.loopNote) notes.push(`[过程] ${o.loopNote}`);
   if (o.violations?.length) {
-    notes.push(
-      `[阶段外写入已移出] ${o.violations.join(' / ')}` +
-        `（放在 .phases/violations/ 里，没删）`,
-    );
+    // ★ 2026-10-19：不再"移出"，只是如实记一笔（文件一个都没动）
+    notes.push(`[绕过 publish_page 直接动了 public/] ${o.violations.join(' / ')}（文件没动，已保留）`);
   }
   const final = [o.finalText ?? '', notes.length ? `\n\n${notes.join('\n')}` : ''].join('').slice(0, 4000);
+
+  /**
+   * ★ 2026-10-18（change: `fix-receipt-link-to-produced-page`）：把**本轮做出来的页面**
+   * 随结果一起回传 —— 服务端在容器里，**看不见宿主工作区**，"哪个是本轮产物"只有这里能判。
+   *
+   * ⚠️ 地址在这一侧拼（runner 从认领响应里拿到的 `publicUrl`，不是模型给的），
+   *   服务端只做**前缀合法性校验**后采用。这样"没发布 ⇒ 走 /w/ 预览"这条规则
+   *   不需要容器知道 `public/<文件>` 在不在。
+   */
+  const artifacts = [];
+  if (runContext?.workspace) {
+    try {
+      const pages = artifactPages(
+        runContext.workspace,
+        runContext.sinceMs ?? 0,
+        rel => existsSync(join(runContext.workspace, 'public', rel)),
+      );
+      for (const p of pages.slice(0, 5)) {
+        artifacts.push({ path: p.path, published: p.published, url: pageUrl(runContext.publicUrl, p) });
+      }
+      if (artifacts.length > 0) {
+        log(`  本轮产物页面：${artifacts.map(a => `${a.path}${a.published ? '' : '（未发布·预览）'}`).join('、')}`);
+        log(`  回执地址：${artifacts[0].url}`);
+      }
+    } catch (err) {
+      log(`  ⚠️ 产物页面探测失败（不影响回传）：${err?.message ?? err}`);
+    }
+  }
+
   const res = await api(cfg, 'POST', `/api/project-tasks/${task.taskId}/result`, {
     status: o.status,
     dshSessionId: o.sessionId ?? undefined,
@@ -564,7 +815,7 @@ async function submit(cfg, log, task, o) {
       exitCode: o.exitCode,
       ...(o.selfStatement ? { selfStatement: o.selfStatement.slice(0, 600) } : {}),
     },
-    artifacts: [],
+    artifacts,
     error: o.error,
   });
   if (!res.ok) {
@@ -589,7 +840,8 @@ async function main() {
   }
 
   log(`runner 启动：project=${cfg.project || '(全部登记项目)'} base=${cfg.base} interval=${cfg.intervalSec}s ` +
-      `timeout=${cfg.timeoutSec}s${cfg.dryRun ? ' [dry-run]' : ''}`);
+      `timeout=${cfg.timeoutSec ? `${cfg.timeoutSec}s（统一覆盖）` : '按阶段（intent/review/statement 900s · sketch 2400s · revise 3600s · build 5400s）'}` +
+      `${cfg.dryRun ? ' [dry-run]' : ''}`);
 
   for (;;) {
     try {

@@ -1464,6 +1464,8 @@ export class MemoryManager {
     acceptanceCriteria?: string;
     originSessionId?: string;
     origin?: 'user' | 'delegated' | 'self';
+    /** ★ 2026-10-19：`build`（做新东西，走六阶段） / `action`（做一件事，单轮） */
+    kind?: 'build' | 'action';
   }): CreateOutcome {
     return this.projectTaskStore.create(input);
   }

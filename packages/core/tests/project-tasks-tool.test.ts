@@ -48,7 +48,8 @@ describe('★ 能力开关', () => {
   it('★ 参数里**没有**任何路径 / profile / dsh 参数（模型不该能指定这些）', () => {
     const start = createProjectTaskTools(makeHost() as never, OPTS)[0];
     const props = Object.keys(start.parameters.properties);
-    expect(props.sort()).toEqual(['acceptanceCriteria', 'goal', 'projectId']);
+    // ★ 2026-10-19：多了 `kind`（build/action）—— 是"什么活"，不是"在哪跑"，不破坏这条边界
+    expect(props.sort()).toEqual(['acceptanceCriteria', 'goal', 'kind', 'projectId']);
     expect(props.join(',')).not.toMatch(/workspace|profile|path|session/i);
   });
 });
@@ -144,6 +145,29 @@ describe('get_project_task', () => {
     const out = await get(host).handler({ taskId: 'pt-1' });
     expect(out).toContain('about.html');
     expect(out).not.toContain('/root/');
+  });
+
+  // ★ 2026-10-18（change: `unify-her-voice-across-engineering`）：
+  //   用户问"给我链接"时她只能凭空猜 `/p/<项目>/<文件名>`（未发布时 404）。
+  //   地址由代码给（runner 从 publicUrl 派生，契约 38c），她只负责原样转给用户。
+  it('★ 有 url 就原样给出「页面地址」（她不用自己拼）', async () => {
+    const url = 'https://hub.test:3389/w/alysia-toys/island.html';
+    const host = makeHost({
+      getProjectTask: () => task({
+        status: 'needs_review',
+        artifacts: [{ path: 'island.html', published: false, url }],
+      }),
+    });
+    const out = await get(host).handler({ taskId: 'pt-1' });
+    expect(out).toContain('页面地址');
+    expect(out).toContain(url);
+    expect(out).toContain('不要改写');
+  });
+
+  it('★ 措辞是第一人称：不再把那一轮说成「执行端」', async () => {
+    const host = makeHost({ getProjectTask: () => task({ status: 'queued' }) });
+    const out = await get(host).handler({ taskId: 'pt-1' });
+    expect(out).not.toContain('执行端');
   });
 });
 

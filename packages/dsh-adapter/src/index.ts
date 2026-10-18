@@ -12,6 +12,7 @@
 import type { Context } from './types.ts'
 import type { AssembleContext, SessionEvent } from './types.ts'
 import { createRecallMemoryTool } from './recall-memory.ts'
+import { createPublishPageTool } from './publish-page.ts'
 import { AlysiaClient } from './alysia-client.ts'
 import { IngestDelivery } from './delivery.ts'
 import { isSubagentSession, sessionIdOf, toAlysiaSessionId, DSH_ORIGIN_FIELD } from './session-id.ts'
@@ -188,6 +189,13 @@ export function apply(ctx: Context, config: Config = {}): void {
 
   // ── 4. recall_memory 工具（实时、按需的准确路径）──
   ctx.effect(() => ctx.tools.register(createRecallMemoryTool(client)), 'alysia-adapter.recall-memory()')
+
+  // ── 4b. publish_page 工具（★ 2026-10-19，change: `give-her-a-publish-tool`）──
+  //   "上线"的唯一正路：复制进 public/ + **自己 HTTP 验一遍**。
+  //   取代"她直接 cp，我们事后没收"那套（真机上把她的整站搬走过两次）。
+  //   ⚠️ 只在**委托运行体**里有意义（那里 cwd 是工作区）；桌面/普通会话里
+  //      findWorkspace() 找不到 `.alysia-project.json` 也不会乱写 —— 它会拒绝。
+  ctx.effect(() => ctx.tools.register(createPublishPageTool()), 'alysia-adapter.publish-page()')
 
   // ── 5. 记忆回传（2026-10-01，change: connect-dsh-alysia-bridge）──
   //   对话 → alysia 记忆库。**写操作的唯一入口是 server 的 POST /api/ingest**：

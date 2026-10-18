@@ -24,6 +24,20 @@ from socketserver import ThreadingMixIn
 ROOT = os.path.realpath(os.environ.get('PREVIEW_ROOT', '/srv/alysia-preview'))
 PORT = int(os.environ.get('PREVIEW_PORT', '3389'))
 
+# ★ 2026-10-18（change: `fix-receipt-link-to-produced-page`）：
+#   `/w/<项目>/` 是**工作区根的只读预览**（`preview-hub.py` 建的符号链接），
+#   用来让"还没发布"的页面也点得开。工作区里同时躺着 NOTES.md（她的过程笔记）、
+#   AGENTS.md（给她的指令）、.alysia-project.json、.tmp/、.phases/（被拦下的越界文件）——
+#   这些**不该出现在公网上**，所以这一层是**白名单**，不是黑名单：
+#   只放行"页面能用到的静态资源"，其余一律 404。
+PREVIEW_PREFIX = '/w/'
+SAFE_EXT = frozenset([
+    '.html', '.htm', '.css', '.js', '.mjs', '.svg', '.png', '.jpg', '.jpeg',
+    '.webp', '.gif', '.ico', '.woff', '.woff2', '.ttf', '.mp3', '.ogg', '.wav',
+])
+# 路径里出现这些段 ⇒ 直接拒（.tmp 里有 npm 缓存与 chrome 日志，.phases 里有被拦下的文件）
+DENY_SEGMENTS = frozenset(['.tmp', '.phases', '.dsh', 'node_modules', '.git'])
+
 
 class Handler(SimpleHTTPRequestHandler):
     def log_message(self, fmt, *args):
@@ -68,7 +82,33 @@ class Handler(SimpleHTTPRequestHandler):
         lex = os.path.abspath(p)
         if not (lex == ROOT or lex.startswith(ROOT + os.sep)):
             return ROOT  # 词法上就出界 ⇒ 落到根（404）
+        # ⚠️ 白名单判在**规范化之后的路径**上（标准库已 unquote 并消掉 `..`），
+        #   否则 `/w/x/%2Etmp/...` 这种编码写法会绕过字面检查。
+        if not self._preview_allowed(lex):
+            return os.path.join(ROOT, '__denied__')  # 不存在 ⇒ 404
         return p
+
+    @staticmethod
+    def _preview_allowed(lex_path):
+        """`/w/<项目>/...` 的白名单（其它前缀不受影响 —— `p/` 是发布区，本来就只放成品）。"""
+        try:
+            rel = os.path.relpath(lex_path, ROOT)
+            parts = [seg for seg in rel.split(os.sep) if seg not in ('', '.')]
+            if not parts or parts[0] != PREVIEW_PREFIX.strip('/'):
+                return True
+            # 至少 `<项目>/<文件>`；只到项目根（目录）⇒ 由 list_directory 统一 404
+            if len(parts) < 3:
+                return True
+            for seg in parts:
+                if seg.startswith('.'):           # 隐藏文件/目录（.tmp/.phases 等）
+                    return False
+                if seg in DENY_SEGMENTS:
+                    return False
+            ext = os.path.splitext(parts[-1])[1].lower()
+            return ext in SAFE_EXT
+        except Exception:
+            return False  # 判不了 ⇒ 拒（白名单的默认方向）
+
 
 
 class Threaded(ThreadingMixIn, HTTPServer):
