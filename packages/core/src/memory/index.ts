@@ -23,6 +23,15 @@ export {
   type TaskWindowInput,
   type TaskWindowReason,
 } from './project-task-window.js';
+// ★ 2026-10-18（change: `let-her-start-her-own-projects`）：她自己发起"做点小东西"的决策纯函数
+export {
+  decideSelfActivity,
+  selfActivityRequestKey,
+  selfActivityAcceptanceCriteria,
+  type SelfActivityDecision,
+  type SelfActivityDecisionInput,
+  type SelfActivitySkipReason,
+} from './self-activity.js';
 export type {
   ProjectTask,
   ProjectTaskStatus,

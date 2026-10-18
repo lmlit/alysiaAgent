@@ -1457,7 +1457,7 @@ export class MemoryManager {
     goal: string;
     acceptanceCriteria?: string;
     originSessionId?: string;
-    origin?: 'user' | 'delegated';
+    origin?: 'user' | 'delegated' | 'self';
   }): CreateOutcome {
     return this.projectTaskStore.create(input);
   }
@@ -1485,6 +1485,85 @@ export class MemoryManager {
    */
   nextQueuedProject(): string | null {
     return this.projectTaskStore.nextQueuedProject();
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // ★ 2026-10-18（change: `let-her-start-her-own-projects`）：
+  //   **她自己发起**做点小东西（生活/闲置活动）。
+  //   决策规则在 `self-activity.ts` 的纯函数里；这里只提供它需要的数据 + 一句"她想做什么"。
+  // ─────────────────────────────────────────────────────────────
+
+  /** 自发起判定需要的现状（一次查完，避免服务里散着查） */
+  projectTaskStats(origin: 'user' | 'delegated' | 'self' = 'self'): {
+    hasActive: boolean;
+    latestAt: string | null;
+  } {
+    return {
+      hasActive: this.projectTaskStore.hasActiveTask(),
+      latestAt: this.projectTaskStore.latestCreatedAtByOrigin(origin),
+    };
+  }
+
+  /** 某来源在 `since` 之后发起了几个（默认数 `self`） */
+  countProjectTasksSince(origin: 'user' | 'delegated' | 'self', sinceIso: string): number {
+    return this.projectTaskStore.countByOriginSince(origin, sinceIso);
+  }
+
+  /**
+   * 让她自己说一句"我想做点什么"（闲置时发起任务前用）。
+   *
+   * ★ 为什么走人格而不是写死模板：这件事的本质是**她想做**，不是系统派活。
+   *   但仍然只给**事实与边界**（能做/不能做的清单），不给"该做得多好多美"。
+   *
+   * ⚠️ 采样**必须带 `max_tokens`**（KI-1：本仓已因缺上限炸过三次）。
+   *
+   * @returns 一句她自己写的小目标；失败返回 `null`（调用方**放弃这次**，不要瞎凑）
+   */
+  async composeSelfActivityIdea(input: {
+    projectId: string;
+    /** 她最近在做的东西（可选，取材用） */
+    recentContext?: string;
+  }): Promise<string | null> {
+    let personaName = '昔涟';
+    try {
+      personaName = this.personaStore.get()?.name || '昔涟';
+    } catch {
+      /* 人设读不到不该挡住 */
+    }
+    const system = [
+      `你叫${personaName}。现在用户不在，你有点空闲，想给自己的工作区里添一个小东西。`,
+      '',
+      '要求：',
+      '- 一两句话，说清**你想做什么**（主题你自己定，比如一个小玩具、一页小东西、一个小工具）。',
+      '- **只做纯静态页面**：不许外链（CDN / 外链字体 / 外部图片 / 外部脚本都不行），图形用内联 SVG 或 CSS。',
+      '- 规模小：一两个小时能做完，别规划一个大站。',
+      '- 不要提"任务""委托""系统"这类词；这是你自己的小念头。',
+      '- 不要写成需求文档；像在自言自语地说"我想做……"。',
+    ].join('\n');
+    const user = [
+      `工作区项目：${input.projectId}`,
+      input.recentContext ? `\n（最近你在忙的：${input.recentContext.slice(0, 400)}）` : '',
+    ].join('\n');
+
+    try {
+      const raw = await this.llmService.complete(system, user, {
+        // ★ 800 而不是 200：真机第一次用 200 时**返回空串** —— reasoning 把预算吃光、
+        //   `content` 为空（就是 KI-1 那个形状：finish=length + 空内容）。
+        //   一句"我想做个小东西"给它 800 才稳。
+        max_tokens: 800,
+        temperature: 0.9,
+      } as Partial<SamplingSlot>);
+      const text = (raw ?? '')
+        .replace(/^```[a-zA-Z]*\s*/g, '')
+        .replace(/```$/g, '')
+        .replace(/^[「“"']([\s\S]*)[」”"']$/, '$1')
+        .trim();
+      if (!text) return null;
+      return text.length > 300 ? `${text.slice(0, 300)}…` : text;
+    } catch (err: any) {
+      logger.warn(`[SelfActivity] 生成"想做什么"失败：${err?.message ?? err}`);
+      return null;
+    }
   }
 
   /** runner 回传结果；不在 `running` 的任务不接受（迟到的回传不许覆盖） */

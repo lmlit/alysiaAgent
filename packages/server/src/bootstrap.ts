@@ -26,6 +26,8 @@ import {
   reminderModule,
   cronModule,
   webuiModule,
+  // ★ 2026-10-18（let-her-start-her-own-projects）：她自己发起"做点小东西"（默认关闭）
+  selfActivityModule,
 } from './modules/index.js';
 import type { RuntimeConfig } from './modules/index.js';
 
@@ -53,7 +55,9 @@ async function main(): Promise<void> {
     .use(reminderModule)
     .use(cronModule)
     // 只传候选路径；「用不用」由 webui 模块判（那里才知道 isDesktop）
-    .use(webuiModule, { consoleDist });
+    .use(webuiModule, { consoleDist })
+    // ★ 她自己找活干（默认关闭；需要在 config.yml 里显式 selfActivity.enabled=true）
+    .use(selfActivityModule);
 
   await host.start();
 

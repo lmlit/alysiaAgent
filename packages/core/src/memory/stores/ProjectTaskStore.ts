@@ -61,7 +61,13 @@ export interface ProjectTask {
   requestKey: string;
   projectId: string;
   originSessionId: string;
-  origin: 'user' | 'delegated';
+  /**
+   * 谁发起的：
+   * - `user`：用户直接要求
+   * - `delegated`：**她**在聊天里决定交出去（`start_project_task`）
+   * - `self`：**她自己**发起的（生活/闲置活动，★ 2026-10-18 `let-her-start-her-own-projects`）
+   */
+  origin: 'user' | 'delegated' | 'self';
   goal: string;
   acceptanceCriteria: string;
   /** `null` = 还没有工程会话（首次执行前）——此时**不许**带 `--session-id` */
@@ -92,7 +98,7 @@ export interface CreateInput {
   goal: string;
   acceptanceCriteria?: string;
   originSessionId?: string;
-  origin?: 'user' | 'delegated';
+  origin?: 'user' | 'delegated' | 'self';
 }
 
 /** runner 回传的结果 */
@@ -128,7 +134,7 @@ function rowToTask(r: Record<string, unknown>): ProjectTask {
     requestKey: String(r.request_key),
     projectId: String(r.project_id),
     originSessionId: String(r.origin_session_id ?? ''),
-    origin: (r.origin === 'delegated' ? 'delegated' : 'user'),
+    origin: (r.origin === 'delegated' || r.origin === 'self' ? r.origin : 'user'),
     goal: String(r.goal),
     acceptanceCriteria: String(r.acceptance_criteria ?? ''),
     dshSessionId: typeof r.dsh_session_id === 'string' && r.dsh_session_id !== '' ? r.dsh_session_id : null,
@@ -244,8 +250,38 @@ export class ProjectTaskStore {
    *
    * 取"最老"而不是"第一个项目"，是为了**不饿死**后登记的项目。
    */
-  nextQueuedProject(): string | null {
+  /**
+   * 某个来源、某个时间点之后发起了几个任务。
+   * ★ 2026-10-18（`let-her-start-her-own-projects`）：用来数"今天她自己做了几个"。
+   */
+  countByOriginSince(origin: 'user' | 'delegated' | 'self', sinceIso: string): number {
     const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM project_tasks WHERE origin = ? AND created_at >= ?`,
+      )
+      .get(origin, sinceIso) as { n?: number } | undefined;
+    return Number(row?.n ?? 0);
+  }
+
+  /** 某个来源最近一次任务的创建时间（没有则 `null`） */
+  latestCreatedAtByOrigin(origin: 'user' | 'delegated' | 'self'): string | null {
+    const row = this.db
+      .prepare(
+        `SELECT created_at FROM project_tasks WHERE origin = ? ORDER BY created_at DESC LIMIT 1`,
+      )
+      .get(origin) as { created_at?: string } | undefined;
+    return row?.created_at ?? null;
+  }
+
+  /** 是否有排队/在跑的任务（跨项目）—— 自发起前要确认没有堆叠 */
+  hasActiveTask(): boolean {
+    const row = this.db
+      .prepare(`SELECT 1 AS x FROM project_tasks WHERE status IN ('queued','running') LIMIT 1`)
+      .get() as { x?: number } | undefined;
+    return row?.x === 1;
+  }
+
+  nextQueuedProject(): string | null {    const row = this.db
       .prepare(
         `SELECT project_id FROM project_tasks
          WHERE status = 'queued'

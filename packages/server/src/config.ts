@@ -65,6 +65,25 @@ export interface ServerConfig {
      */
     nowOverride?: string;
   };
+  /**
+   * ★ 2026-10-18（change: `let-her-start-her-own-projects`）：**她自己**在闲置时发起
+   * 一件小事（做个小页面）。默认**关闭** —— 这是"她自己花钱干活"，必须显式打开。
+   */
+  selfActivity?: {
+    enabled: boolean;
+    /** 在哪个项目里做（留空 = 用登记列表最后一个） */
+    projectId?: string;
+    /** 每天最多几次（默认 1） */
+    dailyCap?: number;
+    /** 用户安静多久后才考虑（默认 6h） */
+    minIdleHours?: number;
+    /** 两次之间至少隔多久（默认 24h） */
+    minGapHours?: number;
+    /** 允许它在任务里自己发布（默认 **false**：她可以决定做什么，上线留给对话里的人） */
+    allowPublish?: boolean;
+    /** 考虑间隔（分钟，默认 30，最小 5） */
+    intervalMinutes?: number;
+  };
   /** ★ 8-10 采样参数统一配置（7 槽位，缺省走 core DEFAULT_SAMPLING floor） */
   sampling?: DeepPartial<SamplingConfig>;
 }
@@ -135,6 +154,8 @@ export function loadConfig(path: string): ServerConfig {
     projects: sanitizeProjects(data.projects),
     // ★ 逐字段挑选：新增配置段**必须**在这里映射，否则就是"配置写了但没人看见"
     projectTasks: sanitizeProjectTasks((data as { projectTasks?: unknown }).projectTasks),
+    // ★ 逐字段挑选（同一个坑）：自发起配置也要显式映射
+    selfActivity: sanitizeSelfActivity((data as { selfActivity?: unknown }).selfActivity),
   };
 }
 
@@ -202,6 +223,47 @@ export function sanitizeProjectTasks(
   }
 
   return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * 自发起配置的清洗（★ change: `let-her-start-her-own-projects`）。
+ *
+ * ⚠️ **默认关闭**：不写 `enabled: true` 就永远不发 —— "她自己花钱干活"必须显式打开。
+ * 数值字段只接受有限正数，形状不对就**回落默认**（否则配个 0 会变成"无限次"）。
+ */
+export function sanitizeSelfActivity(
+  raw: unknown,
+): {
+  enabled: boolean;
+  projectId?: string;
+  dailyCap?: number;
+  minIdleHours?: number;
+  minGapHours?: number;
+  allowPublish?: boolean;
+  intervalMinutes?: number;
+} | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const r = raw as Record<string, unknown>;
+  const num = (v: unknown, dflt: number, min: number): number => {
+    const n = typeof v === 'number' ? v : Number.NaN;
+    return Number.isFinite(n) && n >= min ? n : dflt;
+  };
+  const out = {
+    enabled: r.enabled === true,
+    ...(typeof r.projectId === 'string' && r.projectId.trim() ? { projectId: r.projectId.trim() } : {}),
+    dailyCap: num(r.dailyCap, 1, 0),
+    minIdleHours: num(r.minIdleHours, 6, 0),
+    minGapHours: num(r.minGapHours, 24, 0),
+    allowPublish: r.allowPublish === true,
+    intervalMinutes: Math.max(5, num(r.intervalMinutes, 30, 5)),
+  };
+  if (out.enabled) {
+    logger.info(
+      `[Config] selfActivity 已开启：project=${out.projectId ?? '(自动)'} 日上限 ${out.dailyCap} ` +
+        `闲置≥${out.minIdleHours}h 间隔≥${out.minGapHours}h allowPublish=${out.allowPublish}`,
+    );
+  }
+  return out;
 }
 
 function sanitizeProjects(  raw: unknown,
