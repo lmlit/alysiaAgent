@@ -28,6 +28,8 @@
 | [CODE_REVIEW_FIX_PLAN](CODE_REVIEW_FIX_PLAN.md) | 代码自检问题清单与修复记录（2026-07-30） |
 | [CODE_REVIEW_FIX_PLAN-2026-08-29](CODE_REVIEW_FIX_PLAN-2026-08-29.md) | 8-29 全面 CR：P0-P3 共 38 项待修复清单（P0 三件套已修） |
 | [KNOWN-ISSUES](KNOWN-ISSUES.md) | ★ 已知缺陷登记册（**triage 入口，非 spec**；修一条开一个 change） |
+| [PROJECT-TASK-SOP](PROJECT-TASK-SOP.md) | ★ 委托任务 SOP（**人看流程 + 她看规则**：项目分工 / 发布契约 / 加页面 / 部署三条硬规矩 / 7 个坑） |
+| [SESSION-2026-10-18-DELEGATED-RUNTIME](SESSION-2026-10-18-DELEGATED-RUNTIME.md) | ★ 会话归档（委托链路落地全过程：**两次事故 + 十二个坑**、迭代状态机、6 阶段真机轨迹；**非契约**） |
 | [HANDOFF](HANDOFF.md) | ★ 会话转接文档（**2026-10-17 更新**：当前状态 / 验证边界 / KI-20 数据修复记录 / 新踩的坑 / 下一步） |
 
 ## 🗂 快速导航
