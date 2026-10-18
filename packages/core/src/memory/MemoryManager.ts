@@ -1645,6 +1645,10 @@ export class MemoryManager {
     summary?: string;
     artifacts?: unknown[] | null;
     publicUrl?: string;
+    /** ★ 2026-10-18（补）：通知也要有"她跟这个人怎么说话"的上下文 */
+    originSessionId?: string;
+    /** ★ 2026-10-18（补）：她自己写的「哪里像我」 */
+    selfStatement?: string;
   }): Promise<string | null> {
     let personaName: string | undefined;
     try {
@@ -1652,7 +1656,18 @@ export class MemoryManager {
     } catch {
       personaName = undefined; // 人设读不到不该挡住通知
     }
-    const { system, user } = buildNoticePrompts({ ...input, personaName });
+
+    // ★ 与聊天回复同样的上下文：最近对话（24h 窗口，取 10 条足够找回语气）
+    let recentDialogue: string | undefined;
+    if (input.originSessionId) {
+      try {
+        recentDialogue = this.getRecentDialogueBlock(input.originSessionId, 10) || undefined;
+      } catch {
+        recentDialogue = undefined; // 读不到就当没有，别挡住通知
+      }
+    }
+
+    const { system, user } = buildNoticePrompts({ ...input, personaName, recentDialogue });
     try {
       const raw = await this.llmService.complete(system, user, {
         max_tokens: MAX_NOTICE_CHARS * 2,

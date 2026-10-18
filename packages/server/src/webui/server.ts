@@ -461,6 +461,14 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
       task.result && typeof task.result === 'object' && 'final' in task.result
         ? String((task.result as { final: unknown }).final ?? '')
         : '';
+    /**
+     * ★ 2026-10-18（补）：她自己写的「哪里像我」（runner 从 NOTES.md 读出来随结果回传）。
+     * 这是她最有辨识度的文字 —— 以前只被阶段闸门读，人看不到。
+     */
+    const selfStatement =
+      task.result && typeof task.result === 'object' && 'selfStatement' in task.result
+        ? String((task.result as { selfStatement: unknown }).selfStatement ?? '').trim()
+        : '';
 
     // ① 结果入记忆（原会话）
     //
@@ -477,6 +485,10 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
         summary: final,
         artifacts: Array.isArray(task.artifacts) ? (task.artifacts as unknown[]) : null,
         publicUrl,
+        // ★ 2026-10-18（补）：通知也要有"她跟这个人怎么说话"的上下文，
+        //   否则它是**通用人格**（聊天回复有记忆/最近对话，通知原先没有）。
+        originSessionId: task.originSessionId,
+        ...(selfStatement ? { selfStatement } : {}),
       });
     } catch (err: any) {
       logger.warn(`[project-task] ${task.taskId} 通知措辞生成异常：${err?.message ?? err}`);
@@ -528,6 +540,13 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
       const url = projects[task.projectId]?.publicUrl;
       if (url) lines.push('', `外网地址：${url}`);
       text = lines.join('\n');
+    }
+    // ★ 2026-10-18（采纳）：把她自己写的「哪里像我」附在通知末尾 ——
+    //   这一段最能看出她的判断，而原先只有阶段闸门读它，人看不到。
+    //   附**原文**（不走模型改写），保证她的话原样到你手上。
+    if (selfStatement) {
+      const stmt = selfStatement.length > 260 ? `${selfStatement.slice(0, 260)}…` : selfStatement;
+      text = `${text}\n\n她自己的话：${stmt}`;
     }
 
     try {

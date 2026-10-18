@@ -156,6 +156,30 @@ describe('★ 她的口吻：提示词', () => {
     const { system } = buildNoticePrompts({ projectId: 'x', revision: 0, status: 'completed' });
     expect(system).toContain('昔涟');
   });
+
+  // ★ 2026-10-18（补）：通知原先只喂"事实 + 人格名" ⇒ 一直是**通用人格**
+  it('★ 给了最近对话 → 拼进提示词（通知也要有"她跟这个人怎么说话"）', () => {
+    const { user } = buildNoticePrompts({
+      projectId: 'p', revision: 0, status: 'needs_review',
+      recentDialogue: '【最近对话】\n[22:10] 你: 还没睡？\n[22:11] 昔涟: 人家刚把被角收好。',
+    });
+    expect(user).toContain('人家刚把被角收好');
+    expect(user).toContain('最近跟这个人的对话');
+  });
+
+  it('★ 给了「哪里像我」→ 拼进提示词（可取材，但不许照抄整段）', () => {
+    const { user } = buildNoticePrompts({
+      projectId: 'p', revision: 0, status: 'needs_review',
+      selfStatement: '它一句"我在等"都没写，只摆了一栋楼。',
+    });
+    expect(user).toContain('一栋楼');
+    expect(user).toContain('不要照抄整段');
+  });
+
+  it('system 里明确要求顺着刚才的语气，别变成另一个人', () => {
+    const { system } = buildNoticePrompts({ projectId: 'p', revision: 0, status: 'needs_review' });
+    expect(system).toContain('别突然变成另一个人');
+  });
 });
 
 describe('★ 她的口吻：收口（finalizeNotice）', () => {

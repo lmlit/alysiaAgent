@@ -38,8 +38,9 @@
  */
 
 import { spawn } from 'node:child_process';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync, mkdirSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
+import * as path from 'node:path';
 
 // ── 参数 ────────────────────────────────────────────────────────
 
@@ -271,6 +272,124 @@ export function collectFacts(workspace) {
 }
 
 /**
+ * 每个阶段**只许写这些路径**（★ 2026-10-18 补丁）。
+ *
+ * 真机事故：第 6 轮是 `statement`（只该在 NOTES.md 里写一节），她却顺手做了一整页
+ * `lift.html` 并发布 —— 越过了 `allowPublish` 的闸门，还花了预算外的钱。
+ */
+export function phaseAllowlist(phase) {
+  switch (phase) {
+    case 'intent':
+    case 'review':
+    case 'statement':
+      return [/^NOTES\.md$/];
+    case 'sketch':
+      return [/^drafts\/.+\.html$/i, /^shots\/draft-.+\.(png|jpe?g|webp)$/i];
+    case 'build':
+    case 'revise':
+      return [
+        /^[^/]+\.(html|css|js|mjs|svg)$/i,
+        /^shots\/revise-\d+\.(png|jpe?g|webp)$/i,
+        /^NOTES\.md$/,
+      ];
+    case 'publish':
+      return [/^public\/.+$/, /^NOTES\.md$/];
+    default:
+      return [/.*/];
+  }
+}
+
+const SKIP_DIRS = new Set(['node_modules', '.git', '.phases', 'dist', '.cache']);
+
+/** 快照：相对路径 → `size:mtime`（只判"变没变"，不做内容校验） */
+export function snapshotTree(workspace, rel = '') {
+  const out = {};
+  const walk = (dir) => {
+    let entries = [];
+    try {
+      entries = readdirSync(join(workspace, dir), { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const childRel = dir ? `${dir}/${e.name}` : e.name;
+      if (e.isDirectory()) {
+        if (SKIP_DIRS.has(e.name)) continue;
+        walk(childRel);
+      } else if (e.isFile()) {
+        try {
+          const st = statSync(join(workspace, childRel));
+          out[childRel] = `${st.size}:${Math.round(st.mtimeMs)}`;
+        } catch {
+          /* 读不到就算了 */
+        }
+      }
+    }
+  };
+  walk(rel);
+  return out;
+}
+
+/**
+ * 把**阶段外**的改动拦下来（硬拦，但**不销毁**：越界文件移进 `.phases/violations/r<N>/`）。
+ *
+ * @returns `{ violations: string[], moved: string[] }`
+ */
+export function rollbackOutOfPhase(workspace, before, phase, round) {
+  const after = snapshotTree(workspace);
+  const allow = phaseAllowlist(phase);
+  const allowed = (p) => allow.some((re) => re.test(p));
+  const quarantine = join(workspace, '.phases', 'violations', `r${round}`);
+
+  const violations = [];
+  const moved = [];
+  const moveAway = (rel) => {
+    try {
+      mkdirSync(join(quarantine, path.dirname(rel)), { recursive: true });
+      renameSync(join(workspace, rel), join(quarantine, rel));
+      moved.push(rel);
+    } catch {
+      /* 移不动就留着，至少记下来 */
+    }
+  };
+
+  for (const rel of Object.keys(after)) {
+    if (allowed(rel)) continue;
+    const was = before[rel];
+    if (was === undefined) {
+      violations.push(`新增 ${rel}`);
+      moveAway(rel);
+    } else if (was !== after[rel]) {
+      violations.push(`改动 ${rel}`);
+      moveAway(rel);
+    }
+  }
+  for (const rel of Object.keys(before)) {
+    if (!(rel in after) && !allowed(rel)) violations.push(`删除 ${rel}`);
+  }
+  return { violations, moved };
+}
+
+/** 从 NOTES.md 里取某个 `## 小节` 的正文（与服务端同规则，逐行扫） */
+export function extractSection(notes, heading) {
+  const want = new RegExp(`^##\\s*${heading}\\s*$`);
+  const out = [];
+  let inside = false;
+  for (const line of String(notes ?? '').split(/\r?\n/)) {
+    if (want.test(line)) {
+      inside = true;
+      continue;
+    }
+    if (/^##\s/.test(line)) {
+      if (inside) break;
+      continue;
+    }
+    if (inside) out.push(line);
+  }
+  return out.join('\n').trim();
+}
+
+/**
  * 一次**阶段推进**：把"这一轮只做这一件事"拼进任务正文。
  *
  * 阶段指令由服务端下发（`nextPrompt`），runner 不在本地抄一份 —— 单一来源。
@@ -319,16 +438,21 @@ async function tick(cfg, log) {
   // ── 阶段循环（★ 2026-10-18：一次成型不合格，要来回）────────────────────
   const maxRounds = cfg.loopMaxRounds ?? 8;
   let phasePrompt = nextPrompt ?? '';
+  let currentPhase = task.phase ?? 'intent';
   let sessionId = null;
   let finalText = '';
   let lastDetail = '';
   let rounds = 0;
+  const violationsSeen = [];
 
   for (;;) {
     rounds += 1;
     const runTask = { ...task, goal: task.goal };
     const dshArgs = buildDshArgs(task, project.profile);
-    log(`  [第 ${rounds} 轮] dsh ${dshArgs.slice(0, -1).join(' ')} <task>`);
+    log(`  [第 ${rounds} 轮] 阶段 ${currentPhase} · dsh ${dshArgs.slice(0, -1).join(' ')} <task>`);
+
+    // 阶段前快照：用来拦"阶段外写入"
+    const beforeSnapshot = snapshotTree(project.workspace);
 
     const started = Date.now();
     const run = await runDsh({
@@ -347,6 +471,14 @@ async function tick(cfg, log) {
         (parsed.badLines ? `，NDJSON 坏行 ${parsed.badLines}` : ''),
     );
 
+    // ★ 阶段外写入：硬拦（移到 .phases/violations/，不销毁）
+    const rb = rollbackOutOfPhase(project.workspace, beforeSnapshot, currentPhase, rounds);
+    if (rb.violations.length > 0) {
+      const line = `阶段外写入 ${rb.violations.length} 处（已移出：${rb.moved.join(', ') || '（无法移动）'}）`;
+      violationsSeen.push(`第 ${rounds} 轮（${currentPhase}）：${rb.violations.join('；')}`);
+      log(`    ⚠️ ${line}`);
+    }
+
     // 执行端明确报错/超时 ⇒ 不再推进阶段，直接回传（让服务端决定）
     if (outcome.status !== 'needs_review') {
       log(`    执行端不正常（${outcome.status}）—— 停止推进`);
@@ -357,6 +489,7 @@ async function tick(cfg, log) {
         secs,
         exitCode: run.code,
         error: outcome.error,
+        violations: violationsSeen,
       });
     }
 
@@ -372,20 +505,25 @@ async function tick(cfg, log) {
         secs,
         exitCode: run.code,
         error: `状态机推进失败：${adv.json?.error ?? adv.status}`,
+        violations: violationsSeen,
+        selfStatement: extractSection(facts.notes, '哪里像我'),
       });
     }
     const decision = adv.json.decision;
     lastDetail = decision.detail;
     log(`    阶段 → ${decision.next}${decision.done ? `（完成：${decision.outcome}）` : ''} · ${decision.detail}`);
 
+    const selfStatement = extractSection(facts.notes, '哪里像我');
     if (decision.done) {
       return await submit(cfg, log, task, {
-        status: decision.outcome === 'published' ? 'needs_review' : 'needs_review',
+        status: 'needs_review',
         sessionId,
         finalText,
         secs,
         exitCode: run.code,
         loopNote: `循环完成（${rounds} 轮）：${decision.detail}`,
+        violations: violationsSeen,
+        selfStatement,
       });
     }
     if (rounds >= maxRounds) {
@@ -397,19 +535,35 @@ async function tick(cfg, log) {
         secs,
         exitCode: run.code,
         loopNote: `轮次到顶（${maxRounds} 轮）：${lastDetail}`,
+        violations: violationsSeen,
+        selfStatement,
       });
     }
     phasePrompt = decision.prompt ?? '';
+    currentPhase = decision.next;
   }
 }
 
 /** 回传统一入口（把阶段信息拼进 final，回执里能看见过程） */
 async function submit(cfg, log, task, o) {
-  const final = [o.finalText ?? '', o.loopNote ? `\n\n[过程] ${o.loopNote}` : ''].join('').slice(0, 4000);
+  const notes = [];
+  if (o.loopNote) notes.push(`[过程] ${o.loopNote}`);
+  if (o.violations?.length) {
+    notes.push(
+      `[阶段外写入已移出] ${o.violations.join(' / ')}` +
+        `（放在 .phases/violations/ 里，没删）`,
+    );
+  }
+  const final = [o.finalText ?? '', notes.length ? `\n\n${notes.join('\n')}` : ''].join('').slice(0, 4000);
   const res = await api(cfg, 'POST', `/api/project-tasks/${task.taskId}/result`, {
     status: o.status,
     dshSessionId: o.sessionId ?? undefined,
-    result: { final, ranSeconds: o.secs, exitCode: o.exitCode },
+    result: {
+      final,
+      ranSeconds: o.secs,
+      exitCode: o.exitCode,
+      ...(o.selfStatement ? { selfStatement: o.selfStatement.slice(0, 600) } : {}),
+    },
     artifacts: [],
     error: o.error,
   });

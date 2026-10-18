@@ -66,6 +66,18 @@ export function buildNoticePrompts(input: {
   summary?: string;
   artifacts?: unknown[] | null;
   publicUrl?: string;
+  /**
+   * ★ 2026-10-18（补）：**最近对话**。
+   *
+   * 聊天回复走 pipeline 时会注入人格 + 记忆 + 最近对话；而任务通知原先只喂
+   * "事实 + 人格名" ⇒ 那条通知一直是**通用人格**，不像她。现在把同一份上下文给它。
+   */
+  recentDialogue?: string;
+  /**
+   * ★ 2026-10-18（补）：**她自己写的「哪里像我」**（`NOTES.md` 里那一节）。
+   * 这是她最有辨识度的文字：原先只被阶段闸门读，人看不到。现在随通知给用户看。
+   */
+  selfStatement?: string;
 }): { system: string; user: string } {
   const paths = Array.isArray(input.artifacts)
     ? input.artifacts
@@ -80,6 +92,7 @@ export function buildNoticePrompts(input: {
     '要求：',
     '- 2~3 句，一句话也行；不要列表、不要小标题、不要「回执」这类机器词。',
     '- 用你平常说话的样子（温柔、口语、偶尔一句小小的自嘲或俏皮都可以），但别演过头。',
+    '- **像你平时发消息那样**：如果下面给了「最近对话」，就顺着你刚才的语气和称呼说，别突然变成另一个人。',
     '- 只说**事实里有的**：不要编造完成情况、不要替用户验收、不要承诺没做的事。',
     '- 如果这一轮其实失败了或结果不明，要如实说，不许粉饰成"做好了"。',
     '- 如果给了访问地址，**把它原样抄一遍**（一个字符都不要改），放在最后。',
@@ -87,11 +100,21 @@ export function buildNoticePrompts(input: {
     '- **不要描述通知/回执机制本身**（例如"通知已经发出来了""系统告诉我"），直接说结果就好。',
   ].join('\n');
 
-  const facts: string[] = [
+  const facts: string[] = [];
+  // ★ 先给"你刚才在跟谁说话、怎么说的"，再给事实 —— 顺序会影响语气
+  const dialogue = typeof input.recentDialogue === 'string' ? input.recentDialogue.trim() : '';
+  if (dialogue) {
+    facts.push('（你最近跟这个人的对话，用来找回你说话的样子）：', dialogue.slice(0, 1800), '');
+  }
+  const stmt = typeof input.selfStatement === 'string' ? input.selfStatement.trim() : '';
+  if (stmt) {
+    facts.push('（这件东西做完后，你自己写过一句「它哪里像我」——可以带一点进来，不要照抄整段）：', stmt.slice(0, 400), '');
+  }
+  facts.push(
     `项目：${input.projectId}`,
     `这是第 ${input.revision + 1} 轮`,
     `这一轮的结果状态：${input.status}`,
-  ];
+  );
   if (paths.length > 0) facts.push(`产出的文件：${paths.slice(0, 8).join('、')}`);
   const summary = typeof input.summary === 'string' ? input.summary.trim() : '';
   if (summary) {

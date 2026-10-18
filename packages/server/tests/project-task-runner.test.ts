@@ -7,11 +7,11 @@
 //
 // ⚠️ 真正的**副作用**（spawn dsh、HTTP 轮询）不在这里测 —— 那是真机验收的事。
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 // @ts-expect-error —— 宿主脚本是 .mjs，没有类型声明（故意的：它要能被 node 直跑）
-import { buildDshArgs, buildTaskText, parseRunEvents, mapOutcome, nextUrl, collectFacts, buildPhaseTask } from '../../../scripts/project-task-runner.mjs';
+import { buildDshArgs, buildTaskText, parseRunEvents, mapOutcome, nextUrl, collectFacts, buildPhaseTask, phaseAllowlist, snapshotTree, rollbackOutOfPhase, extractSection } from '../../../scripts/project-task-runner.mjs';
 
 const task = {
   taskId: 'pt-1', goal: '做一个关于我页面', acceptanceCriteria: '能构建', revision: 0, dshSessionId: null,
@@ -182,5 +182,69 @@ describe('★ 阶段推进：从工作区读事实', () => {
 
   it('没有阶段指令时 = 原样任务正文（一次性任务不受影响）', () => {
     expect(buildPhaseTask(TASK, '')).toBe(buildTaskText(TASK));
+  });
+});
+
+// ★ 2026-10-18 补丁：**阶段外写入**要拦（真机事故：statement 轮她多做了一整页并发布）
+describe('★ 阶段外写入：白名单 + 回滚', () => {
+  it('statement 只许动 NOTES.md（lift.html / public/ 都不许）', () => {
+    const allow = phaseAllowlist('statement');
+    expect(allow.some((re: RegExp) => re.test('NOTES.md'))).toBe(true);
+    expect(allow.some((re: RegExp) => re.test('lift.html'))).toBe(false);
+    expect(allow.some((re: RegExp) => re.test('public/lift.html'))).toBe(false);
+  });
+
+  it('sketch 只许 drafts/ 与 draft-*.png', () => {
+    const allow = phaseAllowlist('sketch');
+    expect(allow.some((re: RegExp) => re.test('drafts/a.html'))).toBe(true);
+    expect(allow.some((re: RegExp) => re.test('shots/draft-a.png'))).toBe(true);
+    expect(allow.some((re: RegExp) => re.test('index.html'))).toBe(false);
+  });
+
+  it('★ 越界的**新增**被移出工作区（不是删掉：移进 .phases/violations）', () => {
+    const root = mkdtempSync(join(tmpdir(), 'phase-'));
+    writeFileSync(join(root, 'NOTES.md'), '## 意图\n原来就有\n');
+    const before = snapshotTree(root);
+
+    writeFileSync(join(root, 'NOTES.md'), '## 意图\n原来就有\n## 哪里像我\n像我不说话\n');
+    writeFileSync(join(root, 'lift.html'), '<p>偷偷做的一页');
+    mkdirSync(join(root, 'public'), { recursive: true });
+    writeFileSync(join(root, 'public', 'lift.html'), '<p>偷偷发布');
+
+    const rb = rollbackOutOfPhase(root, before, 'statement', 6);
+    expect(rb.violations.length).toBe(2);
+    expect(rb.moved.sort()).toEqual(['lift.html', 'public/lift.html']);
+    expect(existsSync(join(root, 'lift.html'))).toBe(false);
+    expect(existsSync(join(root, 'public', 'lift.html'))).toBe(false);
+    // **没销毁**：在隔离区里
+    expect(existsSync(join(root, '.phases', 'violations', 'r6', 'lift.html'))).toBe(true);
+    expect(readFileSync(join(root, 'NOTES.md'), 'utf8')).toContain('哪里像我');
+  });
+
+  it('★ 越界的**改动**也被移出（改过的文件不在原位）', () => {
+    const root = mkdtempSync(join(tmpdir(), 'phase2-'));
+    writeFileSync(join(root, 'NOTES.md'), '## 意图\nA\n');
+    writeFileSync(join(root, 'index.html'), '<p>v1');
+    const before = snapshotTree(root);
+    writeFileSync(join(root, 'index.html'), '<p>v2 改了一大截内容');
+    const rb = rollbackOutOfPhase(root, before, 'statement', 2);
+    expect(rb.violations.some((v: string) => v.includes('index.html'))).toBe(true);
+    expect(existsSync(join(root, 'index.html'))).toBe(false);
+  });
+
+  it('全在允许范围内 → 不动任何文件', () => {
+    const root = mkdtempSync(join(tmpdir(), 'phase3-'));
+    writeFileSync(join(root, 'NOTES.md'), 'A\n');
+    const before = snapshotTree(root);
+    writeFileSync(join(root, 'NOTES.md'), 'A\nB\n');
+    const rb = rollbackOutOfPhase(root, before, 'statement', 1);
+    expect(rb.violations).toEqual([]);
+    expect(existsSync(join(root, 'NOTES.md'))).toBe(true);
+  });
+
+  it('extractSection 取出「哪里像我」（与服务端同规则）', () => {
+    const notes = '## 意图\nx\n## 哪里像我\n像我不爱说话\n## 别的\nzz\n';
+    expect(extractSection(notes, '哪里像我')).toBe('像我不爱说话');
+    expect(extractSection(notes, '不存在')).toBe('');
   });
 });
