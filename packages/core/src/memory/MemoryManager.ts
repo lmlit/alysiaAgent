@@ -19,6 +19,7 @@ import type {
   CreateOutcome,
   SubmitResultInput,
 } from './stores/ProjectTaskStore.js';
+import { dialogueSpeaker } from './render-dialogue.js';
 // ★ 2026-10-18（change: return-project-task-result）：结果 → 记忆事件的纯构造
 import {
   buildProjectTaskResultEvent,
@@ -359,7 +360,7 @@ export class MemoryManager {
         const time = d && !isNaN(d.getTime())
           ? `[${p(d.getHours())}:${p(d.getMinutes())}]`
           : '';
-        return `${time} ${r.role === 'user' ? '你' : '昔涟'}: ${r.content}`;
+        return `${time} ${dialogueSpeaker(r.role)}: ${r.content}`;
       });
       return `【最近对话】\n${lines.join('\n')}`;
     } catch (err: any) {
@@ -1571,7 +1572,13 @@ export class MemoryManager {
     artifacts?: unknown[] | null;
     /** 该项目的对外地址（随回执给她 —— 她会用它回答"给我链接"） */
     publicUrl?: string;
-    /** 她自己的措辞（`composeProjectTaskNotice` 的产物）；缺省回落模板 */
+    /**
+     * ~~她自己的措辞~~ —— **已废弃**（2026-10-18，change: `attribute-engine-receipts`）。
+     *
+     * 保留字段只为不破坏既有调用；**不再写进正文**。
+     * 理由：那条事件不再是"她说的话"（`role: 'engine'`），借她的口吻就是伪造归属。
+     * 她的口吻现在只用于 **QQ 推送**（那时真的是她在对用户说话）。
+     */
     notice?: string;
   }): Promise<boolean> {
     // 事件形状（幂等 id / 三个标记位 / 正文措辞）在纯函数里，测试直接钉它

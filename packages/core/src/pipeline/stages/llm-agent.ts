@@ -5,6 +5,7 @@ import { MessageType } from '../../platform/types.js';
 import { AgentRunner } from '../../agent/runner.js';
 import { MessageChain } from '../../platform/chain.js';
 import { logger } from '../../utils/logger.js';
+import { dialogueSpeaker } from '../../memory/render-dialogue.js';
 
 // ★ 8-28 意图标记协议（ai-life-intent-system）：LLM 在回复末尾加 [intent:类型|内容|延迟小时数]，
 //   POST 阶段解析存 ai_life_intents + 从回复剥离（用户不可见）。与 [表情包:xxx] 同模式。
@@ -104,7 +105,9 @@ export class LLMAgentStage implements Stage {
     const history = event.getExtra('conversation_history') || [];
     if (history.length > 0) {
       const recentHistory = history.slice(-10).map(h =>
-        `${h.role === 'user' ? '伙伴' : '昔涟'}: ${h.content}`
+        // ★ 2026-10-18：共享归属函数（用户「伙伴」/ 她「昔涟」/ **工程端**）
+        //   —— 别再写「不是 user 就当成她」，否则执行端回执会被当成她说的话
+        `${dialogueSpeaker(h.role, { user: '伙伴' })}: ${h.content}`
       ).join('\n');
       systemPrompt += `\n\n## 最近对话\n${recentHistory}\n\n请基于以上对话历史继续交流。`;
     }

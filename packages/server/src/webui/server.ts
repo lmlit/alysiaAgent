@@ -488,7 +488,9 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
         artifacts: Array.isArray(task.artifacts) ? (task.artifacts as unknown[]) : null,
         // ★ 地址随回执一起给她：真机上用户问过"给我链接"，她答"我没存下地址"
         publicUrl,
-        ...(notice ? { notice } : {}),
+        // ★ 2026-10-18（attribute-engine-receipts）：**不再**把她的措辞塞进记忆回执。
+        //   记忆里那条是「工程回执」（role=engine），借她的口吻等于伪造归属。
+        //   她的措辞只用于下面那一步 **QQ 推送**（那里真的是她在说话）。
       });
     } catch (err: any) {
       logger.warn(`[project-task] ${task.taskId} 结果记回记忆失败：${err?.message ?? err}`);

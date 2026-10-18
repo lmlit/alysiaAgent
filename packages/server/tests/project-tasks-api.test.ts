@@ -331,33 +331,31 @@ describe('★ 结果回送原会话（return-project-task-result）', () => {
     expect(call[2]).toEqual({ maxSegments: 1 });
   });
 
-  // ★ 用户原话「感觉好干啊，而且没有昔涟的味道」：
-  //   这条事件是 role:assistant，等于"她说的话" ⇒ 必须让她自己说一遍，模板只做回落。
-  it('★★ 用她自己的措辞（不是模板腔）同时落库与推送', async () => {
+  // ★ 用户原话「感觉好干啊，而且没有昔涟的味道」→ 那句话用在**推送**上；
+  //   但 ★ 2026-10-18 又被指出：「她以为是我命令输出的」⇒ **记忆里那条不能借她的口吻**。
+  it('★★ 她的措辞只进**推送**；记忆回执不带 notice（归属不能伪造）', async () => {
     const { h } = await postResult();
     expect(h.mm.composeProjectTaskNotice).toHaveBeenCalledWith(
       expect.objectContaining({ projectId: 'alysia-blog', status: 'needs_review' }),
     );
-    // 落库的那条要带上她的措辞
-    expect(h.mm.recordProjectTaskResult).toHaveBeenCalledWith(
-      expect.objectContaining({ notice: '页面弄好啦，你看看顺不顺眼～' }),
-    );
-    // 推送的那条也是她的话，而不是"委托任务结束了：…"
+    // 落库那条**不许**带 notice —— 它是「工程回执」（role=engine），不是她的话
+    const arg = (h.mm.recordProjectTaskResult.mock.calls[0] as unknown as [Record<string, unknown>])[0];
+    expect(arg).not.toHaveProperty('notice');
+    // 推送那条是她的话
     const [, text] = h.push.sendProactive.mock.calls[0] as unknown as [string, string];
     expect(text).toBe('页面弄好啦，你看看顺不顺眼～');
-    expect(text).not.toContain('委托任务结束了');
   });
 
-  it('★ 措辞生成失败 → 回落模板，但**照样**记回与推送（不许因此丢通知）', async () => {
+  it('★ 措辞生成失败 → 推送回落模板，但**照样**记回与推送（不许因此丢通知）', async () => {
     const { h } = await postResult(QQ_TASK, {
       composeProjectTaskNotice: vi.fn(async () => { throw new Error('llm 挂了'); }),
     });
-    // 回落时**不带** notice 键（不是 notice: undefined —— 那是"有值但空"）
+    // 记忆侧**本来就不带** notice（回执是工程端的，不是她的）
     const arg = (h.mm.recordProjectTaskResult.mock.calls[0] as unknown as [Record<string, unknown>])[0];
     expect(arg).not.toHaveProperty('notice');
     expect(arg).toEqual(expect.objectContaining({ taskId: 'pt-1', status: 'needs_review' }));
     const [, text] = h.push.sendProactive.mock.calls[0] as unknown as [string, string];
-    expect(text).toContain('委托任务结束了'); // 回落口径：干，但诚实
+    expect(text).toContain('委托任务结束了'); // 推送回落口径：干，但诚实
     expect(text).toContain('http://example.test:3389/');
   });
 

@@ -3,6 +3,7 @@ import type { MessageEvent } from '../../platform/event.js';
 import type { MemoryManager } from '../../memory/MemoryManager.js';
 import { logger } from '../../utils/logger.js';
 import { localDateKey } from '../../memory/index.js';
+import { dialogueSpeaker } from '../../memory/render-dialogue.js';
 
 /** ★ 消息时间标记（供短期记忆注入，让 AI 区分"今天/昨天"）。
  *  今天 → [HH:MM]；昨天 → [昨天 HH:MM]；更早 → [M月D日 HH:MM]。无时间戳 → ''。 */
@@ -57,7 +58,11 @@ export class MemoryRetrievalStage implements Stage {
       );
       if (recent.length > 0) {
         // ★ 8-09 角色短标签（你/昔涟）：EventLog 读取不再带 sender 前缀（openid 不入 prompt）
-        recentContext = recent.map(r => `${fmtMsgTime(r.createdAt)} ${r.role === 'user' ? '你' : '昔涟'}: ${r.content}`).join('\n');
+        // ★ 2026-10-18：改用共享的 `dialogueSpeaker()` —— 归属（用户 / 她 / 工程端）必须显式，
+        //   不能再写「不是 user 就当成她」（否则执行端回执会变成"她说过的话"）
+        recentContext = recent
+          .map(r => `${fmtMsgTime(r.createdAt)} ${dialogueSpeaker(r.role)}: ${r.content}`)
+          .join('\n');
       }
     } catch (err) {
       logger.warn('Failed to read recent messages from EventLog:', err);

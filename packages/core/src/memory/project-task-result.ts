@@ -37,15 +37,6 @@ export interface ProjectTaskResultInput {
    *   地址必须随回执一起给她，否则"她知道做完了"仍然等于"她说不出在哪看"。
    */
   publicUrl?: string;
-  /**
-   * **她自己说的那句话**（由 `composeProjectTaskNotice` 生成）。
-   *
-   * ★ 2026-10-18 补（用户指着说"感觉好干啊，而且没有昔涟的味道"）：
-   *   这条事件是 `role: 'assistant'` —— 它以**她说过的话**的身份进她的对话史。
-   *   模板腔放进去，等于让她的记忆里留着一句她绝不会说的话。
-   *   所以：有她的措辞就用她的，**没有才回落到模板**（并记住这是回落，不是常态）。
-   */
-  notice?: string;
   /** 注入时钟（测试用） */
   now?: Date;
 }
@@ -155,19 +146,15 @@ export function buildProjectTaskResultEvent(input: ProjectTaskResultInput): Memo
     : [];
 
   const publicUrl = typeof input.publicUrl === 'string' ? input.publicUrl.trim() : '';
-  const notice = typeof input.notice === 'string' ? input.notice.trim() : '';
 
-  const lines: string[] = [];
-  if (notice) {
-    // ★ 她的措辞优先 —— 这条会成为"她说的话"
-    lines.push(finalizeNotice(notice, ''));
-  } else {
-    // 回落：机械但**诚实**（不假装是她的语气）
-    lines.push(
-      `（委托任务回执）项目 ${input.projectId} 第 ${input.revision + 1} 轮已结束：${input.status}。`,
-    );
-    if (paths.length > 0) lines.push(`产物：${paths.slice(0, 8).join('、')}`);
-  }
+  // ★ 2026-10-18（change: `attribute-engine-receipts`）：这条**不是她说的话**。
+  //   用户原话：「不如让自己调工程的回复，她以为是我命令输出的」——
+  //   所以正文以「工程回执」开头，把来源摆在第一行，且不再借她的口吻。
+  //   （她的口吻只留给 QQ 推送：那时真的是她在对用户说话。）
+  const lines: string[] = [
+    `【工程回执·来自 dsh 执行端】项目 ${input.projectId} 第 ${input.revision + 1} 轮已结束：${input.status}。`,
+  ];
+  if (paths.length > 0) lines.push(`产物：${paths.slice(0, 8).join('、')}`);
 
   const summary = typeof input.summary === 'string' ? input.summary.trim() : '';
   if (summary) {
@@ -191,7 +178,14 @@ export function buildProjectTaskResultEvent(input: ProjectTaskResultInput): Memo
     source: 'system',
     type: 'message',
     payload: {
-      role: 'assistant',
+      /**
+       * ★ 2026-10-18（change: `attribute-engine-receipts`）：**`engine`，不是 `assistant`**。
+       *
+       * 旧版写成 `assistant`，而所有渲染器都是「不是 user 就当成她」⇒ prompt 里出现
+       * 「昔涟: （委托任务回执）…」—— 等于替她写了一段她没说过的话。
+       * 她可能因此以为自己讲过，或把那句机器口吻当成"用户命令的输出"。
+       */
+      role: 'engine',
       content: lines.join('\n'),
       // ★ 三个标记位缺一不可，理由见 change proposal：
       //   skip_profile ⇒ 不进画像/人格/嵌入（RealtimeProcessor 早退）

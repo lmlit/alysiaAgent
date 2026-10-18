@@ -54,11 +54,17 @@ describe('★ 标记位（少一个就有一条泄漏路径）', () => {
     expect(ev().payload.project_task_result).toBe(true);
   });
 
-  it('source=system + role=assistant + perspective=self（是"她自己的事"，不是互动）', () => {
+  it('★ source=system + **role=engine** + perspective=self（不是"她说的话"）', () => {
     const e = ev();
     expect(e.source).toBe('system');
-    expect(e.payload.role).toBe('assistant');
+    // ★ 2026-10-18（attribute-engine-receipts）：写成 assistant 会让所有渲染器
+    //   把它当她的台词（"昔涟: （委托任务回执）…"）—— 等于替她说话
+    expect(e.payload.role, '回执不是她说的').toBe('engine');
     expect(e.perspective).toBe('self');
+  });
+
+  it('★ 正文第一行就标明来源（人/模型一眼看出这是回执）', () => {
+    expect(String(ev().payload.content)).toMatch(/^【工程回执·来自 dsh 执行端】/);
   });
 
   it('★ 落回的会话就是发起它的那个会话', () => {
@@ -186,36 +192,36 @@ describe('★ 她的口吻：收口（finalizeNotice）', () => {
   });
 });
 
-describe('★ 有她的措辞时，事件正文用她的（模板只在回落时用）', () => {
-  it('notice 存在 ⇒ 正文是她的那句话，且**不再**出现"回执"这个词', () => {
+// ★ 2026-10-18（change: `attribute-engine-receipts`）
+//   用户原话：「我们工程的回执是不是要上下文带上，不如让自己调工程的回复，
+//              **她以为是我命令输出的**」。
+//   旧行为：回执写成 role=assistant，且允许塞入"她的措辞"当正文 ——
+//   两处都在**伪造归属**：那不是她说的，也不是用户说的。
+//   新契约：role=engine + 正文以「工程回执」开头；她的措辞**只用于 QQ 推送**。
+describe('★ 归属：回执不是她的话（也不是用户的话）', () => {
+  it('★★ 就算传了 notice，也**不许**写进正文（不许替她说话）', () => {
     const e = buildProjectTaskResultEvent({
       ...BASE,
       notice: '页面弄好啦，你看看顺不顺眼～',
       publicUrl: 'http://example.test:3389/',
-    })!;
+    } as never)!;
     const text = String(e.payload.content);
-    expect(text).toContain('页面弄好啦');
-    expect(text, '模板腔不许混进"她说的话"').not.toContain('委托任务回执');
-    expect(text).toContain('http://example.test:3389/');
+    expect(text, '她的措辞被塞进记忆回执了').not.toContain('页面弄好啦');
+    expect(text).toContain('工程回执');
   });
 
-  it('没有 notice ⇒ 回落模板（并保留"回执"标记，诚实：这不是她的语气）', () => {
+  it('★ 没有 notice 时也是同一副面孔（规格统一，不靠"回落"）', () => {
     const text = String(buildProjectTaskResultEvent(BASE)!.payload.content);
-    expect(text).toContain('委托任务回执');
+    expect(text).toContain('工程回执');
+    expect(text).toContain('needs_review');
   });
 
-  // ★ 2026-10-18 真机又撞一次：她的句子里带了地址，模板又追加一行 ⇒ 同一句里地址出现两遍
-  it('★ 她的句子里已有地址 ⇒ 不再追加"外网地址："那一行（不许重复）', () => {
+  it('★ 有地址就追加一行"外网地址"，且只出现一次', () => {
     const url = 'http://example.test:3389/';
-    const e = buildProjectTaskResultEvent({ ...BASE, notice: `做好啦，在这儿：${url}`, publicUrl: url })!;
-    const text = String(e.payload.content);
-    expect(text.split(url).length - 1, '地址只许出现一次').toBe(1);
-    expect(text).not.toContain('外网地址：');
-  });
-
-  it('她的句子里没有地址 ⇒ 照旧追加（用户问链接时要有东西给）', () => {
-    const url = 'http://example.test:3389/';
-    const e = buildProjectTaskResultEvent({ ...BASE, notice: '做好啦，你看看～', publicUrl: url })!;
-    expect(String(e.payload.content)).toContain(`外网地址：${url}`);
+    const text = String(
+      buildProjectTaskResultEvent({ ...BASE, publicUrl: url })!.payload.content,
+    );
+    expect(text).toContain(`外网地址：${url}`);
+    expect(text.split(url).length - 1).toBe(1);
   });
 });
