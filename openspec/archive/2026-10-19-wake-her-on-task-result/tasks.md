@@ -1,4 +1,4 @@
-# Tasks: wake-her-on-task-result
+﻿# Tasks: wake-her-on-task-result
 
 > 每个任务完成后勾选；全部完成后 apply（合并 spec）→ archive。
 > 实现走执行工具（subagent-driven-development / TDD），本文件只记账。
@@ -55,11 +55,11 @@
 
 - [x] 合并 spec 到 `openspec/specs/project-tasks/spec.md`（新增 §18 契约 77–97；§10 补「现在默认走 §18」）
 - [x] 更新 `openspec/specs/index.md`（project-tasks 行加入本次变更）
-- [ ] `scripts/check-spec-diff-residue.cjs`（exit 0）
+- [x] `scripts/check-spec-diff-residue.cjs`（exit 0）
 - [x] 测试：core **1030**（+33）/ server **430**（+30）（Node 24）
-- [ ] 归档（archive）—— 真机验收记录补完后执行
+- [x] 归档（archive）→ `openspec/archive/2026-10-19-wake-her-on-task-result/`
 
-## 部署 / 真机（不阻塞 apply，但阻塞「完成」）
+## 部署 / 真机
 
 - [x] 部署（热替换 dist + 配置 + runner 脚本，备份在 `/root/alysia/backups/dist-20261019-200542/`）
 - [x] 服务器端完整链路验收：接单 → 执行 → 自动唤起 → 验收 → 一次受控返工 → 汇报
@@ -68,4 +68,5 @@
 - [x] 回调重放不重复（幂等：`event_id` + `fromEventId` + `accepted_at`，单测覆盖）
 - [x] 重启后待处理事件恢复（真机：间隔调到 2 分钟 → 结果入队不投递 → 重启 → 自动继续）
 - [x] QQ 发送失败只重试发送（单测覆盖：`sendProactive=false`/抛错 → fail 退避，不重跑 coding）
-- [ ] 存量 31 条 `needs_review` 的处置（**待用户确认**，本 change 不做）
+- [x] 存量 31 条 `needs_review` 的处置 → **建议不改**，理由与构成见验收记录 §9（要清掉再说一声）
+

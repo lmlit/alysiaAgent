@@ -1,4 +1,4 @@
-# Change Proposal: fix-session-end-window
+﻿# Change Proposal: fix-session-end-window
 
 > 模板：复制到 `openspec/changes/<change-name>/proposal.md` 使用。
 > 开发纪律见 `openspec/project.md`：任何行为变更必走 propose → apply → archive。
@@ -14,7 +14,7 @@
 
 ### 现象（2026-10-11 线上库实测）
 
-主线 QQ 会话 `qq-official-1:private:private_01E8E4C43DAC1D4E81B086F6441BF635`
+主线 QQ 会话 `qq-official-1:private:private_<OWNER_OPENID>（已脱敏）`
 （199 条摘要、累计 41894 条消息事件）：
 
 | 指标 | 实测值 |
@@ -133,3 +133,4 @@ packages/core/src/pipeline/stages/llm-agent.ts:270
 - ❌ **不清理线上已有的 29 条超长窗口摘要**
   —— 属数据回填，需独立 change + 备份锚点
 - ❌ **不跑真实 API 探针**
+

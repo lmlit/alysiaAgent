@@ -1,4 +1,4 @@
-﻿# 真机验收记录：异步唤醒闭环（2026-10-19）
+# 真机验收记录：异步唤醒闭环（2026-10-19）
 
 > change：`wake-her-on-task-result`（`openspec/changes/wake-her-on-task-result/`）
 > 环境：`root@<SERVER>` · 容器 `alysia-server`（热替换 dist）· 宿主 runner `alysia-task-runner`
@@ -83,8 +83,8 @@ DELETE /api/knowledge/x          -> 403
 ## 4. 数据现状（本 change **未调整存量**）
 
 ```
-tasks  by status: completed 2 / needs_review 31
-events by status: done 3
+tasks  by status: completed 4 / needs_review 31
+events by status: done 5（attempts>1 的：0）
 ```
 
 - 31 条 `needs_review` 是本次之前就存在的存量，**一条都没动**（没有回填、没有批量收尾）。
@@ -109,15 +109,64 @@ events by status: done 3
 ```
 http://<SERVER>:3389/p/alysia-toys/hello-wake.html     -> 200
 http://<SERVER>:3389/p/alysia-toys/restart-check.html  -> 200
+http://<SERVER>:3389/p/alysia-toys/dusk.html           -> 200
 ```
 
 地址全部来自执行侧（`publish_page` 自检 + runner 派生），服务端只做前缀校验，**没有硬编码生产 URL**。
 
-## 7. 未覆盖 / 已知不足
+## 6b. 执行期间聊天不受影响（实测）
 
-1. **六阶段 `build` 任务未在本次真机跑**（只跑了 `action` 单轮）。跨阶段续接的代码路径已改，
-   但"六轮都带同一个 session"只在逻辑与单测层面验证；建议下次挑一个 build 任务真跑一次。
+在 `build` 阶段的 dsh 正在跑（已 55 秒）时，向另一个（WebUI）会话发一句：
+
+```
+POST /api/chat/prompt {"text":"工程那边在忙，你这边还听得见我说话吗？"}
+→ ok:true，reply:"听得见呀，窗口亮着呢。你先忙你的，人家不走。"   耗时 15226 ms
+```
+
+同一进程、同一条 pipeline、不同会话 —— **聊天不等 coding**。
+
+## 7. 六阶段 `build` 任务：跨阶段续接（补做）
+
+任务 `pt-8b5dbc95…`（`kind: build`，`dusk.html`）。**7 次 dsh 运行，全部同一个 session**：
+
+```
+12:24:42  [第 1 轮] intent     dsh --profile alysia --json <task>                 24s → 新会话 session-b284c15e…
+12:25:07  [第 2 轮] sketch     ... --session-id session-b284c15e…                 57s
+12:26:04  [第 3 轮] review     ... --session-id session-b284c15e…                 29s
+12:26:34  [第 4 轮] build      ... --session-id session-b284c15e…                189s
+12:29:43  [第 5 轮] revise     ... --session-id session-b284c15e…                 67s
+12:30:50  [第 6 轮] statement  ... --session-id session-b284c15e…                 15s
+12:31:04  [第 7 轮] publish    ... --session-id session-b284c15e…                 11s → done（published）
+12:31:15  → needs_review · 已入队 pt-8b5dbc95…:r0:result
+12:31:25  [Tool] accept_project_task ← {note:"傍晚最后一点光退下去那页，地址通、200，这一版认了。"}
+12:31:31  [subagent-wake] 已处理完：她说了 357 字
+```
+
+- **跨阶段续接生效**：第 2..7 轮都带第 1 轮产生的 `--session-id`（改前：六阶段 = 六次独立会话）。
+- 她**自己验收并写了理由**，随后汇报：
+  > 轻月，最后那页也做好了—— http://<SERVER>:3389/p/alysia-toys/dusk.html
+  > 一整屏上什么都没有，只有头顶那条光在慢慢退，退到暗底，左下角三行字。一分四十五秒走完一遍…
+- 任务 `status=completed`、`phase=done`；页面 200；全程约 **6.5 分钟**（7 次模型运行）。
+
+## 8. 未覆盖 / 已知不足
+
+1. ~~六阶段 `build` 任务未真机跑~~ ✅ **已补**（§7）。
 2. `notified_at` 在"发出后、ack 前"崩溃的极小概率下会重复一条消息（契约 79 已记录）。
-3. 唤醒只处理**新产生的终态**；存量 31 条不会自动补唤醒（需用户确认后另行处理）。
+3. 唤醒只处理**新产生的终态**；存量 31 条不会自动补唤醒（见 §9）。
 4. 派发是单实例进程内的（多实例部署需要租约）。
+5. QQ 发送失败、回调乱序只在单测层面验证（真机没有为了复现去破坏通道）。
+
+## 9. 存量 31 条 `needs_review`：建议**不改**
+
+| 维度 | 分布 |
+|---|---|
+| 阶段 | `intent` **24** / `sketch` 3 / `done` 3 / `build` 1 |
+| 结果长度 | ≤80 字 **18** 条（基本是早期探针/空转），其余是一轮的真收尾 |
+| 项目 | `alysia-toys` 15 / `alysia-blog` 16 |
+| 产物 | 31 条都带 artifacts（多为同一个 `island.html` 被反复上报） |
+
+**不建议动**的理由：① 不阻塞任何链路（并发闸门只认 `queued`/`running`，当前 0）；
+② 看门狗**不对 `needs_review` 报警**；③ 产物都在工作区、一个没删；
+④ 批量置 `completed` 等于**伪造验收**，而置 `failed` 对那 3 条真做出页面也不诚实。
+要清掉只需一条命令（脚本备在服务器 `/tmp`，**未执行**），需要时再说一声。
 

@@ -71,6 +71,8 @@
 | ~~没人盯着卡住的活~~ ✅ | **2026-10-19 已修**（`watch-for-stuck-work`）：`al:watchdog` 六条只读判据，**发现交给她、不推给用户** | ✅ 已上线 | [spec §17 契约 68j](../openspec/specs/project-tasks/spec.md) |
 | ~~空查询撞 embed 400~~ ✅ | **2026-10-19 已修**（`fix-empty-embed-query`）：空 query 不请求 embedding | ✅ 已上线 | [spec §7](../openspec/specs/memory-system/spec.md) |
 | 看门狗提醒的"硬度" | 现在把"提不提"完全交给她 —— 她收到提示也可能不提（真机验时她只寒暄了）。可选加一句"碍着你手上的活就说一句" | 🧑 一句话的事 | [change](../openspec/archive/2026-10-19-watch-for-stuck-work/tasks.md) |
+| ~~结果回来没人接~~ ✅ | **2026-10-19 已修**（`wake-her-on-task-result`）：结果入 outbox → 唤起她跑完整一轮 → 她自己验收/返工/问人/汇报 | ✅ 已上线 | [spec §18](../openspec/specs/project-tasks/spec.md) |
+| 唤醒派发的多实例租约 | 现在派发是**单实例进程内**的；开第二个 alysia 实例会两边同时领同一队列 | ⏳ 等多实例需求 | [spec §18 已知边界](../openspec/specs/project-tasks/spec.md) |
 
 ## D. 部署 / 数据债（代码已好，线上还是旧的）
 
@@ -78,6 +80,8 @@
 |---|---|---|---|
 | fix-reflection-insight-misroute | **已归档但未部署** ⇒ 线上每日反思仍会把 `insight` 错写进用户画像 | 🧑 发版会连带 console 改动 | [proposal](../openspec/archive/2026-10-15-fix-reflection-insight-misroute/proposal.md) |
 | 历史画像回填 | 线上 `basics`/`facts` 长期稀疏，修复只保证从此往后 | 🧑 需连服务器 | [specs/index.md](../openspec/specs/index.md) |
+| **镜像与线上漂移**（2026-10-19） | 本次是 `docker cp` 热替换 dist（备份 `/root/alysia/backups/dist-20261019-200542/`）；下次 `compose up -d` 重建会**退回镜像旧码** | 🧑 下次发版统一重打镜像 | [验收记录 §0](ACCEPTANCE-2026-10-19-WAKE.md) |
+| **存量 31 条 `needs_review`**（2026-10-19） | 改前遗留：24 条卡在 `intent`（18 条结果 ≤80 字，基本是探针）；**不改**的理由：不阻塞任何链路、watchdog 不对 needs_review 报警、产物都在工作区 | 🧑 想清掉再说一声 | [验收记录 §4](ACCEPTANCE-2026-10-19-WAKE.md) |
 
 ## E. 暂停 / 不做
 
