@@ -106,13 +106,20 @@ events by status: done 5（attempts>1 的：0）
 
 ## 6. 页面可访问性
 
+验收当时这三页都返回 200（地址由执行侧 `publish_page` 自检，服务端只做前缀校验，
+**没有硬编码生产 URL**）：
+
 ```
-http://<SERVER>:3389/p/alysia-toys/hello-wake.html     -> 200
-http://<SERVER>:3389/p/alysia-toys/restart-check.html  -> 200
-http://<SERVER>:3389/p/alysia-toys/dusk.html           -> 200
+/p/alysia-toys/hello-wake.html     -> 200
+/p/alysia-toys/restart-check.html  -> 200
+/p/alysia-toys/dusk.html           -> 200
 ```
 
-地址全部来自执行侧（`publish_page` 自检 + runner 派生），服务端只做前缀校验，**没有硬编码生产 URL**。
+> 验收完成后按用户要求**已删除这三个测试页**（连同 `noon.html`）：
+> 源文件与 `public/` 副本备份在 `/root/alysia/backups/wake-test-pages-20261020-002412/`，
+> 现在这四页均为 404；基站首页与 `pages.json` 已自动重建、不再列出它们。
+> 她自己的页面（island / slow-clock / zongzhan / lift / waiting / index）仍然 200，
+> 未发布的 `moon.html` 走预览通道 `/w/` 仍 200。
 
 ## 6b. 执行期间聊天不受影响（实测）
 
