@@ -14,6 +14,26 @@ export type { LifeEvent, LifeState } from './stores/LifeStore.js';
 //   导出到 barrel 是**必须的**：server 侧只能经 `@alysia/core/memory` 这个入口拿它
 //   （core 的 package.json exports 不暴露深路径）。
 export { ProjectTaskStore } from './stores/ProjectTaskStore.js';
+// ★ 2026-10-19（change: wake-her-on-task-result）：结果事件 outbox
+export { ProjectTaskEventStore } from './stores/ProjectTaskEventStore.js';
+export type {
+  ProjectTaskEvent,
+  ProjectTaskEventStatus,
+  EnqueueEventInput,
+  ProjectTaskEventStoreOptions,
+} from './stores/ProjectTaskEventStore.js';
+// ★ 2026-10-19（change: wake-her-on-task-result）：事件体构造 + 主 Agent 输入渲染（纯函数）
+export {
+  buildSubagentResultPayload,
+  renderSubagentResultInput,
+  computeEvidence,
+  outcomeOfStatus,
+  type SubagentResultPayload,
+  type SubagentArtifact,
+  type SubagentEvidence,
+  type SubagentOutcome,
+  type BuildSubagentPayloadInput,
+} from './project-task-result.js';
 // ★ 2026-10-19（change: watch-for-stuck-work）：她自己留意到的事（看门狗写入 → PromptAssembler 注入）
 export { setSelfNotices, getSelfNotices, clearSelfNotices, renderSelfNoticeBlock } from './self-notice.js';
 export type { SelfNotice } from './self-notice.js';

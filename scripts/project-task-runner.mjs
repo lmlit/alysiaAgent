@@ -47,7 +47,12 @@ function parseArgs(argv) {
   const out = {
     project: process.env.PROJECT_TASK_PROJECT ?? '',
     base: process.env.ALYSIA_BASE_URL ?? 'http://127.0.0.1:6186',
-    token: process.env.ALYSIA_WEBUI_TOKEN ?? '',
+    /**
+     * ★ 2026-10-19（change: `wake-her-on-task-result`）：优先用**runner 专用令牌**。
+     * 它是受限令牌（只能调记忆回传/任务/页面清单/看图那几个端点），
+     * 而管理令牌不该出现在后台执行体的环境里。保留旧名兜底 = 老部署不受影响。
+     */
+    token: process.env.ALYSIA_RUNNER_TOKEN || process.env.ALYSIA_WEBUI_TOKEN || '',
     intervalSec: 10,
     /**
      * 单轮执行上限（秒）。
@@ -83,10 +88,18 @@ function printHelp() {
   --timeout <sec>   单轮执行上限（默认**按阶段**：intent/review/statement 900s、sketch 2400s、revise 3600s、build 5400s；显式给就统一覆盖）
   --once            只轮询一轮
   --dry-run         认领但不执行、不回传（打印将要跑的命令）
-凭据（环境变量）：ALYSIA_WEBUI_TOKEN（调 alysia API）、DEEPSEEK_API_KEY（dsh 跑模型）`);
+凭据（环境变量）：ALYSIA_RUNNER_TOKEN（**受限令牌**；没有则退回 ALYSIA_WEBUI_TOKEN）、DEEPSEEK_API_KEY（dsh 跑模型）`);
 }
 
 // ── HTTP ───────────────────────────────────────────────────────
+
+/**
+ * ★ 2026-10-19（change: `wake-her-on-task-result`）：给每次请求加**超时**。
+ *
+ * 旧实现没有 AbortSignal：任何一次 API 挂住（服务重启中、网络黑洞）都会把
+ * 整个 runner 卡死在这一行 —— 之后的任务全部不认领，而且日志上看不出在等谁。
+ */
+const API_TIMEOUT_MS = 20_000;
 
 async function api(cfg, method, path, body) {
   const res = await fetch(`${cfg.base}${path}`, {
@@ -96,6 +109,7 @@ async function api(cfg, method, path, body) {
       ...(cfg.token ? { Authorization: `Bearer ${cfg.token}` } : {}),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
+    signal: AbortSignal.timeout(API_TIMEOUT_MS),
   });
   const text = await res.text();
   let json = null;
@@ -112,7 +126,23 @@ async function api(cfg, method, path, body) {
  * ⚠️ 验收标准附在正文后面（它同样是给执行体看的约束），而不是只留在服务端。
  */
 export function buildTaskText(task) {
-  const lines = [task.goal];
+  const lines = [];
+  /**
+   * ★ 2026-10-19（change: `wake-her-on-task-result`）：返工轮要把**原目标**也带上。
+   *
+   * 返工会把 `goal` 换成修改意见 —— 到了工程环境里她只看得到"改成什么样"，
+   * 看不到"当初想做什么"，于是容易把前面的东西改跑偏。`originalGoal` 补上这一半。
+   */
+  const hasOriginal =
+    task.revision > 0 &&
+    typeof task.originalGoal === 'string' &&
+    task.originalGoal.trim() !== '' &&
+    task.originalGoal !== task.goal;
+  if (hasOriginal) {
+    lines.push(`最初的目标：${task.originalGoal}`, '', `这一轮要我改的是：${task.goal}`);
+  } else {
+    lines.push(task.goal);
+  }
   if (task.revision > 0) {
     lines.push('', `（这是第 ${task.revision} 轮修改，请在**同一个工程会话**里继续，不要重新搭。）`);
   }
@@ -190,7 +220,7 @@ export function artifactPages(workspace, sinceMs, isPublished, mtimeOf) {
     } catch {
       published = false;
     }
-    out.push({ path: rel, published });
+    out.push({ path: rel, published, mtime: mt });
   }
   out.sort((a, b) => {
     // 最新优先；`index.html` 在并列时让位（它是项目门牌的落点，不是"这一件的名字"）
@@ -256,7 +286,63 @@ export function mapOutcome({ reason, timedOut }) {
   return { status: 'unknown', error: `无法确认执行结果（turn_end.reason=${reason ?? '缺失'}）` };
 }
 
+/**
+ * ★ 2026-10-19（change: `wake-her-on-task-result`）：这次失败是不是「**会话续接不上**」。
+ *
+ * 为什么必须单独判：续接失败与执行失败在状态机里同形（都是 `failed`），
+ * 但处理完全不同 —— 前者应该**丢掉会话 id 重开一次**（并记下原因），
+ * 后者不该重试。不区分就会退化成"静默重建会话"（目标丢失且没人知道）。
+ */
+export function looksLikeResumeFailure(run) {
+  const text = `${run?.stderr ?? ''}\n${run?.stdout ?? ''}`.toLowerCase();
+  if (!text.trim()) return false;
+  return (
+    /unknown session/.test(text) ||
+    /session[^\n]{0,40}not found/.test(text) ||
+    /no such session/.test(text) ||
+    /session id[^\n]{0,30}(invalid|unknown)/.test(text)
+  );
+}
+
 // ── 执行 ───────────────────────────────────────────────────────
+
+/**
+ * 子进程**环境变量白名单**（★ 2026-10-19，change: `wake-her-on-task-result`）。
+ *
+ * 为什么不能再 `{ ...process.env }`：runner 属于 `alysia-runner` 用户，它的环境里
+ * 握着 `ALYSIA_*_TOKEN` 这类**管理级**凭据；全量继承等于让后台执行体（以及它拉起的
+ * 每一个 bwrap/chromium）都拿到管理面。工程子 Agent 只需要：跑得起来、连得上模型、
+ * 拿得到**受限**令牌。
+ *
+ * ⚠️ 白名单是**显式**的：加一项要在这里写清为什么。
+ */
+const CHILD_ENV_ALLOW = [
+  'PATH',        // 找不到 dsh/node 就啥也跑不起来
+  'HOME',        // dsh 的缓存/配置根
+  'LANG', 'LC_ALL', // UTF-8 / 中文路径
+  'TZ',          // 她算时间要用
+  'TMPDIR',      // bwrap / 截图临时目录
+  'NODE_OPTIONS',// 需要时（堆大小等）；内容由部署方负责
+  'DSH_HOME',    // 独立 dsh 家目录（契约 19）
+  'DEEPSEEK_API_KEY', // 模型凭据：这是她干活必需的
+];
+
+/** 从进程环境挑出白名单项；**不透传管理令牌** */
+export function buildChildEnv(allowPublish, source = process.env) {
+  const env = {};
+  for (const k of CHILD_ENV_ALLOW) {
+    if (source[k] !== undefined) env[k] = source[k];
+  }
+  env.ALYSIA_ALLOW_PUBLISH = allowPublish === false ? '0' : '1';
+  /**
+   * ★ 适配器（profile patch）读的是 `ALYSIA_WEBUI_TOKEN`。这里**只注入受限令牌**：
+   *   有 `ALYSIA_RUNNER_TOKEN` 就用它，否则退回旧变量（老部署行为不变）。
+   *   ⇒ 子进程即使把环境 dump 出来，也拿不到管理令牌。
+   */
+  const runnerToken = source.ALYSIA_RUNNER_TOKEN || source.ALYSIA_WEBUI_TOKEN || '';
+  if (runnerToken) env.ALYSIA_WEBUI_TOKEN = runnerToken;
+  return env;
+}
 
 function runDsh({ workspace, profile, task, timeoutSec, allowPublish }) {
   return new Promise((resolve) => {
@@ -266,7 +352,8 @@ function runDsh({ workspace, profile, task, timeoutSec, allowPublish }) {
       // ★ 2026-10-19（change: `give-her-a-publish-tool`）：把"这次允不允许上线"
       //   透传给她手上的 `publish_page` 工具（`ALYSIA_ALLOW_PUBLISH=0` ⇒ 工具直接拒绝）。
       //   来源：服务端在**认领响应**里按任务来源判好（自发起 = 由配置决定；用户委托 = 允许）。
-      env: { ...process.env, ALYSIA_ALLOW_PUBLISH: allowPublish === false ? '0' : '1' },
+      // ★ 2026-10-19（change: `wake-her-on-task-result`）：环境改成**白名单**，不再全量继承
+      env: buildChildEnv(allowPublish),
       stdio: ['ignore', 'pipe', 'pipe'],
       // ★ 2026-10-18（change: `scope-loop-to-this-round`）：起**独立进程组**，
       //   超时时整组杀。dsh 会拉起 bwrap/chromium（她自己截图用的），
@@ -684,12 +771,33 @@ async function tick(cfg, log) {
    *   放进模块级变量是为了不改 5 处 `submit()` 调用点 —— runner 一次只跑一个任务
    *   （单并发，契约 5），所以没有并发歧义。
    */
-  runContext = { workspace: project.workspace, publicUrl: project.publicUrl, sinceMs: Date.now() };
+  runContext = {
+    workspace: project.workspace,
+    publicUrl: project.publicUrl,
+    sinceMs: Date.now(),
+    /**
+     * ★ 2026-10-19（change: `wake-her-on-task-result`）：本轮的**认领批次**。
+     * 服务端用它拒绝"过期批次"的回传/推进（回收重认领之后，旧批次的迟到结果不许覆盖）。
+     */
+    claimToken: typeof task.attempts === 'number' ? task.attempts : undefined,
+    taskId: task.taskId,
+  };
+  resumeFallback = '';
 
   const maxRounds = cfg.loopMaxRounds ?? 8;
   let phasePrompt = nextPrompt ?? '';
   let currentPhase = task.phase ?? 'intent';
-  let sessionId = null;
+  /**
+   * ★ 2026-10-19（change: `wake-her-on-task-result`）：**跨阶段续接**。
+   *
+   * 旧实现：`sessionId` 只写进局部变量、从不回填 `task` ⇒ 一个 tick 里的
+   *   第 2..N 个阶段全部**不带** `--session-id`，六个阶段 = 六次独立会话。
+   *   于是"先想、再画草图、再自评"这些阶段之间的上下文**根本没接上**（真机上撞出来的）。
+   * 现在：起点取任务已有的会话，每轮跑完把新 id 回填，下一阶段就带上了。
+   */
+  let sessionId = task.dshSessionId ?? null;
+  /** 续接失败重开过几次（最多一次，避免死循环）；原因随结果回传 */
+  let resumeFallbackNote = '';
   let finalText = '';
   let lastDetail = '';
   let rounds = 0;
@@ -697,15 +805,17 @@ async function tick(cfg, log) {
 
   for (;;) {
     rounds += 1;
-    const runTask = { ...task, goal: task.goal };
-    const dshArgs = buildDshArgs(task, project.profile);
+    // 每阶段一个起点：只用于日志/排障（判据按**整轮** sinceMs，见下面对 facts 的说明）
+    const phaseStartedAt = Date.now();
+    const runTask = { ...task, dshSessionId: sessionId ?? null };
+    const dshArgs = buildDshArgs(runTask, project.profile);
     log(`  [第 ${rounds} 轮] 阶段 ${currentPhase} · dsh ${dshArgs.slice(0, -1).join(' ')} <task>`);
 
     // 阶段前快照：用来拦"阶段外写入"
     const beforeSnapshot = snapshotTree(project.workspace);
 
     const started = Date.now();
-    const run = await runDsh({
+    let run = await runDsh({
       workspace: project.workspace,
       profile: project.profile,
       task: { ...runTask, goal: buildPhaseTask(task, phasePrompt) },
@@ -713,14 +823,42 @@ async function tick(cfg, log) {
       // 服务端按**任务来源**判好的（自发起=配置决定；用户委托=允许），透传给 publish_page
       allowPublish: allowPublish !== false,
     });
-    const parsed = parseRunEvents(run.stdout);
-    const outcome = mapOutcome({ reason: parsed.reason, timedOut: run.timedOut });
+    let parsed = parseRunEvents(run.stdout);
+    let outcome = mapOutcome({ reason: parsed.reason, timedOut: run.timedOut });
+
+    /**
+     * ★ 2026-10-19：**续接失败 ⇒ 丢 id 重开一次**（只重开一次）。
+     *
+     * 旧行为：会话 id 失效时 dsh 直接报错 ⇒ 判 `failed` ⇒ 这一轮白跑，
+     * 而且下一轮服务端还会带着同一个失效 id 再来一次（死循环）。
+     * 现在：明确降级成新会话、把原因记进结果，让她和人都知道"这次没接上"。
+     */
+    if (sessionId && outcome.status !== 'needs_review' && looksLikeResumeFailure(run)) {
+      resumeFallbackNote =
+        `工程会话 ${sessionId} 续接失败（${(run.stderr || run.stdout).slice(0, 200).replace(/\n/g, ' ')}）` +
+        ' —— 已改为**新会话**继续，上一阶段的上下文没接上';
+      log(`  ⚠️ ${resumeFallbackNote}`);
+      resumeFallback = resumeFallbackNote;
+      sessionId = null;
+      run = await runDsh({
+        workspace: project.workspace,
+        profile: project.profile,
+        task: { ...task, dshSessionId: null, goal: buildPhaseTask(task, phasePrompt) },
+        timeoutSec: timeoutForPhase(currentPhase, cfg.timeoutSec),
+        allowPublish: allowPublish !== false,
+      });
+      parsed = parseRunEvents(run.stdout);
+      outcome = mapOutcome({ reason: parsed.reason, timedOut: run.timedOut });
+    }
+
     const secs = Math.round((Date.now() - started) / 1000);
     sessionId = parsed.sessionId ?? sessionId;
     finalText = parsed.finalText || finalText;
     log(
-      `    退出码 ${run.code}，用时 ${secs}s，reason=${parsed.reason ?? '（缺失）'}` +
-        (parsed.badLines ? `，NDJSON 坏行 ${parsed.badLines}` : ''),
+      `    退出码 ${run.code}，用时 ${secs}s（阶段起点 +${Math.round((started - phaseStartedAt) / 1000)}s），` +
+        `reason=${parsed.reason ?? '（缺失）'}` +
+        (parsed.badLines ? `，NDJSON 坏行 ${parsed.badLines}` : '') +
+        (sessionId ? `，会话 ${sessionId.slice(0, 18)}…` : ''),
     );
 
     // ★ 记账（**不搬文件**）：非 publish 阶段动了 `public/` 就记一笔；
@@ -765,8 +903,14 @@ async function tick(cfg, log) {
 
     // 收集事实 → 让服务端判能不能进下一阶段
     // ★ 只报**这一轮**动过的（`runContext.sinceMs`）：上一轮的 drafts / 自评不再算数
+    //   ⚠️ 这里**不能**改成"按当前阶段起点"：`review` 闸门要看的是 `sketch` 阶段画的那几张草稿，
+    //      按阶段切会把跨阶段的累积切断（review 永远过不去）。"这一轮"= 整个 tick。
     const facts = collectFacts(project.workspace, runContext?.sinceMs);
-    const adv = await api(cfg, 'POST', `/api/project-tasks/${task.taskId}/advance`, { facts });
+    const adv = await api(cfg, 'POST', `/api/project-tasks/${task.taskId}/advance`, {
+      facts,
+      // ★ 2026-10-19：只允许**当前认领批次**推进阶段（重放/乱序的 advance 会被拒）
+      ...(runContext?.claimToken !== undefined ? { claimToken: runContext.claimToken } : {}),
+    });
     if (!adv.ok) {
       log(`    推进失败（HTTP ${adv.status}）：${adv.json?.error ?? adv.text?.slice(0, 160)}`);
       return await submit(cfg, log, task, {
@@ -817,6 +961,11 @@ async function tick(cfg, log) {
 
 /** 回传时用到的"本轮上下文"（工作区 / 项目地址 / 起始时刻）；由 `tick()` 在认领后设置 */
 let runContext = null;
+/**
+ * 本轮是否发生过「会话续接失败 ⇒ 重开」。放模块级是为了不改 5 处 submit 调用点
+ * （runner 单并发，没有歧义）；由 `submit()` 写进结果，让服务端/她都能看见。
+ */
+let resumeFallback = '';
 
 /** 回传统一入口（把阶段信息拼进 final，回执里能看见过程） */
 async function submit(cfg, log, task, o) {
@@ -845,7 +994,13 @@ async function submit(cfg, log, task, o) {
         rel => existsSync(join(runContext.workspace, 'public', rel)),
       );
       for (const p of pages.slice(0, 5)) {
-        artifacts.push({ path: p.path, published: p.published, url: pageUrl(runContext.publicUrl, p) });
+        // ★ 2026-10-19：带 mtime —— 服务端据此判"是不是这一轮的"（旧文件不能冒充）
+        artifacts.push({
+          path: p.path,
+          published: p.published,
+          url: pageUrl(runContext.publicUrl, p),
+          ...(Number.isFinite(p.mtime) ? { mtime: p.mtime } : {}),
+        });
       }
       if (artifacts.length > 0) {
         log(`  本轮产物页面：${artifacts.map(a => `${a.path}${a.published ? '' : '（未发布·预览）'}`).join('、')}`);
@@ -856,23 +1011,54 @@ async function submit(cfg, log, task, o) {
     }
   }
 
-  const res = await api(cfg, 'POST', `/api/project-tasks/${task.taskId}/result`, {
+  const payload = {
     status: o.status,
     dshSessionId: o.sessionId ?? undefined,
     result: {
       final,
       ranSeconds: o.secs,
       exitCode: o.exitCode,
+      /**
+       * ★ 2026-10-19：**本轮开始时刻**（ms）。服务端拿它和产物 mtime 比，
+       *   算出 `evidence.fresh` —— 「这次真的动过文件」不再靠自述。
+       */
+      ...(Number.isFinite(runContext?.sinceMs) ? { roundStartedAt: runContext.sinceMs } : {}),
+      ...(resumeFallback || o.resumeFallback
+        ? { resumeFailed: String(o.resumeFallback || resumeFallback).slice(0, 500) }
+        : {}),
       ...(o.selfStatement ? { selfStatement: o.selfStatement.slice(0, 600) } : {}),
     },
     artifacts,
     error: o.error,
-  });
+    /**
+     * ★ 2026-10-19：**认领批次**。服务端只接受当前批次的回传 ——
+     *   任务被回收重认领之后，上一批次的迟到结果不许覆盖新一轮。
+     */
+    ...(runContext?.claimToken !== undefined ? { claimToken: runContext.claimToken } : {}),
+  };
+
+  /**
+   * ★ 2026-10-19（change: `wake-her-on-task-result`）：**有限重试**。
+   *
+   * 旧行为：回传失败只打一行日志，任务停在 `running` 等 30 分钟超时回收 ——
+   * 那期间结果（和这个会话 id）全在内存里，进程一换就没了。
+   * 现在：网络错误 / 5xx 退避重试 3 次；**409 不重试**（它表示服务端已经处理过或判定过期）。
+   */
+  let res = { ok: false, status: 0, json: null, text: '' };
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      res = await api(cfg, 'POST', `/api/project-tasks/${task.taskId}/result`, payload);
+    } catch (err) {
+      res = { ok: false, status: 0, json: null, text: err?.message ?? String(err) };
+    }
+    if (res.ok || res.status === 409 || (res.status >= 400 && res.status < 500)) break;
+    if (attempt < 2) await sleep(1000 * 2 ** attempt);
+  }
   if (!res.ok) {
     log(`  !! 回传失败（HTTP ${res.status}）：${res.json?.error ?? res.text?.slice(0, 200)}` +
-        ` —— 任务保持 running，等超时回收`);
+        (res.status === 409 ? ' —— 服务端已判定过期/已处理，不重试' : ' —— 任务可能停在 running，等超时回收'));
   } else {
-    log(`  已回传：${res.json?.task?.status}`);
+    log(`  已回传：${res.json?.task?.status}${res.json?.eventId ? `（已入队结果事件 ${res.json.eventId}）` : ''}`);
   }
   return { didWork: true };
 }

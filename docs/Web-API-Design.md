@@ -10,6 +10,13 @@
 >   前端: `setWebuiToken(token)` 存 localStorage 后自动附加；401 → 登录遮罩。
 >   契约见 `openspec/specs/server-hardening/spec.md` §6。
 >
+> ★ **双令牌**（2026-10-19, `wake-her-on-task-result`）：另有 `server.runnerToken`
+>   （`ALYSIA_RUNNER_TOKEN`）供宿主 runner / 后台 dsh 使用。它**只**放行：
+>   `GET /api/persona/prompt`、`POST /api/ingest`、`POST /api/memory/read`、
+>   `POST /api/sessions/:id/extract`、`/api/project-tasks*`、`POST /api/host/pages`、
+>   `POST /api/vision/describe`。越权 ⇒ **403**（不是 401：它是被识别的调用方）。
+>   目的：后台执行体不再握管理面（角色导入/知识库删除/隐私开关等一律拒绝）。
+>
 > ★ 消费方（2026-09-24, adopt-nextjs-console；**2026-10-02 收敛**）:
 >   **唯一消费方 = `packages/console`**（Next.js，spec `alysia-console`）。
 >   `packages/webui`（Vue）已于 2026-10-02 删除（change: remove-packages-webui）——
@@ -322,14 +329,18 @@ dsh 插件只回传原始事件；提取 / 5 道护栏 / 事实去重 / supersed
 | GET | `/api/project-tasks/next?projectId=` | **runner** | **原子认领**；空闲返回 `{ ok, task: null }`（空转是常态） |
 | GET | `/api/project-tasks/:id` | 聊天工具 | 查状态/结果/产物 |
 | POST | `/api/project-tasks/:id/revision` | 聊天工具 | 追加意见 ⇒ revision+1、回 `queued`、**沿用同一工程会话** |
-| POST | `/api/project-tasks/:id/result` | **runner** | 回传终态（`needs_review`/`completed`/`failed`/`unknown`） |
+| POST | `/api/project-tasks/:id/result` | **runner** | 回传终态；**落库 + 入队结果事件**（2026-10-19 起不再直接推送） |
+| POST | `/api/project-tasks/:id/accept` | **主 Agent（她）** | **验收**：`needs_review` + revision 匹配 ⇒ `completed`（2026-10-19 新增） |
 
 ```
 创建    { projectId, requestKey, goal, acceptanceCriteria?, originSessionId?, origin? }
         → 200 { ok, reason: 'created'|'deduped', task } | 409 { ok:false, reason:'busy', task }
-认领    → 200 { ok, task, project: { id, workspace, profile } } | 200 { ok, task: null }
-回传    { status, dshSessionId?, result?, artifacts?, error? }
-        → 200 { ok, task } | 409（不在 running：迟到的回传不许覆盖）
+认领    → 200 { ok, task, project: { id, workspace, profile }, nextPrompt, allowPublish }
+        | 200 { ok, task: null } | 200 { ok, task:null, paused:{reason,until,message} }
+回传    { status, dshSessionId?, result?, artifacts?, error?, claimToken? }
+        → 200 { ok, task, eventId? } | 409（不在 running / 不是当前批次）
+验收    { revision, by?, note? }
+        → 200 { ok, task } | 409 { ok:false, error, task }（版本不对/不在待验收）
 ```
 
 ★ **`projectId` 必须在 `config.yml` 的 `projects:` 里登记过**；未登记 ⇒ 400 且**列出已登记的**。
@@ -340,8 +351,14 @@ dsh 插件只回传原始事件；提取 / 5 道护栏 / 事实去重 / supersed
 
 ★ **runner 永远不写 `completed`**：那是「结果被接受」，属验收方；dsh 正常结束只写 `needs_review`。
 拿不到终态/超时 ⇒ `unknown`，**绝不自动重投**（盲目重投会把同一份工作做两遍）。
+**验收由她经 `/accept` 写**（★ 2026-10-19，`wake-her-on-task-result`）。
 
-⚠️ 该组端点与既有端点**同一套 Bearer 鉴权**（不新开通道）。
+★ 2026-10-19（`wake-her-on-task-result`）：`result` 现在是「终态 + 事件入队」的**同一事务**；
+投递由进程内 `al:subagent-wake` 领取（**不新开 HTTP 端点**），失败退避重试、重启后继续。
+`claimToken`（= 认领时的 `attempts`）**可选**：带了就只接受当前批次，迟到结果一律 409。
+
+⚠️ 该组端点与既有端点**同一套 Bearer 鉴权**（不新开通道）；
+另有 **runner 令牌**（`server.runnerToken`）只能调白名单端点（见 §3.1）。
 
 ## 2.5 角色系统（2026-08-02 已封装）
 | Core 方法 | 用途 |

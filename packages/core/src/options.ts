@@ -50,6 +50,11 @@ export interface AlysiaCoreOptions {
    */
   projectIds?: string[];
   /**
+   * ★ 2026-10-19（change: `wake-her-on-task-result`）：**自动返工上限**。
+   * 只拦「她看着结果自己决定改」的返工；用户点名要改的不受它限制。
+   */
+  maxAutoRework?: number;
+  /**
    * 执行窗口（★ change: gate-project-tasks-to-offpeak）。
    * 高峰时段（工作日 9-12 / 14-18）只排队不执行；节假日表由配置给（不内置，猜错更糟）。
    */

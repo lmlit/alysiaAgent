@@ -38,6 +38,8 @@ import { MAX_INGEST_BATCH, validateIngestEvent, normalizeIngestEvent } from '../
 import type { MemoryEvent } from '@alysia/core/memory';
 import { computeTaskWindow } from '@alysia/core/memory';
 import { PHASE_PROMPTS, type LoopPhase } from '@alysia/core/memory';
+// ★ 2026-10-19（change: `wake-her-on-task-result`）：结果事件体（纯函数，形状即契约）
+import { buildSubagentResultPayload } from '@alysia/core/memory';
 import { pickPageUrl } from './receipt-url.js';
 import { hostPagesCache, parseHostPagesInput } from '../host-pages.js';
 import { existsSync, readFileSync, statSync, writeFileSync, unlinkSync, writeFileSync as writeFileSyncForVision } from 'fs';
@@ -45,6 +47,37 @@ import { randomUUID } from 'crypto';
 import { tmpdir } from 'os';
 import { basename, dirname, join, resolve, sep } from 'path';
 import { fileURLToPath } from 'url';
+
+/**
+ * ★ 2026-10-19（change: `wake-her-on-task-result`）：runner 令牌的**端点白名单**。
+ *
+ * 判定原则：**只放开它真的在用的那几条**，不是"除了这些都能用"。
+ * 每一条都对应一个已知调用方，加一条要在这里写清是谁在调：
+ *
+ * | 端点 | 谁在调 |
+ * |---|---|
+ * | `GET /api/persona/prompt` | dsh 适配器（动态人设） |
+ * | `POST /api/ingest` | dsh 适配器的记忆回传 |
+ * | `POST /api/memory/read` | dsh 适配器的 `recall_memory` |
+ * | `POST /api/sessions/:id/extract` | dsh 会话结束时的结算（仅命令行匹配，不含通配） |
+ * | `/api/project-tasks/**` | 宿主 runner（认领 / 推进 / 回传 / 查窗口） |
+ * | `POST /api/host/pages` | 宿主 runner 推页面清单 |
+ * | `POST /api/vision/describe` | 宿主 runner / dsh 看图 |
+ * | `GET /api/health` | 已在钩子里豁免 |
+ *
+ * ⚠️ 特意**不**放开：角色导入/导出、知识库删除、隐私开关、人格调整、`/api/life` 写入类。
+ */
+export function isRunnerAllowed(method: string, path: string): boolean {
+  if (method === 'GET' && path === '/api/persona/prompt') return true;
+  if (method === 'POST' && path === '/api/ingest') return true;
+  if (method === 'POST' && path === '/api/memory/read') return true;
+  if (method === 'POST' && path === '/api/host/pages') return true;
+  if (method === 'POST' && path === '/api/vision/describe') return true;
+  // /api/sessions/<id>/extract —— 只认这一条形状（别用宽松前缀，那会顺带放开别的会话端点）
+  if (method === 'POST' && /^\/api\/sessions\/[^/]+\/extract$/.test(path)) return true;
+  if (path.startsWith('/api/project-tasks')) return true;
+  return false;
+}
 
 /** ★ 8-29 cr-p0-webui-auth：WebUI 管理面板鉴权选项
  *  requireAuth=true（服务模式）：所有 /api/* 校验 `Authorization: Bearer <token>`，
@@ -99,6 +132,30 @@ export interface WebuiAuthOptions {
    * 缺省 = 没配视觉模型，此时 `/api/vision/describe` 返回 501（**明确不可用**，不是假装成功）。
    */
   vision?: { describe(imagePath: string, prompt?: string): Promise<string | null> };
+  /**
+   * ★ 2026-10-19（change: `wake-her-on-task-result`）：**宿主 runner 专用令牌**。
+   *
+   * 为什么要把令牌拆开：runner 的子进程是 `dsh`（非 root，但**继承 runner 的环境**）。
+   * 它只需要「回传记忆 / 领任务 / 推页面清单 / 看图」这几条；拿全权管理 token 等于
+   * 一个后台执行体握着你整个管理面。
+   *
+   * 配了就生效：这个 token 只能调白名单端点（见 `isRunnerAllowed`），其余一律 403。
+   * 不配 ⇒ 行为与以前一致（只有 `webuiToken` 一条路）。
+   */
+  runnerToken?: string;
+  /**
+   * ★ 2026-10-19（change: `wake-her-on-task-result`）：**异步唤醒开关**。
+   *
+   * `true`（默认）：终态结果只入队，由 `al:subagent-wake` 领走、跑一轮主 Agent 再说话；
+   * `false`：**回退到旧行为** —— 落库 + 一次性通知 + 直接推送（不唤起任何一轮）。
+   * 用途：出问题时一个开关退回，普通聊天完全不受影响。
+   */
+  subagentWake?: boolean;
+  /**
+   * ★ 2026-10-19：自动返工上限（按任务血缘累计）。写进事件体给她看「还能不能改」。
+   * 真正的拦截在 `al:subagent-wake`（它决定要不要让她继续）——这里只负责把余额告诉她。
+   */
+  maxAutoRework?: number;
 }
 
 export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
@@ -132,11 +189,23 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
   //   本地走 vite dev，Docker 镜像里没打包 dist。
   //   现改为只守 /api/*：静态资源公开、数据仍在鉴权后 —— 标准 SPA + API 鉴权模型。
   if (requireAuth) {
+    // ★ 2026-10-19（change: `wake-her-on-task-result`）：**双令牌**。
+    //   管理 token = 全权；runner token = 只够它干活的那几条。见 `isRunnerAllowed`。
+    const runnerToken = (opts.runnerToken ?? '').trim();
     app.addHook('onRequest', async (req: any, reply: any) => {
       const path = String(req.url ?? '').split('?')[0];
       if (!path.startsWith('/api/')) return; // 静态资源/页面不鉴权
       if (path === '/api/health') return;    // 容器 healthcheck 豁免
       const auth = String(req.headers.authorization ?? '');
+      // runner 令牌：**先判白名单**，不在白名单上一律 403（不是 401：它是被识别出来的调用方）
+      if (runnerToken && auth === `Bearer ${runnerToken}`) {
+        if (isRunnerAllowed(String(req.method ?? '').toUpperCase(), path)) return;
+        logger.warn(`[auth] runner 令牌越权：${req.method} ${path} —— 已拒绝`);
+        return reply.code(403).send({
+          ok: false,
+          error: 'runner 令牌只能调白名单端点（记忆回传/任务/页面清单/看图）—— 这不是你的权限问题，是设计',
+        });
+      }
       if (!webuiToken || auth !== `Bearer ${webuiToken}`) {
         return reply.code(401).send({ error: 'unauthorized' });
       }
@@ -450,10 +519,80 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
   const allowPublishForTask = (t: { origin?: string } | null | undefined): boolean =>
     t?.origin === 'self' ? taskWindowConfig?.allowPublish === true : true;
 
+  /**
+   * ★ 2026-10-19（change: `wake-her-on-task-result`）：**唤醒开关**（缺省开）。
+   * 关掉 ⇒ 回退到旧路径（落库 + 一次性通知 + 直接推送），不唤起任何一轮。
+   */
+  const wakeEnabled = opts.subagentWake !== false;
+
+  /**
+   * 从任务的产物里挑出「本轮那个页面」的地址（契约 38 / 38c）。
+   * 服务端只做**合法前缀校验**，不自己拼（runner 才知道工作区里谁动过）。
+   */
+  const receiptUrlOf = (projectId: string, artifacts: unknown): string | undefined =>
+    pickPageUrl(projects[projectId]?.publicUrl, artifacts);
+
+  /**
+   * 组装一条「结果事件」的持久化体（★ 2026-10-19，change: `wake-her-on-task-result`）。
+   *
+   * 入队与任务终态**同一事务**（`submitResult` 里做），所以这里只负责把
+   * 「她做决定需要的信息」一次备齐：原目标 / 当前要求 / 产物 / 证据 / 返工余额。
+   * ⚠️ 证据（新鲜度）由 `computeEvidence` **按 mtime 算**，不采信执行侧自述。
+   */
+  const buildResultEvent = (
+    task: {
+      taskId: string;
+      projectId: string;
+      revision: number;
+      originSessionId: string;
+      originalGoal: string;
+      goal: string;
+      acceptanceCriteria: string;
+    },
+    status: string,
+    body: Record<string, unknown>,
+  ) => {
+    const result = body?.result && typeof body.result === 'object' ? (body.result as Record<string, unknown>) : {};
+    const artifacts = Array.isArray(body?.artifacts) ? (body.artifacts as unknown[]) : null;
+    const summary = typeof result.final === 'string' ? result.final : '';
+    const roundStartedAt = typeof result.roundStartedAt === 'number' ? result.roundStartedAt : undefined;
+    const pageVerified = typeof result.pageVerified === 'boolean' ? result.pageVerified : undefined;
+    const pageUrl = receiptUrlOf(task.projectId, artifacts);
+
+    const payload = buildSubagentResultPayload({
+      taskId: task.taskId,
+      projectId: task.projectId,
+      revision: task.revision,
+      status,
+      conversationId: task.originSessionId,
+      originalGoal: task.originalGoal,
+      currentRequirement: task.goal,
+      acceptanceCriteria: task.acceptanceCriteria,
+      dshSessionId: typeof body?.dshSessionId === 'string' ? body.dshSessionId : null,
+      summary,
+      artifacts,
+      evidence: { roundStartedAt, pageVerified, ...(pageUrl ? { pageUrl } : {}) },
+      autoRework: { used: task.revision, max: opts.maxAutoRework ?? 2 },
+    });
+    return { eventId: payload.eventId, taskId: task.taskId, projectId: task.projectId, revision: task.revision, payload };
+  };
+
   const openidOfSession = (sessionId: string): string | null => {
-    if (!sessionId.startsWith('qq')) return null;
-    const last = sessionId.split(':').pop() ?? '';
-    const m = /^(?:private|group)_([A-Za-z0-9_-]{6,})$/.exec(last);
+    const parts = sessionId.split(':');
+    if (parts.length < 3) return null;
+    const platform = parts[0] ?? '';
+    const type = parts[1] ?? '';
+    if (!platform.startsWith('qq')) return null;
+    /**
+     * ★ 2026-10-19（change: `wake-her-on-task-result`）：**群会话不推**。
+     *
+     * 旧实现的正则同时接受 `private_` 与 `group_`，然后把结果交给
+     * `sendProactive` —— 而那个方法走的是 `POST /v2/users/{openid}`（私聊端点）。
+     * 于是群会话的 openid 会被当私聊发出去：轻则失败，重则发错人。
+     */
+    if (type !== 'private') return null;
+    const last = parts[parts.length - 1] ?? '';
+    const m = /^private_([A-Za-z0-9_-]{6,})$/.exec(last);
     return m ? m[1] : null;
   };
 
@@ -821,7 +960,13 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
         ...(notesMtime !== undefined ? { notesMtime } : {}),
         ...(sinceMs !== undefined ? { sinceMs } : {}),
       },
-      { allowPublish: allowPublishForTask(existing) },
+      {
+        allowPublish: allowPublishForTask(existing),
+        // ★ 2026-10-19：只允许**当前认领批次**推进（防重放/乱序把阶段推错）
+        ...(typeof (req.body as { claimToken?: unknown })?.claimToken === 'number'
+          ? { claimToken: (req.body as { claimToken: number }).claimToken }
+          : {}),
+      },
     );
     if (!out) return reply.code(404).send({ ok: false, error: `没有这个任务：${id}` });
     logger.info(
@@ -858,7 +1003,7 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
     return { ok: true, task };
   });
 
-  /** runner 回传结果。⚠️ 只接受仍在 `running` 的任务（迟到的回传不许覆盖） */
+    /** runner 回传结果。⚠️ 只接受仍在 `running` 的任务（迟到的回传不许覆盖） */
   app.post('/api/project-tasks/:id/result', async (req, reply) => {
     const { id } = req.params as { id: string };
     const b = req.body as Record<string, unknown> | undefined;
@@ -869,23 +1014,77 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
         error: `status 必须是 ${[...RESULT_STATUSES].join('/')} 之一（queued/running 由服务端自己管）`,
       });
     }
+    const before = core.memoryManager.getProjectTask(id);
+    if (!before) return reply.code(404).send({ ok: false, error: `没有这个任务：${id}` });
+
+    /**
+     * ★ 2026-10-19（change: `wake-her-on-task-result`）：
+     * 终态与**结果事件**同一事务落库，之后由 `al:subagent-wake` 唤起她。
+     * 旧的一次性通知只在 `subagentWake=false`（回退开关）时执行。
+     */
+    const event = wakeEnabled ? buildResultEvent(before, status, b ?? {}) : undefined;
     const task = core.memoryManager.submitProjectTaskResult(id, {
       status: status as 'needs_review' | 'completed' | 'failed' | 'unknown',
       dshSessionId: typeof b?.dshSessionId === 'string' && b.dshSessionId ? b.dshSessionId : undefined,
       result: b?.result,
       artifacts: Array.isArray(b?.artifacts) ? b.artifacts : undefined,
       error: typeof b?.error === 'string' ? b.error : undefined,
+      // ★ claimToken：只接受**当前认领批次**的结果（回收重认领后，旧批次的迟到回传会被拒）
+      ...(typeof b?.claimToken === 'number' ? { claimToken: b.claimToken } : {}),
+      ...(event
+        ? {
+            event: {
+              eventId: event.eventId,
+              taskId: event.taskId,
+              projectId: event.projectId,
+              revision: event.revision,
+              kind: 'result',
+              payload: event.payload as unknown as Record<string, unknown>,
+            },
+          }
+        : {}),
     });
     if (!task) {
       return reply.code(409).send({
         ok: false,
-        error: `任务 ${id} 不在 running（可能已被回收重认领，或这是一次迟到的回传）——未写入`,
+        error: `任务 ${id} 不在 running / 不是当前批次（可能已被回收重认领，或这是一次迟到的回传）——未写入`,
       });
     }
-    logger.info(`[project-task] ${id} → ${task.status}${task.dshSessionId ? `（工程会话 ${task.dshSessionId}）` : ''}`);
-    // ★ 结果送回原会话（记进记忆 + 可选主动推送）。**不 await**：推送慢不该拖住 runner 的回传。
-    void notifyProjectTaskResult(task);
-    return { ok: true, task };
+    logger.info(
+      `[project-task] ${id} → ${task.status}${task.dshSessionId ? `（工程会话 ${task.dshSessionId}）` : ''}` +
+        (event ? ` · 已入队结果事件 ${event.eventId}` : ' · 唤醒关闭，走旧通知路径'),
+    );
+    if (!wakeEnabled) {
+      // 回退路径：记进记忆 + 一次性通知 + 直接推送（旧行为，一个开关退回去）
+      void notifyProjectTaskResult(task);
+    }
+    return { ok: true, task, ...(event ? { eventId: event.eventId } : {}) };
+  });
+
+  /**
+   * ★ 2026-10-19（change: `wake-her-on-task-result`）：**验收**。
+   *
+   * 与 `/result` 的分工：那是**执行方**说「跑完了」，这是**她（主 Agent）**说「我认了」。
+   * 一条记录里三个状态必须可区分：`status`（跑没跑完）/ `accepted_at`（认没认）/ `notified_at`（说没说）。
+   */
+  app.post('/api/project-tasks/:id/accept', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const b = req.body as Record<string, unknown> | undefined;
+    const revision = typeof b?.revision === 'number' ? Math.trunc(b.revision) : NaN;
+    if (!Number.isFinite(revision) || revision < 0) {
+      return reply.code(400).send({ ok: false, error: 'revision 必须是 ≥0 的整数' });
+    }
+    const out = core.memoryManager.acceptProjectTask(id, {
+      revision,
+      by: typeof b?.by === 'string' && b.by ? b.by : 'main-agent',
+      ...(typeof b?.note === 'string' && b.note ? { note: b.note } : {}),
+    });
+    if (!out.task) return reply.code(404).send({ ok: false, error: `没有这个任务：${id}` });
+    if (!out.accepted) {
+      return reply.code(409).send({ ok: false, error: out.reason ?? '验收未通过', task: out.task });
+    }
+    logger.info(`[project-task] ${id} r${revision} 已验收（${out.reason ?? 'ok'}）`);
+    return { ok: true, task: out.task };
   });
 
   /**

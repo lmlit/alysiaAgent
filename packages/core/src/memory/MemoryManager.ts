@@ -19,6 +19,13 @@ import type {
   CreateOutcome,
   SubmitResultInput,
 } from './stores/ProjectTaskStore.js';
+// ★ 2026-10-19（change: wake-her-on-task-result）：结果事件 outbox（重启后仍能投递）
+import {
+  ProjectTaskEventStore,
+  type ProjectTaskEvent,
+  type EnqueueEventInput,
+  type ProjectTaskEventStoreOptions,
+} from './stores/ProjectTaskEventStore.js';
 import { dialogueSpeaker } from './render-dialogue.js';
 // ★ 2026-10-18（change: `make-author-iterate`）：「做一件东西」的显式状态机
 import {
@@ -137,6 +144,10 @@ export class MemoryManager {
    *   暴露**纯数据**方法，不能在路由层自己开 DB 句柄。
    */
   private projectTaskStore: ProjectTaskStore;
+  /** ★ 2026-10-19（change: wake-her-on-task-result）：结果事件 outbox */
+  private projectTaskEventStore: ProjectTaskEventStore;
+  /** 主 Agent 是否可自己验收（`subagentWake.autoAccept`；默认开） */
+  private acceptEnabled = true;
   /** ★ 8-29 世界观底色缓存（worldview-base-field） */
   private _worldviewBlock: string = '';
   private worldbookMatcher: WorldbookMatcher;
@@ -171,6 +182,7 @@ export class MemoryManager {
     this.codeContextStore = new CodeContextStore(db);
     this.lifeStore = new LifeStore(db);
     this.projectTaskStore = new ProjectTaskStore(db);
+    this.projectTaskEventStore = new ProjectTaskEventStore(db);
 
     // ★ 8-10 slotify：把同一定时任务/画像类调用绑定到对应采样槽位
     const slotify = (slot?: Partial<SamplingSlot>): ILLMService => ({
@@ -1529,7 +1541,7 @@ export class MemoryManager {
   advanceProjectTaskLoop(
     taskId: string,
     facts: LoopFacts,
-    opts: { allowPublish: boolean; maxRounds?: number },
+    opts: { allowPublish: boolean; maxRounds?: number; claimToken?: number },
   ): { decision: LoopDecision; task: ProjectTask | null } | null {
     const task = this.projectTaskStore.get(taskId);
     if (!task) return null;
@@ -1540,7 +1552,16 @@ export class MemoryManager {
       allowPublish: opts.allowPublish,
       maxRounds: opts.maxRounds,
     });
-    const updated = this.projectTaskStore.setLoop(taskId, decision.next, decision.state);
+    // ★ 2026-10-19：带 claimToken ⇒ 只允许**当前认领批次**推进阶段（旧实现无条件 UPDATE，
+    //   重放/乱序的 advance 会把阶段推错）
+    const updated = this.projectTaskStore.setLoop(
+      taskId,
+      decision.next,
+      decision.state,
+      new Date(),
+      opts.claimToken,
+    );
+    if (!updated) return { decision, task: null };
     return { decision, task: updated };
   }
 
@@ -1628,8 +1649,85 @@ export class MemoryManager {
     return this.projectTaskStore.submitResult(taskId, input);
   }
 
-  /** 追加修改意见 ⇒ 新 revision、回 `queued`、**沿用同一个工程会话** */  addProjectTaskRevision(taskId: string, feedback: string): ProjectTask | null {
-    return this.projectTaskStore.addRevision(taskId, feedback);
+  // ─────────────────────────────────────────────────────────────
+  // ★ 2026-10-19（change: `wake-her-on-task-result`）：结果事件 outbox
+  //   「她做完了一轮」与「她知道自己做完了」之间靠它连接：
+  //   终态入队 → 调度器领取 → 跑一轮主 Agent → ack。全程落库，重启不丢。
+  // ─────────────────────────────────────────────────────────────
+
+  /** 入队一条结果事件（幂等：同 `eventId` 只入一次） */
+  enqueueProjectTaskEvent(
+    input: EnqueueEventInput,
+  ): { created: boolean; event: ProjectTaskEvent | null } {
+    return this.projectTaskEventStore.enqueue(input);
+  }
+
+  /** **原子**领一条待投递事件；没有则 `null`（空闲是常态） */
+  claimNextProjectTaskEvent(): ProjectTaskEvent | null {
+    return this.projectTaskEventStore.claimNext();
+  }
+
+  /** 投递成功 → ack */
+  finishProjectTaskEvent(eventId: string): boolean {
+    return this.projectTaskEventStore.finish(eventId);
+  }
+
+  /** 投递失败 → 退避重试（用尽 → dead，响亮地停） */
+  failProjectTaskEvent(eventId: string, error: string): ProjectTaskEvent | null {
+    return this.projectTaskEventStore.fail(eventId, error);
+  }
+
+  getProjectTaskEvent(eventId: string): ProjectTaskEvent | null {
+    return this.projectTaskEventStore.get(eventId);
+  }
+
+  listProjectTaskEvents(taskId: string): ProjectTaskEvent[] {
+    return this.projectTaskEventStore.listByTask(taskId);
+  }
+
+  countProjectTaskEventsByStatus(): Record<string, number> {
+    return this.projectTaskEventStore.countByStatus();
+  }
+
+  /**
+   * **验收**（她看过结果之后做的决定）。
+   *
+   * ⚠️ 与 `submitProjectTaskResult` 的分工：那个是**执行方**写「跑完了」，
+   *   这个是**她**写「我认了」。`completed` 只表示后者，与发布无关。
+   */
+  acceptProjectTask(
+    taskId: string,
+    input: { revision: number; by: string; note?: string },
+  ): { task: ProjectTask | null; accepted: boolean; reason?: string } {
+    // ★ 2026-10-19：`subagentWake.autoAccept=false` ⇒ 验收留给人（她只能汇报/返工/问）
+    if (!this.acceptEnabled) {
+      return {
+        task: this.projectTaskStore.get(taskId),
+        accepted: false,
+        reason: '自动验收现在关着（配置 subagentWake.autoAccept=false）—— 让他自己看过再说',
+      };
+    }
+    return this.projectTaskStore.acceptResult(taskId, input);
+  }
+
+  /** 开关：是否允许主 Agent 自己验收（默认开） */
+  setAcceptEnabled(enabled: boolean): void {
+    this.acceptEnabled = enabled;
+  }
+
+  /** 标记结果已发出（QQ 回复成功之后调；去重闸） */
+  markProjectTaskNotified(taskId: string): void {
+    this.projectTaskStore.markNotified(taskId);
+  }
+
+  /** 该任务已经返工过几轮（自动返工上限按它算） */
+  projectTaskReworkCount(taskId: string): number {
+    return this.projectTaskStore.reworkCount(taskId);
+  }
+
+  /** 追加修改意见 ⇒ 新 revision、回 `queued`、**沿用同一个工程会话** */
+  addProjectTaskRevision(taskId: string, feedback: string, fromEventId?: string): ProjectTask | null {
+    return this.projectTaskStore.addRevision(taskId, feedback, new Date(), { fromEventId });
   }
 
   /**

@@ -38,6 +38,8 @@ export const coreModule: Module = {
       projectIds: Object.keys(config.projects ?? {}),
     // ★ 2026-10-18（gate-project-tasks-to-offpeak）：工具回执要能说清"到点自己会跑"
     projectTasks: config.projectTasks,
+    // ★ 2026-10-19（wake-her-on-task-result）：自动返工上限（只拦"她看着结果自己决定改"）
+    maxAutoRework: config.subagentWake?.maxAutoRework ?? 2,
     /**
      * ★ 2026-10-19（change: `let-her-query-what-she-made`）：她的页面清单（只读投影）。
      * 数据结构单一来源是宿主上的 `pages.json`；容器看不到 ⇒ 由 runner 每轮

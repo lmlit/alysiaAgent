@@ -25,6 +25,7 @@
 import type Database from 'better-sqlite3';
 import { traceZeroRows } from '../../utils/write-trace.js';
 import { logger } from '../../utils/logger.js';
+import { insertEventRow, type EnqueueEventInput } from './ProjectTaskEventStore.js';
 // ★ 2026-10-18（change: `make-author-iterate`）：「做一件东西」的显式状态机
 import {
   initialLoopState,
@@ -83,7 +84,16 @@ export interface ProjectTask {
    * （闸门要「## 意图」，目标却写"别改文件"），连着 5 次发布成功却被反复打回。
    */
   kind: 'build' | 'action';
+  /** 当前这一轮的**要求**（返工时会换成修改意见） */
   goal: string;
+  /**
+   * ★ 2026-10-19（change: `wake-her-on-task-result`）：**原目标**。
+   *
+   * `addRevision` 会把 `goal` 换成修改意见 —— 于是"当初想做什么"就没了，
+   * 而验收时她必须同时看到「原目标 / 当前要求 / 结果」，否则只能凭最后一句话判。
+   * 老行为空串 ⇒ 读取时回落 `goal`（不回填存量）。
+   */
+  originalGoal: string;
   acceptanceCriteria: string;
   /** `null` = 还没有工程会话（首次执行前）——此时**不许**带 `--session-id` */
   dshSessionId: string | null;
@@ -103,6 +113,17 @@ export interface ProjectTask {
   phase: LoopPhase;
   /** 累积状态（rounds / visits / revisions） */
   loopState: LoopState;
+  /** 最后一次触发返工的事件 id（同一事件重复调用不再 +1 轮） */
+  lastReworkEventId: string | null;
+  /** 结果是否已由主 Agent 发出过（空 = 还没发；去重闸） */
+  notifiedAt: string | null;
+  /**
+   * ★ 2026-10-19：**验收**（谁、什么时候、什么话）。
+   * 与 `notifiedAt`、`status` 三者**必须可区分**：dsh 跑完 / 她验收 / 通知发出去
+   * 是三件不同的事，合成一个字段就会重演"完成=结束"那种误判。
+   */
+  acceptedBy: string | null;
+  acceptedAt: string | null;
 }
 
 /** 建任务的结果 —— **判别式**，不压成布尔：三种情形调用方要说不同的话 */
@@ -132,6 +153,10 @@ export interface SubmitResultInput {
   result?: unknown;
   artifacts?: unknown[];
   error?: string;
+  /** ★ 2026-10-19：认领批次令牌（= 认领时的 `attempts`）。给了就只接受当前批次 */
+  claimToken?: number;
+  /** ★ 2026-10-19：同事务入队的结果事件（不给 = 旧行为，只写状态） */
+  event?: EnqueueEventInput;
 }
 
 export interface ProjectTaskStoreOptions {
@@ -161,6 +186,9 @@ function rowToTask(r: Record<string, unknown>): ProjectTask {
     origin: (r.origin === 'delegated' || r.origin === 'self' ? r.origin : 'user'),
     kind: r.kind === 'action' ? 'action' : 'build',
     goal: String(r.goal),
+    // ★ 老行为空 ⇒ 回落 goal（**不回填**：存量 31 条不动）
+    originalGoal:
+      typeof r.original_goal === 'string' && r.original_goal !== '' ? r.original_goal : String(r.goal),
     acceptanceCriteria: String(r.acceptance_criteria ?? ''),
     dshSessionId: typeof r.dsh_session_id === 'string' && r.dsh_session_id !== '' ? r.dsh_session_id : null,
     status: String(r.status) as ProjectTaskStatus,
@@ -175,6 +203,16 @@ function rowToTask(r: Record<string, unknown>): ProjectTask {
     phase: (typeof r.phase === 'string' && r.phase !== '' ? r.phase : 'intent') as LoopPhase,
     loopState:
       (parse(r.loop_state) as LoopState | null) ?? initialLoopState(),
+    lastReworkEventId:
+      typeof r.last_rework_event_id === 'string' && r.last_rework_event_id !== ''
+        ? r.last_rework_event_id
+        : null,
+    notifiedAt:
+      typeof r.notified_at === 'string' && r.notified_at !== '' ? r.notified_at : null,
+    acceptedBy:
+      typeof r.accepted_by === 'string' && r.accepted_by !== '' ? r.accepted_by : null,
+    acceptedAt:
+      typeof r.accepted_at === 'string' && r.accepted_at !== '' ? r.accepted_at : null,
   };
 }
 
@@ -263,6 +301,7 @@ export class ProjectTaskStore {
       origin: input.origin ?? 'user',
       kind: input.kind === 'action' ? 'action' : 'build',
       goal: input.goal,
+      originalGoal: input.goal,
       acceptanceCriteria: input.acceptanceCriteria ?? '',
       dshSessionId: null,
       status: 'queued',
@@ -276,14 +315,18 @@ export class ProjectTaskStore {
       // ★ 一切从这里开始：先写意图，再画草图（见 `project-task-loop.ts`）
       phase: 'intent',
       loopState: initialLoopState(),
+      lastReworkEventId: null,
+      notifiedAt: null,
+      acceptedBy: null,
+      acceptedAt: null,
     };
 
     this.db.prepare(
       `INSERT INTO project_tasks
-         (task_id, request_key, project_id, origin_session_id, origin, kind, goal, acceptance_criteria,
+         (task_id, request_key, project_id, origin_session_id, origin, kind, goal, original_goal, acceptance_criteria,
           dsh_session_id, status, revision, result, artifacts, attempts, last_error, created_at, updated_at,
           phase, loop_state)
-        VALUES (@taskId, @requestKey, @projectId, @originSessionId, @origin, @kind, @goal, @acceptanceCriteria,
+        VALUES (@taskId, @requestKey, @projectId, @originSessionId, @origin, @kind, @goal, @originalGoal, @acceptanceCriteria,
                 NULL, @status, @revision, NULL, NULL, @attempts, NULL, @createdAt, @updatedAt,
                 @phase, @loopStateJson)`,
     ).run({
@@ -305,13 +348,24 @@ export class ProjectTaskStore {
     phase: LoopPhase,
     loopState: LoopState,
     now = new Date(),
+    claimToken?: number,
   ): ProjectTask | null {
     const ts = now.toISOString();
-    this.db
-      .prepare(
-        `UPDATE project_tasks SET phase = ?, loop_state = ?, updated_at = ? WHERE task_id = ?`,
-      )
-      .run(phase, JSON.stringify(loopState), ts, taskId);
+    // ★ 2026-10-19（change: `wake-her-on-task-result`）：带 claimToken 时**只允许当前批次**推进阶段。
+    //   旧实现是无条件 UPDATE ⇒ 重放的 `/advance` 会把阶段推错（乱序也能过）。
+    const sql = claimToken === undefined
+      ? `UPDATE project_tasks SET phase = ?, loop_state = ?, updated_at = ? WHERE task_id = ?`
+      : `UPDATE project_tasks SET phase = ?, loop_state = ?, updated_at = ?
+          WHERE task_id = ? AND status = 'running' AND attempts = ?`;
+    const args = claimToken === undefined
+      ? [phase, JSON.stringify(loopState), ts, taskId]
+      : [phase, JSON.stringify(loopState), ts, taskId, claimToken];
+    const info = this.db.prepare(sql).run(...(args as [string, string, string, string]));
+    if (claimToken !== undefined && info.changes === 0) {
+      traceZeroRows('ProjectTaskStore.setLoop', 0, taskId);
+      logger.warn(`[ProjectTask] ${taskId} 的推进被拒绝（不是当前批次 / 不在 running）—— 阶段不变`);
+      return null;
+    }
     return this.get(taskId);
   }
 
@@ -444,33 +498,121 @@ export class ProjectTaskStore {
   /**
    * runner 回传结果。**只允许从 `running` 回传**：
    * 迟到的回传（任务已被回收并重新认领）不许覆盖当前那一轮的状态。
+   *
+   * ★ 2026-10-19（change: `wake-her-on-task-result`）两处变化：
+   *   1. `input.claimToken` 给了 ⇒ 还要求 `attempts` 相等。**这是迟到保护的真闸**：
+   *      旧实现只判 `status='running'`，于是 A 崩了、任务被回收给 B 之后，
+   *      A 的迟到结果仍然会被接受（写进 B 那一轮）。
+   *   2. `input.event` 给了 ⇒ **同一个事务**里写终态 + 入队结果事件。
+   *      崩溃点从「结果丢了」变成「事件还在队列里」。
    */
-  submitResult(taskId: string, input: SubmitResultInput, now = new Date()): ProjectTask | null {
+  submitResult(
+    taskId: string,
+    input: SubmitResultInput,
+    now = new Date(),
+  ): ProjectTask | null {
+    const ts = now.toISOString();
+
+    const run = this.db.transaction((): ProjectTask | null => {
+      const tokenCond = input.claimToken === undefined ? '' : ' AND attempts = ?';
+      const args: unknown[] = [
+        input.status,
+        input.dshSessionId ?? null,
+        input.result === undefined ? null : JSON.stringify(input.result),
+        input.artifacts === undefined ? null : JSON.stringify(input.artifacts),
+        input.error ?? null,
+        ts,
+        taskId,
+      ];
+      if (input.claimToken !== undefined) args.push(input.claimToken);
+
+      const info = this.db.prepare(
+        `UPDATE project_tasks
+            SET status = ?, dsh_session_id = COALESCE(?, dsh_session_id),
+                result = COALESCE(?, result), artifacts = COALESCE(?, artifacts),
+                last_error = ?, updated_at = ?
+          WHERE task_id = ? AND status = 'running'${tokenCond}`,
+      ).run(...(args as never[]));
+
+      if (info.changes === 0) {
+        traceZeroRows('ProjectTaskStore.submitResult', 0, taskId);
+        logger.warn(
+          `[ProjectTask] ${taskId} 的回传被忽略（不在 running / 不是当前批次` +
+            `${input.claimToken !== undefined ? `，claimToken=${input.claimToken}` : ''}）` +
+            '—— 可能是迟到的回传，或已被回收重认领',
+        );
+        return null;
+      }
+
+      if (input.event) {
+        // 与终态**同一事务**：要么两件都成，要么都不成
+        insertEventRow(this.db, input.event, now);
+      }
+      return this.get(taskId);
+    });
+
+    return run();
+  }
+
+  /**
+   * ★ 2026-10-19（change: `wake-her-on-task-result`）：**验收**（主 Agent 的决定）。
+   *
+   * 契约 5 不变：执行方（runner）永远不写 `completed`；写它的是**她**，经这个入口。
+   * 条件更新保证三件事：只接受 `needs_review`、只接受**当前 revision**、
+   * 重复验收是幂等空转（不会把已 `completed` 的再改一遍时间戳）。
+   *
+   * @returns `{task, accepted}`；`accepted:false` 时 `task` 是**现状**（调用方据此如实说明）
+   */
+  acceptResult(
+    taskId: string,
+    input: { revision: number; by: string; note?: string },
+    now = new Date(),
+  ): { task: ProjectTask | null; accepted: boolean; reason?: string } {
+    const cur = this.get(taskId);
+    if (!cur) return { task: null, accepted: false, reason: '没有这个任务' };
+    if (cur.status === 'completed') {
+      return { task: cur, accepted: true, reason: '已经验收过了' };
+    }
+    if (cur.status !== 'needs_review') {
+      return { task: cur, accepted: false, reason: `它现在是 ${cur.status}，不是待验收状态` };
+    }
+    if (cur.revision !== input.revision) {
+      return {
+        task: cur,
+        accepted: false,
+        reason: `版本对不上（现在是第 ${cur.revision + 1} 轮，你验收的是第 ${input.revision + 1} 轮）`,
+      };
+    }
+
     const ts = now.toISOString();
     const info = this.db.prepare(
       `UPDATE project_tasks
-          SET status = ?, dsh_session_id = COALESCE(?, dsh_session_id),
-              result = COALESCE(?, result), artifacts = COALESCE(?, artifacts),
-              last_error = ?, updated_at = ?
-        WHERE task_id = ? AND status = 'running'`,
-    ).run(
-      input.status,
-      input.dshSessionId ?? null,
-      input.result === undefined ? null : JSON.stringify(input.result),
-      input.artifacts === undefined ? null : JSON.stringify(input.artifacts),
-      input.error ?? null,
-      ts,
-      taskId,
-    );
-
+          SET status = 'completed', accepted_by = ?, accepted_at = ?, last_error = NULL, updated_at = ?
+        WHERE task_id = ? AND status = 'needs_review' AND revision = ?`,
+    ).run(input.by, ts, ts, taskId, input.revision);
     if (info.changes === 0) {
-      traceZeroRows('ProjectTaskStore.submitResult', 0, taskId);
-      logger.warn(
-        `[ProjectTask] ${taskId} 的回传被忽略（它不在 running —— 可能是迟到的回传，或已被回收重认领）`,
-      );
-      return null;
+      traceZeroRows('ProjectTaskStore.acceptResult', 0, taskId);
+      return { task: this.get(taskId), accepted: false, reason: '状态在验收到一半时变了（可能被别人验收了）' };
     }
-    return this.get(taskId);
+    logger.info(
+      `[ProjectTask] ${taskId} r${input.revision} 已被验收（by ${input.by}）` +
+        (input.note ? `：${input.note.slice(0, 80)}` : ''),
+    );
+    return { task: this.get(taskId), accepted: true };
+  }
+
+  /** 标记结果已发出（主 Agent 的回复成功送达后调；去重闸） */
+  markNotified(taskId: string, now = new Date()): void {
+    const info = this.db.prepare(
+      `UPDATE project_tasks SET notified_at = ?, updated_at = ? WHERE task_id = ?`,
+    ).run(now.toISOString(), now.toISOString(), taskId);
+    traceZeroRows('ProjectTaskStore.markNotified', info.changes, taskId);
+  }
+
+  /** 该任务已经自动返工过几轮（按 **revision 增量**算，不含第一次） */
+  reworkCount(taskId: string): number {
+    const t = this.get(taskId);
+    return t ? Math.max(0, t.revision) : 0;
   }
 
   /**
@@ -479,19 +621,39 @@ export class ProjectTaskStore {
    * ⚠️ **沿用 `dsh_session_id`**：第二轮必须续作同一个工程会话（不然等于重新建站）。
    * ⚠️ `revision` 只增不减；`result` **不清**（调用方还能看到上一轮结果）。
    */
-  addRevision(taskId: string, feedback: string, now = new Date()): ProjectTask | null {
+  addRevision(
+    taskId: string,
+    feedback: string,
+    now = new Date(),
+    opts: { fromEventId?: string } = {},
+  ): ProjectTask | null {
     const ts = now.toISOString();
     const cur = this.get(taskId);
     if (!cur) return null;
+    /**
+     * ★ 2026-10-19（change: `wake-her-on-task-result`）：**返工幂等**。
+     *   同一条结果事件被重复处理（回调重试 / 调度器重领）时，不许再 +1 轮 ——
+     *   状态机挡不住它：第一笔已经把状态从 needs_review 改成 queued 了。
+     *
+     * ⚠️ 这个判断必须**在** `REVISABLE` 之前：重复调用时状态已经是 `queued`，
+     *   走状态检查会返回 null（调用方分不清"重复"和"在途"）。
+     */
+    const fromEventId = (opts.fromEventId ?? '').trim();
+    if (fromEventId && cur.lastReworkEventId === fromEventId) {
+      logger.info(`[ProjectTask] ${taskId} 已按事件 ${fromEventId} 排过返工 —— 不重复建轮`);
+      return cur;
+    }
     if (!REVISABLE.includes(cur.status)) {
       logger.warn(`[ProjectTask] ${taskId} 当前状态 ${cur.status} 不接受修改意见（还在途）`);
       return null;
     }
     const info = this.db.prepare(
       `UPDATE project_tasks
-          SET status = 'queued', revision = revision + 1, goal = ?, last_error = NULL, updated_at = ?
+          SET status = 'queued', revision = revision + 1, goal = ?, last_error = NULL,
+              last_rework_event_id = COALESCE(?, last_rework_event_id),
+              notified_at = NULL, accepted_by = NULL, accepted_at = NULL, updated_at = ?
         WHERE task_id = ? AND status = ?`,
-    ).run(feedback, ts, taskId, cur.status);
+    ).run(feedback, fromEventId || null, ts, taskId, cur.status);
     if (info.changes === 0) {
       traceZeroRows('ProjectTaskStore.addRevision', 0, taskId);
       return null;

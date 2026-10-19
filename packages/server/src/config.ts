@@ -27,6 +27,12 @@ export interface ServerConfig {
     dataDir: string;
     workspaceDir: string;
     webuiToken?: string;
+    /**
+     * ★ 2026-10-19（change: `wake-her-on-task-result`）：宿主 runner 专用令牌。
+     * 配了就生效：只能调白名单端点（记忆回传 / 任务 / 页面清单 / 看图）。
+     * 不配 ⇒ 只有 `webuiToken` 一条路（与以前一致）。
+     */
+    runnerToken?: string;
     /** ★ 9-25 server-bind-host：监听地址。缺省由 bootstrap 决定
      *  （桌面模式 127.0.0.1 / 服务模式 0.0.0.0，与改动前一致）。
      *  绑定回环时自动免鉴权——见 bootstrap 的 isLoopbackHost。 */
@@ -112,6 +118,30 @@ export interface ServerConfig {
     /** ailed/unknown 这类不自己好的活，隔多久再提一次（小时，默认 6） */
     failedCooldownHours?: number;
   };
+  /**
+   * ★ 2026-10-19（change: `wake-her-on-task-result`）：**异步唤醒**。
+   *
+   * 用户的目标形态：「后台结果能可靠唤起昔涟，由她结合当前上下文做下一步决策」。
+   * 这一段控制「唤不唤 / 多久唤一次 / 最多自动改几轮」。
+   *
+   * ⚠️ `enabled: false` 是**回退开关**：结果仍然落库、仍然记进记忆，
+   *   但不再唤起她 —— 回到旧的一次性通知 + 直接推送路径。普通聊天全程不受影响。
+   */
+  subagentWake?: {
+    enabled?: boolean;
+    /** 轮询间隔（毫秒，默认 5000，最小 1000） */
+    intervalMs?: number;
+    /** 一轮「她处理结果」最多跑多久（毫秒，默认 180000） */
+    turnTimeoutMs?: number;
+    /** 投递失败最多重试几次（默认 5） */
+    maxAttempts?: number;
+    /** 领取超时（毫秒，默认 300000）—— 进程崩了之后多久允许别人重新领 */
+    claimTimeoutMs?: number;
+    /** 自动返工上限（按任务累计，默认 2）；`0` = 只验收不自动改 */
+    maxAutoRework?: number;
+    /** 是否允许她验收（默认 true）。关掉 ⇒ 她只能汇报/返工/问人，`completed` 留给人 */
+    autoAccept?: boolean;
+  };
 }
 
 export function loadConfig(path: string): ServerConfig {
@@ -164,6 +194,8 @@ export function loadConfig(path: string): ServerConfig {
       workspaceDir: data.server?.workspaceDir ?? './data/workspace',
       // ★ 8-29 cr-p0-webui-auth：WebUI Bearer token（${ALYSIA_WEBUI_TOKEN} env 注入）
       webuiToken: data.server?.webuiToken ?? '',
+      // ★ 2026-10-19（wake-her-on-task-result）：runner 专用令牌（${ALYSIA_RUNNER_TOKEN}）
+      runnerToken: data.server?.runnerToken ?? '',
       // ★ 9-25 server-bind-host：留 undefined 时由 bootstrap 按模式取默认，保持线上行为不变
       host: data.server?.host,
     },
@@ -184,7 +216,51 @@ export function loadConfig(path: string): ServerConfig {
     selfActivity: sanitizeSelfActivity((data as { selfActivity?: unknown }).selfActivity),
     // ★ 2026-10-19（change: watch-for-stuck-work）：看门狗配置（同一个坑：必须显式映射）
     watchdog: sanitizeWatchdog((data as { watchdog?: unknown }).watchdog),
+    // ★ 2026-10-19（wake-her-on-task-result）：异步唤醒（同一个坑：必须显式映射）
+    subagentWake: sanitizeSubagentWake((data as { subagentWake?: unknown }).subagentWake),
   };
+}
+
+/**
+ * 异步唤醒配置的清洗（★ change: `wake-her-on-task-result`）。
+ *
+ * 形状不对的字段**忽略并留痕**（沿用本项目纪律：静默接受坏配置 = 将来"配了没生效"）。
+ * 数值都夹到安全区间 —— `maxAutoRework` 配成 50 会让一次任务跑到天亮。
+ */
+export function sanitizeSubagentWake(raw: unknown): {
+  enabled?: boolean;
+  intervalMs?: number;
+  turnTimeoutMs?: number;
+  maxAttempts?: number;
+  claimTimeoutMs?: number;
+  maxAutoRework?: number;
+  autoAccept?: boolean;
+} | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const r = raw as Record<string, unknown>;
+  const out: NonNullable<ServerConfig['subagentWake']> = {};
+  const num = (v: unknown, min: number, max: number): number | undefined => {
+    const n = typeof v === 'number' ? v : Number(v);
+    if (!Number.isFinite(n)) return undefined;
+    return Math.min(Math.max(Math.trunc(n), min), max);
+  };
+  if (typeof r.enabled === 'boolean') out.enabled = r.enabled;
+  if (typeof r.autoAccept === 'boolean') out.autoAccept = r.autoAccept;
+  const interval = num(r.intervalMs, 1000, 600_000);
+  if (interval !== undefined) out.intervalMs = interval;
+  const turn = num(r.turnTimeoutMs, 30_000, 900_000);
+  if (turn !== undefined) out.turnTimeoutMs = turn;
+  const attempts = num(r.maxAttempts, 1, 20);
+  if (attempts !== undefined) out.maxAttempts = attempts;
+  const claim = num(r.claimTimeoutMs, 60_000, 3600_000);
+  if (claim !== undefined) out.claimTimeoutMs = claim;
+  const rework = num(r.maxAutoRework, 0, 5);
+  if (rework !== undefined) out.maxAutoRework = rework;
+  logger.info(
+    `[Config] subagentWake: enabled=${out.enabled !== false} autoAccept=${out.autoAccept !== false} ` +
+      `maxAutoRework=${out.maxAutoRework ?? 2} interval=${out.intervalMs ?? 5000}ms`,
+  );
+  return out;
 }
 
 /**

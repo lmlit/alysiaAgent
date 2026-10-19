@@ -261,7 +261,13 @@ describe('POST /api/project-tasks/:id/result — runner 回传', () => {
 //   两条都必须**不能**反过来影响任务状态 —— 通知是增值项。
 // ─────────────────────────────────────────────────────────────
 describe('★ 结果回送原会话（return-project-task-result）', () => {
-  const QQ_TASK = { ...TASK, originSessionId: 'qq-official-1:private_ABC123DEF' };
+  /**
+   * ★ 2026-10-19（change: `wake-her-on-task-result`）：
+   *   这一段验的是**回退路径**（`subagentWake:false`）—— 也就是"不做异步唤醒时"的旧行为。
+   *   唤醒路径由 `subagent-wake.test.ts` 覆盖。两条路都必须一直有人测：
+   *   回退开关是出事时唯一能立刻退回去的地方。
+   */
+  const QQ_TASK = { ...TASK, originSessionId: 'qq-official-1:private:private_ABC123DEF' };
 
   async function postResult(
     task: Record<string, unknown> = QQ_TASK,
@@ -272,7 +278,7 @@ describe('★ 结果回送原会话（return-project-task-result）', () => {
       submitProjectTaskResult: () => ({ ...task, status: 'needs_review', result: { final: '页面做好了' } }),
       ...mmOverrides,
     });
-    const app = await buildApp(h.core, { push: h.push, ...opts });
+    const app = await buildApp(h.core, { push: h.push, subagentWake: false, ...opts });
     const res = await app.inject({
       method: 'POST', url: '/api/project-tasks/pt-1/result', payload: { status: 'needs_review' },
     });
@@ -288,7 +294,7 @@ describe('★ 结果回送原会话（return-project-task-result）', () => {
       projectId: 'alysia-blog',
       revision: 0,
       status: 'needs_review',
-      originSessionId: 'qq-official-1:private_ABC123DEF',
+      originSessionId: 'qq-official-1:private:private_ABC123DEF',
       summary: '页面做好了',
     }));
   });
@@ -308,6 +314,13 @@ describe('★ 结果回送原会话（return-project-task-result）', () => {
     const { h } = await postResult({ ...TASK, originSessionId: 'qq-official-1:private:private_ABC123DEF' });
     const [openid] = h.push.sendProactive.mock.calls[0] as unknown as [string, string];
     expect(openid, 'openid 多带了 private_ 前缀 → QQ 会报 11255').toBe('ABC123DEF');
+  });
+
+  // ★ 2026-10-19（wake-her-on-task-result）：**群会话不推**。
+  //   旧正则同时放行 group_，而 sendProactive 打的是私聊端点 —— 群 openid 会被当私聊发。
+  it('★ 群会话 → 不推送（私聊端点发不了群，且不该把群 id 当 openid）', async () => {
+    const { h } = await postResult({ ...TASK, originSessionId: 'qq-official-1:group:group_ABC123DEF' });
+    expect(h.push.sendProactive).not.toHaveBeenCalled();
   });
 
   it('★ 回执里带上**对外地址**（真机上用户问过「给我链接」，她答「我没存下地址」）', async () => {

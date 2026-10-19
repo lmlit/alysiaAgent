@@ -29,6 +29,8 @@ import {
   // ★ 2026-10-18（let-her-start-her-own-projects）：她自己发起"做点小东西"（默认关闭）
   selfActivityModule,
   watchdogModule,
+  // ★ 2026-10-19（wake-her-on-task-result）：结果事件 → 唤起她一轮（异步闭环的第二个半场）
+  subagentWakeModule,
 } from './modules/index.js';
 import type { RuntimeConfig } from './modules/index.js';
 
@@ -60,7 +62,10 @@ async function main(): Promise<void> {
     // ★ 2026-10-19（change: watch-for-stuck-work）：看门狗 —— 只读判据 + 她自己说一句
     .use(watchdogModule)
     // ★ 她自己找活干（默认关闭；需要在 config.yml 里显式 selfActivity.enabled=true）
-    .use(selfActivityModule);
+    .use(selfActivityModule)
+    // ★ 2026-10-19（wake-her-on-task-result）：异步唤醒。
+    //   放在 webui 之后：它依赖的 push/core 都已就绪；关掉它不影响聊天。
+    .use(subagentWakeModule);
 
   await host.start();
 

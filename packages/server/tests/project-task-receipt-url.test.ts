@@ -79,7 +79,10 @@ describe('artifactPages：只认本轮动过的根目录页面', () => {
     const ws = make();
     writeFileSync(join(ws, 'public', 'island.html'), '<h1>海岛</h1>');
     const got = artifactPages(ws, Date.now() - 60_000, rel => rel === 'island.html');
-    expect(got).toEqual([{ path: 'island.html', published: true }]);
+    // ★ 2026-10-19（wake-her-on-task-result）：产物带 mtime（服务端据此判"这一轮的"）
+    expect(got).toEqual([
+      expect.objectContaining({ path: 'island.html', published: true, mtime: expect.any(Number) }),
+    ]);
   });
 
   it('index.html 在并列时让位（它是门牌，不是"这一件的名字"）', () => {

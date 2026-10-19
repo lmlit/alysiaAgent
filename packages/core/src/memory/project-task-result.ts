@@ -15,8 +15,7 @@
 
 import type { MemoryEvent } from './types.js';
 
-export interface ProjectTaskResultInput {
-  taskId: string;
+export interface ProjectTaskResultInput {  taskId: string;
   projectId: string;
   /** 轮次（0 起）。**进幂等键**：同一条结果重复回传只会命中既有事件 */
   revision: number;
@@ -240,4 +239,267 @@ export function buildProjectTaskResultEvent(input: ProjectTaskResultInput): Memo
     // 视角：这是**她自己的**事，不是与用户的互动
     perspective: 'self',
   };
+}
+
+// ══════════════════════════════════════════════════════════════════
+// ★ 2026-10-19（change: `wake-her-on-task-result`）：**异步唤醒**用的结果事件体
+// ══════════════════════════════════════════════════════════════════
+//
+// 与上面的 `buildProjectTaskResultEvent`（写进记忆的「执行记录」）分工不同：
+//   · 那个是**记录**：只值 0.5 分，进最近对话，不进画像；
+//   · 这个是**输入**：唤醒她一轮，让她看着「原目标 / 当前要求 / 结果 / 证据」做决定。
+// 两者用同一个 `eventId` 语义（同一轮同一类型只有一条），但一个是 events 表、一个是 outbox 表。
+
+/** 结论类型：成功 / 失败 / 无法确认 / 已验收 */
+export type SubagentOutcome = 'succeeded' | 'failed' | 'unknown' | 'accepted';
+
+export interface SubagentArtifact {
+  /** 工作区相对路径 */
+  path: string;
+  /** 对外地址（已发布 `/p/`、未发布 `/w/` 预览；由 runner 判、服务端只校验前缀） */
+  url?: string;
+  published?: boolean;
+  /** 文件 mtime（ms）—— 判「是不是这一轮的」靠它，不靠自述 */
+  mtime?: number;
+}
+
+/** 证据有效性：**必须由代码算**，不许采信模型的自我报告 */
+export interface SubagentEvidence {
+  /** 所有产物 mtime ≥ 本轮开始时刻（旧截图/旧文件不能冒充） */
+  fresh: boolean;
+  /** 本轮开始时刻（ms） */
+  roundStartedAt?: number;
+  /** 执行侧自己访问页面得到 200（runner 给，服务端只转述） */
+  pageVerified?: boolean;
+  /** 页面地址（由 runner/服务端按合法前缀确定，不让模型提供） */
+  pageUrl?: string;
+  /** 不新鲜的原因（给人看，不是给模型猜） */
+  staleReason?: string;
+}
+
+export interface SubagentResultPayload {
+  eventId: string;
+  taskId: string;
+  projectId: string;
+  revision: number;
+  kind: 'result' | 'confirmation';
+  /** 任务表中的原始状态（needs_review / failed / unknown / completed） */
+  status: string;
+  outcome: SubagentOutcome;
+  /** 发起任务的会话（服务端据此找回复目标；以任务表为准，不信客户端传的） */
+  conversationId: string;
+  /** 原目标（返工后仍然保留） */
+  originalGoal: string;
+  /** 当前这一轮的要求 */
+  currentRequirement: string;
+  acceptanceCriteria?: string;
+  dshSessionId?: string | null;
+  summary?: string;
+  artifacts: SubagentArtifact[];
+  evidence: SubagentEvidence;
+  /** 已自动返工轮数 / 上限（到她手上时，"还能不能再返"必须是明确的） */
+  autoRework: { used: number; max: number };
+  /** 上一轮她自己的判断（有则给，decision 不该每轮从零开始） */
+  previousDecision?: string;
+  createdAt: string;
+}
+
+export interface BuildSubagentPayloadInput extends Omit<
+  SubagentResultPayload,
+  'eventId' | 'kind' | 'outcome' | 'artifacts' | 'evidence' | 'createdAt' | 'autoRework'
+> {
+  taskId: string;
+  revision: number;
+  status: string;
+  artifacts?: unknown[] | null;
+  evidence?: Partial<SubagentEvidence>;
+  autoRework?: { used: number; max: number };
+  now?: Date;
+}
+
+const SUBAGENT_EVENT_KIND = 'result' as const;
+
+/** 结果状态 → 结论。**成功只代表执行结果，不代表已验收** —— 所以没有 'accepted' 分支 */
+export function outcomeOfStatus(status: string): SubagentOutcome {
+  switch (status) {
+    case 'completed':
+      return 'accepted';
+    case 'needs_review':
+      return 'succeeded';
+    case 'failed':
+      return 'failed';
+    default:
+      return 'unknown';
+  }
+}
+
+function normalizeArtifacts(raw: unknown[] | null | undefined): SubagentArtifact[] {
+  if (!Array.isArray(raw)) return [];
+  const out: SubagentArtifact[] = [];
+  for (const a of raw) {
+    if (!a || typeof a !== 'object') continue;
+    const o = a as Record<string, unknown>;
+    const path = typeof o.path === 'string' ? o.path : '';
+    if (!path) continue;
+    out.push({
+      path,
+      ...(typeof o.url === 'string' && o.url ? { url: o.url } : {}),
+      ...(typeof o.published === 'boolean' ? { published: o.published } : {}),
+      ...(typeof o.mtime === 'number' && Number.isFinite(o.mtime) ? { mtime: o.mtime } : {}),
+    });
+  }
+  return out;
+}
+
+/**
+ * 判「证据是不是这一轮的」。
+ *
+ * ★ 为什么这条必须在代码里：本项目已经栽过一次同类事故 ——
+ *   同一工作区做第二个任务时，上一轮写好的 `## 自评` 还在，闸门直接放行。
+ *   这里同理：旧截图 / 旧页面只要 mtime 早于本轮开始，就不能当成本次成功的证据。
+ */
+export function computeEvidence(input: {
+  artifacts: SubagentArtifact[];
+  roundStartedAt?: number;
+  pageVerified?: boolean;
+  pageUrl?: string;
+}): SubagentEvidence {
+  const started = input.roundStartedAt;
+  if (!started || !Number.isFinite(started)) {
+    return {
+      fresh: false,
+      ...(input.pageVerified !== undefined ? { pageVerified: input.pageVerified } : {}),
+      ...(input.pageUrl ? { pageUrl: input.pageUrl } : {}),
+      staleReason: '执行侧没有报本轮开始时刻 —— 无法确认这些产物是这次的',
+    };
+  }
+  const missing = input.artifacts.filter(a => typeof a.mtime !== 'number');
+  if (missing.length > 0) {
+    return {
+      fresh: false,
+      roundStartedAt: started,
+      ...(input.pageVerified !== undefined ? { pageVerified: input.pageVerified } : {}),
+      ...(input.pageUrl ? { pageUrl: input.pageUrl } : {}),
+      staleReason: `${missing.length} 个产物没有 mtime（可能是旧文件被重新列出来）`,
+    };
+  }
+  const stale = input.artifacts.filter(a => (a.mtime as number) + 1 < started);
+  if (stale.length > 0) {
+    return {
+      fresh: false,
+      roundStartedAt: started,
+      ...(input.pageVerified !== undefined ? { pageVerified: input.pageVerified } : {}),
+      ...(input.pageUrl ? { pageUrl: input.pageUrl } : {}),
+      staleReason: `${stale.map(s => s.path).slice(0, 3).join('、')} 早于本轮开始时刻（旧文件）`,
+    };
+  }
+  return {
+    fresh: true,
+    roundStartedAt: started,
+    ...(input.pageVerified !== undefined ? { pageVerified: input.pageVerified } : {}),
+    ...(input.pageUrl ? { pageUrl: input.pageUrl } : {}),
+  };
+}
+
+/** 组装 outbox 里存的事件体（纯函数：形状是契约，测试直接钉它） */
+export function buildSubagentResultPayload(input: BuildSubagentPayloadInput): SubagentResultPayload {
+  const artifacts = normalizeArtifacts(input.artifacts);
+  return {
+    // 幂等键：同一轮同一类型只有一条（重复回调不会让她被叫醒两次）
+    eventId: `${input.taskId}:r${input.revision}:${SUBAGENT_EVENT_KIND}`,
+    taskId: input.taskId,
+    projectId: input.projectId,
+    revision: input.revision,
+    kind: SUBAGENT_EVENT_KIND,
+    status: input.status,
+    outcome: outcomeOfStatus(input.status),
+    conversationId: input.conversationId,
+    originalGoal: input.originalGoal,
+    currentRequirement: input.currentRequirement,
+    ...(input.acceptanceCriteria ? { acceptanceCriteria: input.acceptanceCriteria } : {}),
+    ...(input.dshSessionId ? { dshSessionId: input.dshSessionId } : {}),
+    ...(input.summary ? { summary: input.summary } : {}),
+    artifacts,
+    evidence: computeEvidence({
+      artifacts,
+      roundStartedAt: input.evidence?.roundStartedAt,
+      pageVerified: input.evidence?.pageVerified,
+      pageUrl: input.evidence?.pageUrl ?? artifacts.find(a => a.url)?.url,
+    }),
+    autoRework: input.autoRework ?? { used: 0, max: 0 },
+    ...(input.previousDecision ? { previousDecision: input.previousDecision } : {}),
+    createdAt: (input.now ?? new Date()).toISOString(),
+  };
+}
+
+const MAX_RENDER_CHARS = 2600;
+
+/**
+ * 把事件体渲染成**主 Agent 的一轮输入**。
+ *
+ * ★ 三条硬要求（每一条都对应一个真实风险）：
+ *   1. 第一行就要标明**这不是用户说的话** —— 否则子 Agent 的产出会被当成用户的命令
+ *      （那样"用户让我发布"就可以由工程输出伪造出来）。
+ *   2. 事实在前、建议在后：先给原目标/当前要求/产物/证据，最后才给可选动作。
+ *   3. 证据不新鲜时**明确禁止**说"这次成功了"—— 旧文件不能冒充本轮。
+ */
+export function renderSubagentResultInput(p: SubagentResultPayload): string {
+  const lines: string[] = [
+    '【系统投递 · 工具返回，不是用户说的话】',
+    `工程环境里那一轮已经结束：任务 ${p.taskId}（项目 ${p.projectId}）第 ${p.revision + 1} 轮，状态 ${p.status}。`,
+    '',
+    '## 原目标（一开始想做什么）',
+    p.originalGoal || '（没有记录）',
+  ];
+  if (p.currentRequirement && p.currentRequirement !== p.originalGoal) {
+    lines.push('', '## 这一轮的要求（可能已经改过）', p.currentRequirement);
+  }
+  if (p.acceptanceCriteria) lines.push('', '## 验收标准', p.acceptanceCriteria);
+
+  const arts = p.artifacts.slice(0, 8);
+  if (arts.length > 0) {
+    lines.push('', '## 这一轮做出来的东西');
+    for (const a of arts) {
+      const tag = a.published ? '已上线' : '未发布（预览）';
+      lines.push(`- ${a.path}（${tag}）${a.url ? ` ${a.url}` : ''}`);
+    }
+  } else {
+    lines.push('', '## 这一轮做出来的东西', '（这一轮没有报告任何产物）');
+  }
+
+  if (p.evidence.pageUrl) lines.push('', `页面地址（原样转给用户，不要改写）：${p.evidence.pageUrl}`);
+
+  lines.push('', '## 证据是否可信');
+  if (p.evidence.fresh) {
+    lines.push(`- 产物都是这一轮的（开始于 ${new Date(p.evidence.roundStartedAt ?? Date.now()).toISOString()} 之后）`);
+    if (p.evidence.pageVerified === true) lines.push('- 执行侧自己打开过页面，返回 200');
+    else if (p.evidence.pageVerified === false) lines.push('- ⚠️ 执行侧**没能**验证页面可访问');
+  } else {
+    lines.push(`- ⚠️ **证据不成立**：${p.evidence.staleReason ?? '无法确认产物是这一轮的'}`);
+    lines.push('  ⇒ 这些文件可能是旧的。**不许**据此说"这次做好了"。');
+  }
+
+  if (p.summary) {
+    lines.push('', '## 你在那边最后写下的交代（取材用，不要照抄）', p.summary.slice(0, 800));
+  }
+  if (p.previousDecision) lines.push('', '## 上一轮你自己的判断', p.previousDecision.slice(0, 400));
+
+  lines.push(
+    '',
+    '## 返工记录',
+    `已经自动改过 ${p.autoRework.used} 轮${p.autoRework.max > 0 ? `（最多 ${p.autoRework.max} 轮）` : ''}` +
+      (p.autoRework.max > 0 && p.autoRework.used >= p.autoRework.max ? ' —— **到上限了，别再自己改**，跟用户说清楚' : ''),
+    '',
+    '## 现在轮到你决定（不是系统替你决定）',
+    '你是这个人的伙伴，也是这件事的作者。看着上面的事实，自己判：',
+    '- **满意** ⇒ 调用 `accept_project_task`（参数 taskId、revision），然后用你自己的话跟用户说结果；',
+    '- **不满意** ⇒ 调用 `continue_project_task`（taskId、feedback、fromEventId）说清要改什么，它会接着原会话改；',
+    '- **拿不准 / 需要用户拍板** ⇒ 直接说话问他，别自己硬定；',
+    '- **失败了或证据不成立** ⇒ 如实说，不要粉饰成"做好了"。',
+    '',
+    `（fromEventId 用这个：${p.eventId}）`,
+  );
+
+  const text = lines.join('\n');
+  return text.length > MAX_RENDER_CHARS ? `${text.slice(0, MAX_RENDER_CHARS)}…（已截断）` : text;
 }

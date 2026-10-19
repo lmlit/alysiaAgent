@@ -242,7 +242,51 @@ export function initializeDatabase(db: Database.Database): void {
     --   ⚠️ SQL 注释里**不能写反引号** —— 它会把外层模板字符串截断（本项目已栽过两次）
     CREATE INDEX IF NOT EXISTS idx_project_tasks_claim
       ON project_tasks (project_id, status, created_at);
+
+    -- ★ 2026-10-19（change: wake-her-on-task-result）：**结果事件 outbox**。
+    --   为什么要有这张表：原来的通知是 fire-and-forget（void notify()），
+    --   进程在「结果已写库、通知还没发」之间崩溃 ⇒ 结果永久丢失且无人知道。
+    --   现在终态与事件**同一事务**落库，投递由调度器领取 —— 重启后还在。
+    --
+    --   ⚠️ event_id 是幂等键：同一轮同一类型只有一条（重复入队 = 空转）。
+    --   ⚠️ status 只由 store 守（同 project_tasks，不写 CHECK：改 CHECK 要重建表）。
+    CREATE TABLE IF NOT EXISTS project_task_events (
+      event_id      TEXT PRIMARY KEY,
+      task_id       TEXT NOT NULL,
+      project_id    TEXT NOT NULL,
+      revision      INTEGER NOT NULL,
+      kind          TEXT NOT NULL DEFAULT 'result',
+      status        TEXT NOT NULL DEFAULT 'pending',  -- pending|claimed|done|failed|dead
+      payload       TEXT NOT NULL DEFAULT '{}',
+      attempts      INTEGER NOT NULL DEFAULT 0,
+      next_at       TEXT NOT NULL DEFAULT '',
+      claimed_at    TEXT,
+      processed_at  TEXT,
+      last_error    TEXT,
+      created_at    TEXT NOT NULL,
+      updated_at    TEXT NOT NULL
+    );
+
+    -- 领取路径：按 next_at/created_at 取最老的待处理
+    CREATE INDEX IF NOT EXISTS idx_project_task_events_claim
+      ON project_task_events (status, next_at, created_at);
   `);
+
+  // ★ 2026-10-19（change: wake-her-on-task-result）：
+  //   `original_goal`：**原目标**（返工只改 `goal`，把这里覆盖掉就没法告诉她"当初想做什么"）。
+  //     ⚠️ 老行为空 ⇒ 读取时回落 `goal`（**不回填存量行**）。
+  //   `notified_at`：结果是否已经由主 Agent 发出过（去重闸；空 = 还没发）。
+  //   `last_rework_event_id`：最后一次触发返工的事件 id（同一事件重复调用不许再 +1 轮）。
+  addColumnIfMissing(db, 'project_tasks', 'original_goal',
+    `ALTER TABLE project_tasks ADD COLUMN original_goal TEXT NOT NULL DEFAULT ''`);
+  addColumnIfMissing(db, 'project_tasks', 'notified_at',
+    `ALTER TABLE project_tasks ADD COLUMN notified_at TEXT`);
+  addColumnIfMissing(db, 'project_tasks', 'last_rework_event_id',
+    `ALTER TABLE project_tasks ADD COLUMN last_rework_event_id TEXT`);
+  addColumnIfMissing(db, 'project_tasks', 'accepted_by',
+    `ALTER TABLE project_tasks ADD COLUMN accepted_by TEXT`);
+  addColumnIfMissing(db, 'project_tasks', 'accepted_at',
+    `ALTER TABLE project_tasks ADD COLUMN accepted_at TEXT`);
 
   // ★ 2026-10-18（change: `make-author-iterate`）：把「做一件东西」变成**显式状态机**。
   //   `phase`：当前阶段（intent/sketch/review/build/revise/statement/publish/done）

@@ -98,9 +98,54 @@
 | 提示词 `max_tokens` 给小 | 返回空串（`finish=length`） | KI-1；给自己留 800 以上 |
 | 回执写成 `role: 'assistant'` | prompt 里出现「昔涟: （委托任务回执）…」，**冒充她说话** | 用 `engine` 归属 + `dialogueSpeaker()`，见 spec §15 |
 
-## 8. 相关文档
+## 8. 异步唤醒：结果回来之后谁说话（2026-10-19 立）
 
-- 契约：`openspec/specs/project-tasks/spec.md`（§6.1 权限、§10 回送、§11 基站、§12 认领、§14 窗口、§15 归属、§16 自发起）
+以前：`dsh` 跑完 → 服务端**自己**写一条通知、直接推 QQ。她只是"被记了一笔"，
+没有机会验收、返工或决定怎么跟你说。线上 31 条任务**全部停在 `needs_review`、0 条验收** ——
+闭环从来没合上过。
+
+现在：
+
+```text
+结果落库（同一事务入队）→ 调度器领取 → 跑**完整一轮主 Agent**（人格/记忆/工具）
+→ 她自己决定：验收(accept_project_task) / 返工(continue_project_task) / 问用户 / 汇报
+→ 她的回复走既有 QQ 通道
+```
+
+| 概念 | 在哪 | 说明 |
+|---|---|---|
+| 待处理事件 | 表 `project_task_events` | outbox：`pending→claimed→done/failed/dead`，**重启不丢** |
+| 调度器 | `al:subagent-wake` | 进程内轮询（默认 5s），**不新开 HTTP 入口** |
+| 结果输入 | `PipelineExtras.subagent_result` | 明确标成「工具返回，不是用户说的话」；**不写进 EventLog** |
+| 三态 | `status` / `accepted_at` / `notified_at` | 跑完 ≠ 她认了 ≠ 说出口，三件事分开记 |
+| 验收入口 | `POST /api/project-tasks/:id/accept` | 只有 `needs_review` + revision 匹配才写 `completed` |
+| 返工幂等 | `continue_project_task(fromEventId)` | 同一条结果重复处理不会排两轮 |
+| 证据 | `evidence.fresh`（产物 mtime ≥ 本轮开始） | 旧文件/旧截图不能当本次成功的证据 |
+
+**配置（`config.yml`）**：`subagentWake.enabled / maxAutoRework / autoAccept / intervalMs / turnTimeoutMs`。
+
+**回退（出事时按顺序试）**：
+
+1. `subagentWake.enabled: false` → 回到旧的一次性通知 + 直接推送；**任务与产物一个都不删**；
+2. `subagentWake.maxAutoRework: 0` → 保留唤醒，但**不许自动返工**（只能验收/汇报/问人）；
+3. `subagentWake.autoAccept: false` → 保留唤醒，但 `completed` 只能由人写；
+4. 普通 QQ 聊天**任何时候都不依赖**上面这些开关（它们是同一条管线上的增值段，不是前置条件）。
+
+**排障**：
+
+```bash
+# 队列里还有什么、卡在哪个状态
+docker exec alysia-server node -e "..."   # 或直接看日志里的 [subagent-wake]
+grep -E '\[subagent-wake\]|\[project-task\]' logs/server.log | tail -50
+```
+
+`pending` 长期不降 = 调度器没跑或目标不合法（非 QQ 私聊会 ack 并留痕）；
+`dead` = 试满次数放弃了（原因在 `last_error`，不会静默）。
+
+## 9. 相关文档
+
+- 契约：`openspec/specs/project-tasks/spec.md`（§6.1 权限、§10 回送、§11 基站、§12 认领、§14 窗口、
+  §15 归属、§16 自发起、**§18 异步唤醒**）
 - 治理：`openspec/project.md`
 - 部署：`docs/Docker-Deployment.md`（含地址，**不上库**）
 - 实验记录：`docs/E02-E03-ABOUT-PAGE-RECORD.md`

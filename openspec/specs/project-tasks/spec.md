@@ -182,8 +182,15 @@ systemd 以 root 读该文件再降权 ⇒ 进程里有 token、**runner 用户�
 **契约 28（只在能确定目标时推）**：`originSessionId` 形如 `qq-official-1:private:private_<openid>`
 才推（**先按冒号切最后一段再剥前缀** —— 对整串用正则最左匹配会取到 `private_<openid>`，
 QQ 返回 `11255 请求的资源不存在`，这个坑已经踩过）；`webui:` / 测试会话跳过并留痕。
+★ 2026-10-19（`wake-her-on-task-result`）收紧：**`group_` 会话一律不推**。
+旧实现的正则同时放行 `group_`，而 `sendProactive` 打的是**私聊端点** ——
+群 openid 会被当私聊发出去。
 
 **已知边界**：回执**不进摘要** ⇒ v1 只保证**近期窗口**可回忆，不是长期记忆。
+
+**★ 2026-10-19（`wake-her-on-task-result`）：这一节描述的"一次性通知"现在是回退路径。**
+默认行为改为：终态**入队**（§18），由她跑一轮主 Agent 之后自己说话。
+`subagentWake.enabled: false` 才回到本节的一步式通知。
 
 ### 10.1 她的口吻（2026-10-18 追加，同 change）
 
@@ -728,6 +735,103 @@ statement → done（ready）
 （截断 260 字）要附在推送末尾（`她自己的话：…`）。
 理由：那是她最有辨识度的文字，原先只被阶段闸门读、**人看不到**；
 附**原文**而不经模型改写，保证她的话原样到用户手上。
+
+## 18. 异步唤醒：结果回来之后由她接手（2026-10-19，change: `wake-her-on-task-result`）
+
+**为什么有这一节**：到 2026-10-19 为止，链路只做到「结果落库 + 一条通知」——
+**没有第二个半场**。线上库实测：31 条任务**全部停在 `needs_review`、0 条被验收**；
+结果处理是 `void notifyProjectTaskResult(task)` 的 fire-and-forget，
+进程在「写终态」与「发通知」之间崩溃就**永久丢失**，且库里没有任何痕迹能说明它没送达。
+
+用户要的形态（原话摘要）：「后台结果能可靠唤起昔涟，由她结合当前上下文做出下一步决策」。
+
+**契约 77（终态与事件同事务）**：`POST /api/project-tasks/:id/result` 在一个事务里
+写任务终态 + 写 `project_task_events`（`event_id = <taskId>:r<revision>:<kind>`），
+**不直接推送**。旧的一次性通知只在 `subagentWake.enabled=false`（回退开关）时执行。
+
+**契约 78（事件状态机，落库不落内存）**：`pending → claimed → done | failed(退避重试) | dead(用尽)`。
+`claimed_at` 超 `claimTimeoutMs` 可被重新领取（进程崩了的恢复入口）；
+待处理事件**只在 DB 里**，不依赖进程内存 —— 重启后继续投递。
+
+**契约 79（至多一次派发、至少一次投递）**：同 `event_id` 重复入队是空转；
+同一条结果不会触发第二次唤醒（`done` + `notified_at` 双闸）。
+已知边界：发送成功后、ack 之前崩溃 ⇒ 极小概率重复一条消息（记录在案，可接受）。
+
+**契约 80（跨阶段续接）**：一个 tick 内第 2..N 阶段**必须带**第 1 阶段产生的 `dsh_session_id`；
+返工轮沿用任务已有的 id。id 必须**回填**后再拼 argv。
+⚠️ 旧实现只把它存进局部变量 ⇒ 六个阶段 = 六次独立会话（真机撞出来的）。
+
+**契约 81（续接失败不静默）**：dsh 报「会话不存在 / unknown id」⇒ 丢 id 重开**一次**，
+把原因写进 `result.resumeFailed` 并随事件可见；不许无声退化成新会话。
+
+**契约 82（判据按整轮，不按阶段）**：阶段事实（drafts/shots/builtPages）以**本轮开始时刻**
+（认领后的 tick 起点）为界；每阶段另有自己的起点，只用于日志/排障。
+理由：`review` 闸门要看 `sketch` 阶段画的草稿 —— 按阶段切会把跨阶段累积切断，`review` 永远过不去。
+要拦的是**上一轮留下的旧文件**，不是同轮前几个阶段。
+
+**契约 83（证据由服务端判）**：产物逐项带 `mtime`；`evidence.fresh = 所有产物 mtime ≥ 本轮开始`
+（缺 mtime 一律判不新鲜）；`evidence.pageVerified` 只采信执行侧的 HTTP 200 自证。
+`fresh=false` 时给她的输入里**明确禁止**说「这次做好了」。
+
+**契约 84（claimToken = 认领时的 `attempts`）**：`/advance` 与 `/result` 可带；条件 UPDATE 不匹配
+⇒ 409「过期批次」。**可选**：不带 ⇒ 行为同以前（老 runner 不受影响），新 runner 一定带。
+
+**契约 84b（三态可区分）**：`status`（跑没跑完）/ `accepted_at`+`accepted_by`（她认没认）/
+`notified_at`（说没说）。三者不得合并 —— 合并就会重演「dsh 完成 = 闭环结束」。
+
+**契约 85（回传有限重试）**：网络错误/5xx 最多 3 次退避重试；**409 不重试**（已处理或判定过期）。
+
+**契约 86（子进程环境白名单）**：runner spawn `dsh` 时**不得**全量继承环境。
+白名单：`PATH`/`HOME`/`LANG`/`LC_ALL`/`TZ`/`TMPDIR`/`NODE_OPTIONS`/`DSH_HOME`/`DEEPSEEK_API_KEY`；
+另注入 `ALYSIA_ALLOW_PUBLISH` 与**受限令牌**（`ALYSIA_RUNNER_TOKEN`，见契约 97）。
+
+**契约 87（入口）**：调度器领到 `pending` 事件后，构造一条 **`subagent_result`** 输入跑**完整**
+pipeline（人格 + 记忆 + 工具 + 回复），**不是**一次性补全。用户不需要再发消息。
+
+**契约 88（输入归属）**：该输入**不是用户发言**：
+- `MemoryIngestStage` 不得把它写成 user 事件（结果本身已由契约 24 以 `role:'engine'` 写好）；
+- 提示词里必须显式标注「工具返回，不是用户说的话」；子 Agent 的文字不许被当成用户指令。
+
+**契约 89（决策面）**：她必须同时拿到**原目标**（`original_goal`）、**当前要求**（`goal`）、
+**本轮结果与产物**（含地址与证据）、**上一轮她的判断**（若有）。决策动作三个：
+`accept_project_task`（验收）/ `continue_project_task`（返工，关联原任务与会话）/ 直接回答。
+
+**契约 90（上限）**：`subagentWake.maxAutoRework`（默认 2，按任务血缘累计）与
+`autoAccept`。到上限**停止自动推进**、保留产物，并把「为什么停下」写进给她的输入。
+
+**契约 91（验收条件）**：`accept_project_task` / `POST /api/project-tasks/:id/accept` 只在
+`status='needs_review'` 且 `revision` 匹配时写 `completed`；重复验收是幂等空转。
+执行方（runner）**仍然不许**写 `completed`（契约 5 不变）。`completed` ≠ 已发布。
+
+**契约 92（返工幂等）**：`continue_project_task` 可带 `fromEventId`；同一事件重复调用返回
+「已排过」，**不**再 `revision+1`。⚠️ 幂等判断必须在状态检查**之前** ——
+第一笔已把状态改成 `queued`，走状态检查会返回「不接受意见」（分不清"重复"与"在途"）。
+
+**契约 93（取消 / 版本）**：派发前核对 `revision`：事件比任务旧 ⇒ 直接 ack + 留痕，
+**不唤醒**（旧结果不许覆盖新需求）；取消后不自动返工、不发布。
+
+**契约 94（输出唯一路径）**：所有面向用户的任务消息由主 Agent 的回复经现有 QQ 通道发出；
+**发送失败只重试发送**（同一事件，验收/返工都幂等），绝不因此重跑 coding；
+同一结果不允许出现两条通知。
+
+**契约 95（隔离）**：后台 dsh 用**工程 profile**：不加载第二套完整人格、不写画像/人格/结算
+（`sessionOrigin: delegated-task`），只获得任务必需的项目上下文（`AGENTS.md` + 阶段指令 + 验收标准）。
+
+**契约 96（可回退）**：`subagentWake.enabled=false` ⇒ 回到「落库 + 一次性通知」路径；
+`maxAutoRework: 0` 单独关自动返工；`autoAccept: false` 单独把验收留给人。
+三个开关都不删任务、不删产物，**不影响普通 QQ 聊天**。
+
+**契约 97（runner 令牌）**：`server.runnerToken`（`ALYSIA_RUNNER_TOKEN`）是**受限**令牌，
+只放行 `GET /api/persona/prompt`、`POST /api/ingest`、`POST /api/memory/read`、
+`POST /api/sessions/:id/extract`、`/api/project-tasks*`、`POST /api/host/pages`、
+`POST /api/vision/describe`；越权 ⇒ **403**（被识别出来的调用方，不是 401）。
+管理令牌（`webuiToken`）仍然全权。目的：后台执行体不握管理面。
+
+**已知边界（本节）**：
+① 派发是**进程内**的（不新开 HTTP 入口），多实例部署时需另做租约（当前单实例）；
+② 一轮唤醒的输出如果既没验收也没返工（只是说话），事件照样 ack —— 是否要"未决策则再提醒"待定；
+③ 发送成功后 ack 前崩溃会有极小概率重复一条消息（契约 79）；
+④ 存量 31 条 `needs_review` 不会被自动补唤醒（只对新产生的终态入队）。
 
 
 

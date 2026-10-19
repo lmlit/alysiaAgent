@@ -36,3 +36,5 @@ export type { WebuiModuleOptions } from './webui.js';
 export { selfActivityModule } from './self-activity.js';
 // ★ 2026-10-19（change: watch-for-stuck-work）：看门狗（只读判据 + 主动通知）
 export { watchdogModule } from './watchdog.js';
+// ★ 2026-10-19（change: wake-her-on-task-result）：结果事件 → 唤起她一轮（异步闭环的第二个半场）
+export { subagentWakeModule } from './subagent-wake.js';

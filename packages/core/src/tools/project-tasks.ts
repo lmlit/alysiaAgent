@@ -39,7 +39,17 @@ export interface ProjectTaskHost {
     kind?: 'build' | 'action';
   }): CreateOutcome;
   getProjectTask(taskId: string): ProjectTask | null;
-  addProjectTaskRevision(taskId: string, feedback: string): ProjectTask | null;
+  addProjectTaskRevision(taskId: string, feedback: string, fromEventId?: string): ProjectTask | null;
+  /**
+   * ★ 2026-10-19（change: `wake-her-on-task-result`）：**验收**。
+   * 只接受 `needs_review` 且 revision 匹配；重复验收是幂等空转。
+   */
+  acceptProjectTask?(
+    taskId: string,
+    input: { revision: number; by: string; note?: string },
+  ): { task: ProjectTask | null; accepted: boolean; reason?: string };
+  /** 该任务已返工几轮（自动返工上限判定用；老宿主没有就按 0） */
+  projectTaskReworkCount?(taskId: string): number;
   /**
    * ★ 2026-10-19：跨项目最近的活 + 各状态计数（`check_server_status` 用）。
    * 可选：老宿主（测试替身/桌面端）没有这两个方法时，看板少一段，不炸。
@@ -79,6 +89,13 @@ export interface ProjectTaskToolOptions {
    * 缺省 ⇒ 不注册 `check_server_status`。
    */
   serverStatus?: ServerStatusProvider;
+  /**
+   * ★ 2026-10-19（change: `wake-her-on-task-result`）：**自动返工上限**（按任务血缘累计）。
+   *
+   * 只有**带 `fromEventId` 的返工**（= 她看着一条结果自己决定改）才计入上限；
+   * 用户明确说"再改一版"的返工不受它限制 —— 把人的要求也卡住是另一种坏。
+   */
+  maxAutoRework?: number;
 }
 
 /**
@@ -322,19 +339,50 @@ export function createProjectTaskTools(
       properties: {
         taskId: { type: 'string', description: '要续作的任务 id' },
         feedback: { type: 'string', description: '具体要改什么（越具体越好）' },
+        fromEventId: {
+          type: 'string',
+          description:
+            '可选：触发这次返工的结果事件 id（工具返回里给了）。' +
+            '带上它能保证**同一条结果重复处理时不会排两轮**；不知道就留空。',
+        },
       },
       required: ['taskId', 'feedback'],
     },
     async handler(args) {
       const taskId = typeof args.taskId === 'string' ? args.taskId.trim() : '';
       const feedback = typeof args.feedback === 'string' ? args.feedback.trim() : '';
+      const fromEventId = typeof args.fromEventId === 'string' ? args.fromEventId.trim() : '';
       if (!taskId) return '拒绝：taskId 不能为空';
       if (!feedback) return '拒绝：feedback 不能为空（要说清改成什么样）';
 
       const before = host.getProjectTask(taskId);
       if (!before) return `没有这个任务：${taskId}（id 抄错了？）`;
 
-      const after = host.addProjectTaskRevision(taskId, feedback);
+      // ★ 幂等：同一条结果事件已经排过返工 ⇒ 说清楚，别再 +1 轮
+      if (fromEventId && before.lastReworkEventId === fromEventId) {
+        return [
+          `这条结果**已经排过返工**了（第 ${before.revision + 1} 轮，状态 ${before.status}）——没有重复排。`,
+          '等它跑完再看，不用重复提。',
+        ].join('\n');
+      }
+
+      /**
+       * ★ 2026-10-19：**自动返工上限**。到顶就**停下来说明**，不静默、不硬改。
+       * 只拦"她看着结果自己决定改"（有 fromEventId）；用户点名要改的不拦。
+       */
+      if (fromEventId) {
+        const used = host.projectTaskReworkCount?.(taskId) ?? before.revision;
+        const max = opts.maxAutoRework ?? 2;
+        if (max >= 0 && used >= max) {
+          return [
+            `**不再自动改了**：这一版已经自动改过 ${used} 轮（上限 ${max}）。`,
+            '把现在这版、你哪里还不满意、要不要继续 —— 如实告诉用户，让他决定。',
+            '（他要你再改，直接说就行，那时不占这个上限。）',
+          ].join('\n');
+        }
+      }
+
+      const after = host.addProjectTaskRevision(taskId, feedback, fromEventId || undefined);
       if (!after) {
         // 只有「还在途」会走到这里（未知 id 已在上面挡掉）——说清状态，别让模型瞎猜
         return [
@@ -343,11 +391,77 @@ export function createProjectTaskTools(
         ].join('\n');
       }
 
-      logger.info(`[ProjectTask] 续作：${taskId} → revision ${after.revision}`);
+      logger.info(`[ProjectTask] 续作：${taskId} → revision ${after.revision}${fromEventId ? `（事件 ${fromEventId}）` : ''}`);
+      // ⚠️ 老宿主/测试替身可能没有 `originalGoal` —— 回落 `goal`，别在这里炸
+      const original = (after.originalGoal || after.goal || '').slice(0, 200);
       return [
         `已排入第 ${after.revision + 1} 轮：${taskId}`,
+        `原来想做的：${original}`,
+        `这一轮改成：${(after.goal ?? '').slice(0, 200)}`,
         `会在**同一个工程会话**（${after.dshSessionId ?? '待建立'}）里继续，不会重新搭。`,
         `状态：${after.status}（已排队，宿主 runner 会来认领）`,
+      ].join('\n');
+    },
+  };
+
+  /**
+   * ★ 2026-10-19（change: `wake-her-on-task-result`）：**验收**。
+   *
+   * 为什么必须有这个工具：`completed` 以前只能由人改库或干脆没人写 ——
+   * 线上 31 条任务全部停在 `needs_review`，没有一条被验收过。
+   * 验收是**她的判断**，所以入口在她手上；执行方仍然不许写 `completed`（契约 5）。
+   *
+   * 刻意不做「顺手发布」：验收 ≠ 上线（发布是另一件事、另一次决定）。
+   */
+  const accept: ToolDefinition = {
+    name: 'accept_project_task',
+    description:
+      '验收一轮工程结果（"这一版我认了"）。只能用在**待验收**（needs_review）的任务上，' +
+      '并且要带你看的那一轮的 revision。它**不代表已发布** —— 上线是另一件事。' +
+      '验收之后再用你自己的话把结果告诉用户。',
+    parameters: {
+      type: 'object',
+      properties: {
+        taskId: { type: 'string', description: '要验收的任务 id' },
+        revision: {
+          type: 'number',
+          description: '你验收的是第几轮（从 0 开始；工具返回里写着「第 N 轮」就是 N-1）',
+        },
+        note: { type: 'string', description: '可选：你自己记一句为什么认这一版' },
+      },
+      required: ['taskId', 'revision'],
+    },
+    async handler(args, sessionId) {
+      const taskId = typeof args.taskId === 'string' ? args.taskId.trim() : '';
+      const revision = typeof args.revision === 'number' ? Math.trunc(args.revision) : NaN;
+      const note = typeof args.note === 'string' ? args.note.trim() : '';
+      if (!taskId) return '拒绝：taskId 不能为空';
+      if (!Number.isFinite(revision) || revision < 0) {
+        return '拒绝：revision 必须是 ≥0 的整数（第 1 轮就是 0）';
+      }
+      if (!host.acceptProjectTask) {
+        return '这个环境没有验收能力（宿主没接 acceptProjectTask）—— 如实跟用户说，别假装验收了。';
+      }
+
+      const out = host.acceptProjectTask(taskId, {
+        revision,
+        by: sessionId ?? 'unknown',
+        ...(note ? { note } : {}),
+      });
+      if (!out.task) return `没有这个任务：${taskId}（id 抄错了？）`;
+      if (!out.accepted) {
+        return [
+          `**没有验收成功**：${out.reason ?? '原因不明'}。`,
+          renderTask(out.task),
+          '',
+          '这只是"没记上"，不代表那一轮做得不好 —— 如实跟用户说，别自己改口径。',
+        ].join('\n');
+      }
+
+      logger.info(`[ProjectTask] 验收：${taskId} r${revision}（${out.reason ?? 'ok'}）`);
+      return [
+        `已验收：${taskId} 第 ${revision + 1} 轮（${out.reason ?? '记上了'}）。`,
+        '注意：验收**不代表已发布**。要上线得单独做（`publish_page` 或在任务里说）。',
       ].join('\n');
     },
   };
@@ -518,5 +632,7 @@ export function createProjectTaskTools(
 
   const withPages = opts.pages ? [listPages, findPage] : [];
   const withStatus = opts.serverStatus ? [checkStatus] : [];
-  return [start, get, cont, ...withPages, ...withStatus];
+  // ★ 2026-10-19：验收工具只在宿主**真的**有验收能力时暴露（没有就别给她假按钮）
+  const withAccept = host.acceptProjectTask ? [accept] : [];
+  return [start, get, cont, ...withAccept, ...withPages, ...withStatus];
 }

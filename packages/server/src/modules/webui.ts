@@ -81,6 +81,10 @@ export const webuiModule: Module<WebuiModuleOptions> = {
         projectTasks: config.projectTasks,
         push: push as never,
         vision: vision as never,
+        // ★ 2026-10-19（wake-her-on-task-result）：双令牌 + 异步唤醒
+        runnerToken: config.server.runnerToken ?? '',
+        subagentWake: config.subagentWake?.enabled !== false,
+        maxAutoRework: config.subagentWake?.maxAutoRework ?? 2,
       });
       await webui.listen({ port: config.server.port, host: bindHost });
 

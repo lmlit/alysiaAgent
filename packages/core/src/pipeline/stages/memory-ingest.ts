@@ -30,6 +30,18 @@ export class MemoryIngestStage implements Stage {
       logger.debug('[MemoryIngest] skip (coalesced)');
       return;
     }
+    /**
+     * ★ 2026-10-19（change: `wake-her-on-task-result`）：**异步唤醒轮不写 EventLog**。
+     *
+     * 理由：那条结果的「记录」已经由 `recordProjectTaskResult` 以
+     * `role:'engine'` + `skip_profile` + `synthetic:'project-task-result'` 写好了。
+     * 再按 user 事件写一遍等于**伪造一条用户消息** —— 她可能因此以为用户下过这个命令，
+     * 画像提取也会把工程输出当成用户说的话。
+     */
+    if (event.getExtra('subagent_result')) {
+      logger.info('[MemoryIngest] skip (subagent_result：工具返回不是用户发言，结果已单独记过)');
+      return;
+    }
     // 过滤：命令、空消息、隐私指令不写入长期记忆
     if (shouldSkipIngest(event.messageStr)) {
       logger.debug(`[MemoryIngest] skip (filtered): ${event.messageStr.slice(0, 50)}`);

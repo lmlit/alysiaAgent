@@ -25,6 +25,9 @@ services:
       - EMBED_MODEL=embedding-2
       # ★ 8-30 cr-p0-webui-auth：WebUI 鉴权 token 透传（缺失 → /api/* 全 401 fail closed）
       - ALYSIA_WEBUI_TOKEN=${ALYSIA_WEBUI_TOKEN}
+      # ★ 2026-10-19（change: wake-her-on-task-result）：宿主 runner 的**受限令牌**。
+      #   config.yml 的 server.runnerToken 从这里插值；不配 = 该分支不生效（行为同以前）。
+      - ALYSIA_RUNNER_TOKEN=${ALYSIA_RUNNER_TOKEN}
     volumes:
       - ./data:/app/data        # 数据库、日志、LanceDB 持久化
       - ./config.yml:/app/config.yml:ro

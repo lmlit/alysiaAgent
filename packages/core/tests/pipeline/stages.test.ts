@@ -65,6 +65,22 @@ describe('MemoryIngestStage', () => {
     await stage.process(npcEvent);
     expect(mockMemory.ingest).toHaveBeenCalled();
   });
+
+  // ★ 2026-10-19（change: `wake-her-on-task-result`）：异步唤醒的那一轮**不是用户发言**。
+  //   结果本身已由 `recordProjectTaskResult` 以 role=engine 记过；再按 user 写一遍
+  //   = 伪造一条用户消息（画像会把工程输出当成用户说的话）。
+  it('★ 唤醒轮（subagent_result）→ 不写 EventLog', async () => {
+    const mockMemory = { ingest: vi.fn().mockResolvedValue(undefined) };
+    const stage = new MemoryIngestStage(mockMemory as any, 'owner1');
+    await stage.initialize({} as any);
+    const event = makeEvent('【系统投递 · 工具返回，不是用户说的话】…');
+    event.setExtra('subagent_result', {
+      payload: { eventId: 'pt-1:r0:result' } as never,
+      text: 'x',
+    });
+    await stage.process(event);
+    expect(mockMemory.ingest, '工具返回被当成用户消息写进记忆了').not.toHaveBeenCalled();
+  });
 });
 
 describe('WorldbookStage', () => {

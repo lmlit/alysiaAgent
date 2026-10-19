@@ -11,7 +11,96 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, utimes
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 // @ts-expect-error —— 宿主脚本是 .mjs，没有类型声明（故意的：它要能被 node 直跑）
-import { buildDshArgs, buildTaskText, parseRunEvents, mapOutcome, nextUrl, collectFacts, buildPhaseTask, snapshotTree, inspectPhaseWrites, extractSection, timeoutForPhase } from '../../../scripts/project-task-runner.mjs';
+import { buildDshArgs, buildTaskText, parseRunEvents, mapOutcome, nextUrl, collectFacts, buildPhaseTask, snapshotTree, inspectPhaseWrites, extractSection, timeoutForPhase, buildChildEnv, looksLikeResumeFailure, artifactPages } from '../../../scripts/project-task-runner.mjs';
+
+// ══════════════════════════════════════════════════════════════
+// ★ 2026-10-19（change: `wake-her-on-task-result`）：隔离与续接的四条纯函数
+// ══════════════════════════════════════════════════════════════
+
+describe('子进程环境变量白名单', () => {
+  const src = {
+    PATH: '/usr/bin',
+    HOME: '/home/alysia-runner',
+    DSH_HOME: '/srv/alysia-runner/.dsh',
+    DEEPSEEK_API_KEY: 'sk-test',
+    LANG: 'en_US.UTF-8',
+    ALYSIA_RUNNER_TOKEN: 'runner-token',
+    ALYSIA_WEBUI_TOKEN: 'ADMIN-SECRET',
+    // 不该被透传的
+    OPENAI_API_KEY: 'sk-other',
+    ALYSIA_UNRELATED: 'x',
+    AWS_SECRET_ACCESS_KEY: 'nope',
+  };
+
+  it('白名单内的原样保留；白名单外的**一律不带**', () => {
+    const env = buildChildEnv(true, src as never);
+    expect(env.PATH).toBe('/usr/bin');
+    expect(env.DSH_HOME).toBe('/srv/alysia-runner/.dsh');
+    expect(env.DEEPSEEK_API_KEY).toBe('sk-test');
+    expect(env).not.toHaveProperty('AWS_SECRET_ACCESS_KEY');
+    expect(env).not.toHaveProperty('ALYSIA_UNRELATED');
+    expect(env).not.toHaveProperty('OPENAI_API_KEY');
+  });
+
+  it('★★ 管理令牌不进子进程：适配器只拿到**runner 令牌**', () => {
+    const env = buildChildEnv(true, src as never);
+    expect(env.ALYSIA_WEBUI_TOKEN, '管理令牌被透传给了 dsh —— 后台执行体握了管理面').toBe('runner-token');
+  });
+
+  it('没有 runner 令牌时退回旧变量（老部署不炸）', () => {
+    const { ALYSIA_RUNNER_TOKEN, ...legacy } = src;
+    const env = buildChildEnv(false, legacy as never);
+    expect(env.ALYSIA_WEBUI_TOKEN).toBe('ADMIN-SECRET');
+    expect(env.ALYSIA_ALLOW_PUBLISH).toBe('0');
+  });
+
+  it('allowPublish 透传成 ALYSIA_ALLOW_PUBLISH', () => {
+    expect(buildChildEnv(true, src as never).ALYSIA_ALLOW_PUBLISH).toBe('1');
+    expect(buildChildEnv(false, src as never).ALYSIA_ALLOW_PUBLISH).toBe('0');
+  });
+});
+
+describe('续接失败的辨别', () => {
+  it('dsh 说会话不存在 → 认出来（该丢 id 重开）', () => {
+    expect(looksLikeResumeFailure({ stderr: 'Error: unknown session abc', stdout: '' })).toBe(true);
+    expect(looksLikeResumeFailure({ stderr: '', stdout: 'session not found' })).toBe(true);
+  });
+
+  it('普通失败 / 空输出 → 不认（不该重开，那会白跑一遍）', () => {
+    expect(looksLikeResumeFailure({ stderr: 'build failed', stdout: '' })).toBe(false);
+    expect(looksLikeResumeFailure({ stderr: '', stdout: '' })).toBe(false);
+  });
+});
+
+describe('返工轮的任务正文', () => {
+  it('★ 返工要把**原目标**带上（否则到了工程环境只看得到修改意见）', () => {
+    const text = buildTaskText({
+      ...task,
+      revision: 1,
+      goal: '颜色再冷一点',
+      originalGoal: '做一个月光花园',
+    });
+    expect(text).toContain('最初的目标：做一个月光花园');
+    expect(text).toContain('这一轮要我改的是：颜色再冷一点');
+  });
+
+  it('没有 originalGoal（老数据/测试替身）→ 行为同以前，不炸', () => {
+    const text = buildTaskText({ ...task, revision: 1, goal: '改一下' });
+    expect(text).toContain('改一下');
+    expect(text).not.toContain('最初的目标');
+  });
+});
+
+describe('产物带 mtime（服务端判"是不是这一轮的"）', () => {
+  it('artifactPages 返回的文件都带 mtime', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pt-art-'));
+    writeFileSync(join(dir, 'moon.html'), '<html></html>');
+    const pages = artifactPages(dir, 0, () => false);
+    expect(pages).toHaveLength(1);
+    expect(typeof pages[0].mtime).toBe('number');
+    expect(pages[0].mtime).toBeGreaterThan(0);
+  });
+});
 
 const task = {
   taskId: 'pt-1', goal: '做一个关于我页面', acceptanceCriteria: '能构建', revision: 0, dshSessionId: null,

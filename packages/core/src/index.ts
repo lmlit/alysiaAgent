@@ -146,6 +146,8 @@ export class AlysiaCore {
         //   缺省 ⇒ 不注册 list_my_pages / find_page
         ...(this.opts.hostPages ? { hostPages: this.opts.hostPages } : {}),
         ...(this.opts.serverStatus ? { serverStatus: this.opts.serverStatus } : {}),
+        // ★ 2026-10-19（change: wake-her-on-task-result）：自动返工上限（只拦自动返工）
+        ...(this.opts.maxAutoRework !== undefined ? { maxAutoRework: this.opts.maxAutoRework } : {}),
       })
       .use(commandsModule, { ownerId: this.opts.ownerId })
       .use(pipelineModule, { sampling: this.sampling, ownerId: this.opts.ownerId })

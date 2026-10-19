@@ -66,6 +66,10 @@ export function registerChatTools(
    * 缺省 ⇒ 不注册 `check_server_status`。
    */
   serverStatus?: ServerStatusProvider,
+  /**
+   * ★ 2026-10-19（change: `wake-her-on-task-result`）：自动返工上限（只拦自动返工）。
+   */
+  maxAutoRework?: number,
 ): void {
   registry.register(createWebSearchTool());
   registry.register(createWeatherTool());
@@ -84,7 +88,13 @@ export function registerChatTools(
   }
   // ★ 2026-10-17（change: `add-project-task-delegation`）：委托任务工具。
   //   未登记任何项目 ⇒ 一个都不注册（能力开关：配置即开关，不另立布尔位）
-  for (const tool of createProjectTaskTools(memoryManager, { projectIds, taskWindow, pages: hostPages, serverStatus })) {
+  for (const tool of createProjectTaskTools(memoryManager, {
+    projectIds,
+    taskWindow,
+    pages: hostPages,
+    serverStatus,
+    ...(maxAutoRework !== undefined ? { maxAutoRework } : {}),
+  })) {
     registry.register(tool);
   }
   // ★ 2026-10-19：页面查询工具挂没挂上必须能观测（否则"她不会查"与"没注册"同形）
@@ -161,6 +171,8 @@ export interface ToolsConfig {
    * 由宿主 runner 推上来（容器看不到宿主目录）。缺省 ⇒ 不注册查询工具。
    */
   hostPages?: PagesProvider;
+  /** ★ 2026-10-19：自动返工上限（只拦自动返工） */
+  maxAutoRework?: number;
 }
 
 /** 工具注册表。对应 `index.ts:200-204` */
@@ -179,6 +191,7 @@ export const toolsModule: Module<ToolsConfig> = {
       cfg.taskWindow,
       cfg.hostPages,
       cfg.serverStatus,
+      cfg.maxAutoRework,
     );
     if (cfg.features.codeMode) {
       registerCodeTools(registry, cfg.workspaceDir, cfg.features);

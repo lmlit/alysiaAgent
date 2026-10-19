@@ -31,6 +31,24 @@ export interface PipelineExtras {
   /** ★ 8-15 WebUI: 结束通知。正常 = RespondStage 的 send 回调内触发（chain 非空）；
    *   打断（aborted 分支不经过 RespondStage）= LLMAgentStage 直接触发 null——SSE 端点据此关闭 */
   on_done?: (chain: MessageChain | null) => void;
+  /**
+   * ★ 2026-10-19（change: `wake-her-on-task-result`）：**异步唤醒**的一轮输入。
+   *
+   * 有它 ⇒ 这一轮不是用户说话，而是「工程那边回来了」。两个 Stage 必须让路：
+   *   · `MemoryIngestStage` **不许**把它写成 user 事件（结果本身已由 `role:'engine'` 记好）；
+   *   · `LLMAgentStage` 必须显式声明「这是工具返回，不是用户命令」，并给出决策指令。
+   *
+   * 为什么放 extras 而不是给 `MessageEvent` 加字段：这是**一次性管线输入**，
+   * 不是事件的身份；加字段会让所有适配器都要知道它。
+   */
+  subagent_result?: SubagentResultEnvelope;
+}
+
+/** 唤醒轮的信封：渲染好的正文 + 结构化 payload（两者都要，别让下游只能解析文本） */
+export interface SubagentResultEnvelope {
+  payload: import('../memory/project-task-result.js').SubagentResultPayload;
+  /** 已经渲染好的「工具返回」正文（就是 `event.messageStr`） */
+  text: string;
 }
 
 // ── Stage / PipelineContext ───────────────────────────
