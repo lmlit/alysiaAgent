@@ -19,20 +19,41 @@ const mood = getMood();
                   class="transition opacity-0 scale-90 group-hover:scale-100 group-hover:opacity-100 text-white text-5xl">
             </Icon>
         </div>
-        {/* 心情只动**色调与明度**：滤镜放在容器上，图片本身的构图不动 */}
-        <div style={`filter: ${mood.filter};`}>
-            <ImageWrapper src={config.avatar || ""} alt={`昔涟（此刻${mood.label}）`} class="mx-auto lg:w-full h-full lg:mt-0 "></ImageWrapper>
+        {/* 心情只动**色调与明度**：滤镜放在容器上，图片本身的构图不动。
+            外圈再加一道与心情同色的环 —— 这是"她今天的颜色"最直观的一层。 */}
+        <div class="rounded-xl transition"
+             style={`filter: ${mood.filter}; box-shadow: 0 0 0 2px ${mood.color}66, 0 8px 24px -12px ${mood.color}88;`}>
+            <ImageWrapper src={config.avatar || ""} alt={`昔涟（此刻${mood.label}）`} class="mx-auto lg:w-full h-full lg:mt-0 rounded-xl overflow-hidden"></ImageWrapper>
         </div>
     </a>
     <div class="px-2">
         <div class="font-bold text-xl text-center mb-1 dark:text-neutral-50 transition">{config.name}</div>
         <div class="h-1 w-5 bg-[var(--primary)] mx-auto rounded-full mb-2 transition"></div>
-        <div class="text-center text-neutral-400 mb-2.5 transition">{config.bio}</div>
-        {/* ★ 她此刻的心情（读 src/data/mood.json） */}
-        <div class="flex items-center justify-center gap-1.5 mb-2.5 text-sm text-neutral-400 transition"
-             title={mood.note ?? ""}>
-            <span class="inline-block w-1.5 h-1.5 rounded-full" style={`background:${mood.color}`}></span>
-            <span>此刻：{mood.label}</span>
+        <div class="text-center text-neutral-400 mb-2 transition">{config.bio}</div>
+
+        {/* ★ 她此刻的心情（读 src/data/mood.json）——
+            做成一张小卡：呼吸点 + 心情名 + 她的那句话 + 更新时间 */}
+        <div class="mb-2 rounded-xl px-3 py-2 transition"
+             style={`background:${mood.color}14; border:1px solid ${mood.color}2e;`}>
+            <div class="flex items-center gap-2">
+                <span class="relative flex w-2 h-2 shrink-0">
+                    <span class="absolute inline-flex w-full h-full rounded-full opacity-70 animate-ping"
+                          style={`background:${mood.color}`}></span>
+                    <span class="relative inline-flex w-2 h-2 rounded-full"
+                          style={`background:${mood.color}`}></span>
+                </span>
+                <span class="text-sm font-medium transition" style={`color:${mood.color}`}>此刻 · {mood.label}</span>
+                {mood.updatedAt && (
+                    <span class="ml-auto text-[11px] text-neutral-400/80 transition">
+                        {mood.updatedAt.slice(5, 16).replace('T', ' ')}
+                    </span>
+                )}
+            </div>
+            {mood.note && (
+                <div class="mt-1.5 pl-4 text-xs leading-relaxed text-neutral-500 dark:text-neutral-400 transition">
+                    {mood.note}
+                </div>
+            )}
         </div>
         <div class="flex flex-wrap gap-2 justify-center mb-1">
             {config.links.length > 1 && config.links.map(item =>

@@ -19,6 +19,8 @@ import { defaultFavicons } from "../constants/icon";
 import type { Favicon } from "../types/config";
 import { pathsEqual, url } from "../utils/url-utils";
 import "katex/dist/katex.css";
+// ★ 2026-10-21（cyrene-glass-window）：粉紫拱窗底色 / 毛玻璃卡片 / 移动光波
+import "../styles/cyrene.css";
 
 interface Props {
 	title?: string;
@@ -152,6 +154,8 @@ const bannerOffset =
 		  data-overlayscrollbars-initialize
 	>
 		<ConfigCarrier></ConfigCarrier>
+		{/* ★ 2026-10-21（cyrene-glass-window）：右下角那扇透着光的拱窗（纯装饰） */}
+		<div class="cyrene-window" aria-hidden="true"></div>
 		<slot />
 
 		<!-- increase the page height during page transition to prevent the scrolling animation from jumping -->

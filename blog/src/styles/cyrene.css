@@ -1,0 +1,227 @@
+/* ─────────────────────────────────────────────────────────────
+   昔涟 · 粉紫拱窗（★ 2026-10-21，change: `cyrene-glass-window`）
+
+   三件事，都在这一个文件里：
+   1. **粉紫拱窗**：底色回到她原来的粉白/深紫，右下角一扇发光的拱窗
+   2. **毛玻璃**：所有卡片半透明 + backdrop blur，让拱窗的光透上来
+   3. **移动光波**：两层缓慢漂移的径向光斑，几乎察觉不到在动 —— 但页面不是死的
+
+   ⚠️ 为什么不用 `<img>` 或大量 DOM：光波是两段 CSS 动画，拱窗是一个伪元素。
+      零额外请求、零 JS、移动端也不掉帧。
+   ───────────────────────────────────────────────────────────── */
+
+:root {
+  /* 她原来的粉白 / 深紫黑（取自 2026-10-18 那版 style.css） */
+  --paper-light: #fbf6fa;
+  --paper-dark: #16121b;
+
+  --rose-100: #fdf2f7;
+  --rose-200: #f2e8f7;
+  --rose-300: #e2d9f4;
+  --rose-400: #f3c8d6;
+  --rose-500: #dd9db4;
+  --rose-600: #d9a2b6;
+  --rose-700: #a86580;
+
+  --shell-line-light: rgba(168, 101, 128, 0.18);
+  --shell-line-dark: rgba(217, 162, 182, 0.14);
+}
+
+/* ── 1. 底色：粉白 / 深紫 ─────────────────────────────────── */
+:root {
+  --page-bg: var(--paper-light);
+  --card-bg: rgba(255, 255, 255, 0.55);
+  --line-divider: var(--shell-line-light);
+}
+:root.dark {
+  --page-bg: var(--paper-dark);
+  --card-bg: rgba(32, 26, 38, 0.55);
+  --line-divider: var(--shell-line-dark);
+}
+
+body {
+  background-image:
+    radial-gradient(120% 80% at 85% -10%, rgba(243, 200, 214, 0.55), transparent 60%),
+    radial-gradient(90% 70% at 10% 0%, rgba(226, 217, 244, 0.45), transparent 55%);
+  background-attachment: fixed;
+  background-repeat: no-repeat;
+}
+:root.dark body {
+  background-image:
+    radial-gradient(120% 80% at 85% -10%, rgba(168, 101, 128, 0.28), transparent 62%),
+    radial-gradient(90% 70% at 10% 0%, rgba(122, 106, 168, 0.22), transparent 58%);
+}
+
+/* ── 2. 移动光波：两层极慢漂移的光斑 ───────────────────────── */
+/* 用 fixed 伪元素而不是 body 背景图：这样才能各自独立做 transform 动画 */
+body::before {
+  content: "";
+  position: fixed;
+  inset: -20vmax;
+  /* ⚠️ 不能是负值：负 z-index 会落到 body 的不透明背景**下面**，等于没画。
+     Fuwari 的内容容器是 z-30，所以 0/1 这一档刚好在"背景之上、内容之下"。 */
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(38vmax 30vmax at 20% 30%, rgba(243, 200, 214, 0.40), transparent 70%),
+    radial-gradient(32vmax 26vmax at 75% 65%, rgba(226, 217, 244, 0.38), transparent 70%);
+  animation: cyrene-drift 42s ease-in-out infinite alternate;
+  will-change: transform;
+}
+body::after {
+  content: "";
+  position: fixed;
+  inset: -20vmax;
+  z-index: 1;
+  pointer-events: none;
+  background:
+    radial-gradient(26vmax 22vmax at 65% 20%, rgba(255, 246, 248, 0.55), transparent 70%),
+    radial-gradient(30vmax 24vmax at 25% 80%, rgba(217, 162, 182, 0.22), transparent 70%);
+  animation: cyrene-drift-rev 58s ease-in-out infinite alternate;
+  will-change: transform;
+}
+:root.dark body::before {
+  background:
+    radial-gradient(38vmax 30vmax at 20% 30%, rgba(168, 101, 128, 0.30), transparent 70%),
+    radial-gradient(32vmax 26vmax at 75% 65%, rgba(122, 106, 168, 0.26), transparent 70%);
+}
+:root.dark body::after {
+  background:
+    radial-gradient(26vmax 22vmax at 65% 20%, rgba(217, 162, 182, 0.16), transparent 70%),
+    radial-gradient(30vmax 24vmax at 25% 80%, rgba(168, 101, 128, 0.18), transparent 70%);
+}
+
+@keyframes cyrene-drift {
+  from { transform: translate3d(-2%, -1%, 0) scale(1); }
+  to   { transform: translate3d(3%, 2%, 0) scale(1.08); }
+}
+@keyframes cyrene-drift-rev {
+  from { transform: translate3d(2%, 1%, 0) scale(1.05); }
+  to   { transform: translate3d(-3%, -2%, 0) scale(1); }
+}
+
+/* ── 3. 拱窗：右下角那扇透着光的窗 ─────────────────────────── */
+/* 拱形 = 上方两个大圆角；光从窗内向外扩散 */
+.cyrene-window {
+  position: fixed;
+  right: clamp(16px, 5vw, 72px);
+  bottom: 2vh;
+  width: clamp(200px, 24vw, 380px);
+  aspect-ratio: 0.8;
+  /* 同上：必须 > 0 才看得见；10 仍然低于内容层的 z-30，所以不会盖住文字 */
+  z-index: 10;
+  pointer-events: none;
+  border-radius: 50% 50% 10px 10px / 40% 40% 4px 4px;
+  background:
+    radial-gradient(120% 90% at 50% 78%, #fffdf8 0%, #ffeede 30%, #ffd9e2 56%, #e9c8ee 80%, #d9c9f2 100%);
+  box-shadow:
+    0 0 70px 10px rgba(255, 226, 236, 0.65),
+    0 0 160px 40px rgba(226, 217, 244, 0.45),
+    inset 0 0 46px 8px rgba(255, 255, 255, 0.75);
+  opacity: 0.92;
+  animation: cyrene-breathe 9s ease-in-out infinite;
+}
+/* 窗框 + 窗棂（一竖一横，用渐变画线，不额外加 DOM） */
+.cyrene-window::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  border: 2px solid rgba(217, 162, 182, 0.7);
+  background-image:
+    linear-gradient(to right, transparent calc(50% - 1px), rgba(217, 162, 182, 0.55) 50%, transparent calc(50% + 1px)),
+    linear-gradient(to bottom, transparent calc(42% - 1px), rgba(217, 162, 182, 0.45) 42%, transparent calc(42% + 1px));
+  box-shadow: inset 0 0 26px rgba(217, 162, 182, 0.4);
+}
+/* 窗内的竖向光带 */
+.cyrene-window::after {
+  content: "";
+  position: absolute;
+  inset: 6% 5% 5% 5%;
+  border-radius: inherit;
+  background: linear-gradient(100deg, transparent 22%, rgba(255, 255, 255, 0.62) 48%, transparent 74%);
+  background-size: 220% 100%;
+  animation: cyrene-sweep 11s linear infinite;
+  mix-blend-mode: screen;
+}
+:root.dark .cyrene-window {
+  opacity: 0.5;
+  box-shadow:
+    0 0 70px 10px rgba(168, 101, 128, 0.35),
+    0 0 160px 40px rgba(122, 106, 168, 0.25),
+    inset 0 0 36px 4px rgba(255, 236, 245, 0.28);
+}
+
+@keyframes cyrene-breathe {
+  0%, 100% { opacity: 0.68; }
+  50%      { opacity: 0.85; }
+}
+@keyframes cyrene-sweep {
+  from { background-position: -60% 0; }
+  to   { background-position: 160% 0; }
+}
+
+/* ── 4. 毛玻璃：所有卡片半透明 + 模糊背后的光 ───────────────── */
+/* 玻璃的三件套：低不透明底色 + backdrop blur + 一道顶边高光 */
+.card-base,
+.card-base-onload,
+:root .card-base {
+  background: rgba(255, 255, 255, 0.42);
+  -webkit-backdrop-filter: blur(22px) saturate(160%);
+  backdrop-filter: blur(22px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.62);
+  box-shadow:
+    0 1px 0 0 rgba(255, 255, 255, 0.75) inset,
+    0 12px 32px -18px rgba(168, 101, 128, 0.35);
+}
+:root.dark .card-base,
+:root.dark .card-base-onload {
+  background: rgba(38, 30, 46, 0.45);
+  border-color: rgba(217, 162, 182, 0.22);
+  box-shadow:
+    0 1px 0 0 rgba(217, 162, 182, 0.16) inset,
+    0 12px 32px -18px rgba(0, 0, 0, 0.55);
+}
+
+/* 顶栏也毛玻璃，滚动时能透出光波 */
+#navbar-wrapper .card-base,
+#navbar-wrapper > div {
+  -webkit-backdrop-filter: blur(14px) saturate(150%);
+  backdrop-filter: blur(14px) saturate(150%);
+  background: rgba(255, 255, 255, 0.5);
+}
+:root.dark #navbar-wrapper .card-base,
+:root.dark #navbar-wrapper > div {
+  background: rgba(22, 18, 27, 0.5);
+}
+
+/* ── 5. 排版：她原来那套"写字"的衬线 ──────────────────────── */
+body,
+.article-body,
+.post-title,
+.text-90 {
+  font-family: "Noto Serif SC", "Songti SC", "Source Han Serif SC", "SimSun", serif;
+}
+/* 数字/时间这类小信息仍用无衬线，不然会糊 */
+.time,
+.post-meta,
+time {
+  font-family: "Roboto", "Helvetica Neue", system-ui, sans-serif;
+  letter-spacing: 0.02em;
+}
+
+/* 正文行距放宽一点，衬线读起来更从容 */
+.article-body p {
+  line-height: 1.95;
+  letter-spacing: 0.01em;
+}
+
+/* ── 6. 动效克制：尊重 reduced motion ─────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  body::before,
+  body::after,
+  .cyrene-window,
+  .cyrene-window::after {
+    animation: none !important;
+  }
+}
