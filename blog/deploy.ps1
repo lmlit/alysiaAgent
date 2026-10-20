@@ -1,4 +1,4 @@
-﻿# 昔涟博客 —— 本地构建 + 推送到服务器
+# 昔涟博客 —— 本地构建 + 推送到服务器
 #
 # 为什么本地构建：服务器 2C/1.8G，Astro 构建会吃内存；产物是纯静态，推上去就行。
 #
@@ -13,6 +13,8 @@
 
 param(
   [switch]$SkipBuild,
+  # ★ 2026-10-21：跳过日记同步（只想部署现有内容时用）
+  [switch]$SkipDiaries,
   [string]$HostName = $env:ALYSIA_DEPLOY_HOST,
   [string]$RemoteRoot = "/srv/alysia-runner/blog"
 )
@@ -31,6 +33,32 @@ function Invoke-Remote([string]$Script) {
 Push-Location $PSScriptRoot
 $tmp = $null
 try {
+  # ★ 2026-10-21（change: add-daily-diary）：构建前先把她最新的日记同步下来。
+  #   为什么在构建前：日记是 markdown，不先落盘，这次构建里就没有它。
+  #   读不到库/表不存在 ⇒ export 脚本输出 []，这里静默跳过（博客不该因为"今天没日记"而失败）。
+  if (-not $SkipDiaries) {
+    Write-Host "== 同步日记 ==" -ForegroundColor Cyan
+    try {
+      $exportPy = [IO.File]::ReadAllText((Join-Path $PSScriptRoot "scripts\export-diaries.py"))
+      $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($exportPy -replace "`r`n", "`n")))
+      $json = ssh -o BatchMode=yes $HostName "echo $b64 | base64 -d > /tmp/export-diaries.py && python3 /tmp/export-diaries.py"
+      if ($LASTEXITCODE -eq 0 -and $json) {
+        $diaryFile = Join-Path $env:TEMP "diaries-$([guid]::NewGuid().ToString('N')).json"
+        [IO.File]::WriteAllText($diaryFile, ($json -join "`n"), (New-Object Text.UTF8Encoding($false)))
+        Push-Location $repo
+        try {
+          node blog/scripts/sync-diaries.mjs --input $diaryFile
+          python blog/scripts/make-diary-covers.py 2>$null
+        } finally { Pop-Location }
+        Remove-Item $diaryFile -Force -ErrorAction SilentlyContinue
+      } else {
+        Write-Host "  跳过（导出失败或服务端无日记）" -ForegroundColor DarkYellow
+      }
+    } catch {
+      Write-Host ("  跳过（{0}）" -f $_.Exception.Message) -ForegroundColor DarkYellow
+    }
+  }
+
   if (-not $SkipBuild) {
     Write-Host "== 构建 ==" -ForegroundColor Cyan
     npm run build
