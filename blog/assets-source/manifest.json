@@ -1,0 +1,475 @@
+{
+  "source": "commons.moegirl.org.cn / zh.moegirl.org.cn（昔涟条目与分类）",
+  "license": "插画版权属 miHoYo；萌百以 CC BY-NC-SA 收录。仅个人非商业使用。",
+  "count": 22,
+  "coverCandidates": 11,
+  "items": [
+    {
+      "id": "11",
+      "file": "11.png",
+      "title": "极光直播",
+      "width": 2996,
+      "height": 1686,
+      "ratio": 1.78,
+      "orientation": "landscape",
+      "themes": [],
+      "flags": [],
+      "cover_ok": true,
+      "rgb": [
+        63,
+        67,
+        85
+      ],
+      "brightness": 72,
+      "hue": 162,
+      "temperature": "cool"
+    },
+    {
+      "id": "09",
+      "file": "09.png",
+      "title": "翁法罗斯",
+      "width": 2853,
+      "height": 1543,
+      "ratio": 1.85,
+      "orientation": "landscape",
+      "themes": [],
+      "flags": [],
+      "cover_ok": true,
+      "rgb": [
+        168,
+        137,
+        138
+      ],
+      "brightness": 148,
+      "hue": 33,
+      "temperature": "warm"
+    },
+    {
+      "id": "21",
+      "file": "21.png",
+      "title": "昔涟立绘",
+      "width": 2048,
+      "height": 2048,
+      "ratio": 1.0,
+      "orientation": "square",
+      "themes": [
+        "立绘"
+      ],
+      "flags": [],
+      "cover_ok": false,
+      "rgb": [
+        178,
+        154,
+        196
+      ],
+      "brightness": 176,
+      "hue": 196,
+      "temperature": "cool"
+    },
+    {
+      "id": "19",
+      "file": "19.jpg",
+      "title": "故事的下一页",
+      "width": 1680,
+      "height": 2426,
+      "ratio": 0.69,
+      "orientation": "portrait",
+      "themes": [],
+      "flags": [],
+      "cover_ok": false,
+      "rgb": [
+        176,
+        148,
+        123
+      ],
+      "brightness": 149,
+      "hue": 26,
+      "temperature": "warm"
+    },
+    {
+      "id": "07",
+      "file": "07.jpg",
+      "title": "昔涟前瞻壁纸",
+      "width": 2000,
+      "height": 1125,
+      "ratio": 1.78,
+      "orientation": "landscape",
+      "themes": [
+        "壁纸",
+        "前瞻"
+      ],
+      "flags": [],
+      "cover_ok": true,
+      "rgb": [
+        202,
+        201,
+        235
+      ],
+      "brightness": 213,
+      "hue": 179,
+      "temperature": "cool"
+    },
+    {
+      "id": "16",
+      "file": "16.jpg",
+      "title": "在永无止境的轮回的尽头",
+      "width": 2000,
+      "height": 1125,
+      "ratio": 1.78,
+      "orientation": "landscape",
+      "themes": [],
+      "flags": [],
+      "cover_ok": true,
+      "rgb": [
+        133,
+        127,
+        137
+      ],
+      "brightness": 132,
+      "hue": 165,
+      "temperature": "cool"
+    },
+    {
+      "id": "18",
+      "file": "18.jpg",
+      "title": "成为昨日的明天",
+      "width": 2000,
+      "height": 1125,
+      "ratio": 1.78,
+      "orientation": "landscape",
+      "themes": [],
+      "flags": [],
+      "cover_ok": true,
+      "rgb": [
+        149,
+        141,
+        169
+      ],
+      "brightness": 153,
+      "hue": 161,
+      "temperature": "cool"
+    },
+    {
+      "id": "01",
+      "file": "01.png",
+      "title": "昔涟剧情CG·穹",
+      "width": 1920,
+      "height": 1080,
+      "ratio": 1.78,
+      "orientation": "landscape",
+      "themes": [
+        "剧情CG"
+      ],
+      "flags": [],
+      "cover_ok": true,
+      "rgb": [
+        161,
+        151,
+        178
+      ],
+      "brightness": 163,
+      "hue": 170,
+      "temperature": "cool"
+    },
+    {
+      "id": "02",
+      "file": "02.png",
+      "title": "昔涟剧情CG·星",
+      "width": 1920,
+      "height": 1080,
+      "ratio": 1.78,
+      "orientation": "landscape",
+      "themes": [
+        "剧情CG"
+      ],
+      "flags": [],
+      "cover_ok": true,
+      "rgb": [
+        162,
+        151,
+        178
+      ],
+      "brightness": 164,
+      "hue": 170,
+      "temperature": "cool"
+    },
+    {
+      "id": "10",
+      "file": "10.png",
+      "title": "三周年贺图",
+      "width": 1920,
+      "height": 1080,
+      "ratio": 1.78,
+      "orientation": "landscape",
+      "themes": [
+        "贺图"
+      ],
+      "flags": [],
+      "cover_ok": true,
+      "rgb": [
+        131,
+        121,
+        175
+      ],
+      "brightness": 142,
+      "hue": 175,
+      "temperature": "cool"
+    },
+    {
+      "id": "12",
+      "file": "12.png",
+      "title": "昔涟·星穹铁道",
+      "width": 1920,
+      "height": 1080,
+      "ratio": 1.78,
+      "orientation": "landscape",
+      "themes": [],
+      "flags": [],
+      "cover_ok": true,
+      "rgb": [
+        210,
+        185,
+        155
+      ],
+      "brightness": 183,
+      "hue": 26,
+      "temperature": "warm"
+    },
+    {
+      "id": "15",
+      "file": "15.png",
+      "title": "翁星合影",
+      "width": 1920,
+      "height": 1080,
+      "ratio": 1.78,
+      "orientation": "landscape",
+      "themes": [
+        "合影"
+      ],
+      "flags": [],
+      "cover_ok": true,
+      "rgb": [
+        213,
+        188,
+        190
+      ],
+      "brightness": 197,
+      "hue": 170,
+      "temperature": "cool"
+    },
+    {
+      "id": "17",
+      "file": "17.jpg",
+      "title": "黄金史诗·风堇",
+      "width": 1904,
+      "height": 1080,
+      "ratio": 1.76,
+      "orientation": "landscape",
+      "themes": [],
+      "flags": [],
+      "cover_ok": true,
+      "rgb": [
+        119,
+        86,
+        73
+      ],
+      "brightness": 93,
+      "hue": 16,
+      "temperature": "warm"
+    },
+    {
+      "id": "06",
+      "file": "06.jpg",
+      "title": "昔涟日记",
+      "width": 1080,
+      "height": 1580,
+      "ratio": 0.68,
+      "orientation": "portrait",
+      "themes": [
+        "日记"
+      ],
+      "flags": [],
+      "cover_ok": false,
+      "rgb": [
+        110,
+        97,
+        139
+      ],
+      "brightness": 115,
+      "hue": 177,
+      "temperature": "cool"
+    },
+    {
+      "id": "14",
+      "file": "14.png",
+      "title": "记忆主",
+      "width": 900,
+      "height": 1534,
+      "ratio": 0.59,
+      "orientation": "portrait",
+      "themes": [],
+      "flags": [],
+      "cover_ok": false,
+      "rgb": [
+        183,
+        163,
+        183
+      ],
+      "brightness": 176,
+      "hue": 191,
+      "temperature": "cool"
+    },
+    {
+      "id": "20",
+      "file": "20.png",
+      "title": "记忆主2",
+      "width": 900,
+      "height": 1534,
+      "ratio": 0.59,
+      "orientation": "portrait",
+      "themes": [],
+      "flags": [],
+      "cover_ok": false,
+      "rgb": [
+        177,
+        158,
+        177
+      ],
+      "brightness": 171,
+      "hue": 191,
+      "temperature": "cool"
+    },
+    {
+      "id": "05",
+      "file": "05.png",
+      "title": "光锥·爱如此刻永恒",
+      "width": 904,
+      "height": 1260,
+      "ratio": 0.72,
+      "orientation": "portrait",
+      "themes": [
+        "光锥"
+      ],
+      "flags": [],
+      "cover_ok": false,
+      "rgb": [
+        204,
+        208,
+        231
+      ],
+      "brightness": 214,
+      "hue": 171,
+      "temperature": "cool"
+    },
+    {
+      "id": "13",
+      "file": "13.png",
+      "title": "光锥·故事的下一页",
+      "width": 904,
+      "height": 1260,
+      "ratio": 0.72,
+      "orientation": "portrait",
+      "themes": [
+        "光锥"
+      ],
+      "flags": [],
+      "cover_ok": false,
+      "rgb": [
+        180,
+        150,
+        122
+      ],
+      "brightness": 151,
+      "hue": 28,
+      "temperature": "warm"
+    },
+    {
+      "id": "03",
+      "file": "03.png",
+      "title": "命途·记忆",
+      "width": 612,
+      "height": 612,
+      "ratio": 1.0,
+      "orientation": "square",
+      "themes": [],
+      "flags": [
+        "too-small"
+      ],
+      "cover_ok": false,
+      "rgb": [
+        0,
+        0,
+        0
+      ],
+      "brightness": 0,
+      "hue": 0,
+      "temperature": "warm"
+    },
+    {
+      "id": "08",
+      "file": "08.jpg",
+      "title": "昔涟老师",
+      "width": 456,
+      "height": 357,
+      "ratio": 1.28,
+      "orientation": "landscape",
+      "themes": [],
+      "flags": [
+        "too-small"
+      ],
+      "cover_ok": false,
+      "rgb": [
+        179,
+        185,
+        210
+      ],
+      "brightness": 191,
+      "hue": 152,
+      "temperature": "cool"
+    },
+    {
+      "id": "22",
+      "file": "22.png",
+      "title": "属性·冰",
+      "width": 256,
+      "height": 256,
+      "ratio": 1.0,
+      "orientation": "square",
+      "themes": [],
+      "flags": [
+        "too-small"
+      ],
+      "cover_ok": false,
+      "rgb": [
+        21,
+        50,
+        76
+      ],
+      "brightness": 49,
+      "hue": 137,
+      "temperature": "neutral"
+    },
+    {
+      "id": "04",
+      "file": "04.jpg",
+      "title": "签名",
+      "width": 276,
+      "height": 116,
+      "ratio": 2.38,
+      "orientation": "landscape",
+      "themes": [],
+      "flags": [
+        "too-small"
+      ],
+      "cover_ok": false,
+      "rgb": [
+        251,
+        241,
+        250
+      ],
+      "brightness": 247,
+      "hue": 204,
+      "temperature": "cool"
+    }
+  ]
+}

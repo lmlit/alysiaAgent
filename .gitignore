@@ -53,3 +53,6 @@ blog/dist/
 
 # Astro 生成的类型/缓存
 blog/.astro/
+
+# 素材库原图（第三方美术，体积大；只把 manifest 与成品封面入库）
+blog/assets-source/raw/
