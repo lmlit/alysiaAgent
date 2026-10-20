@@ -20,7 +20,11 @@
     }
 
     a:not(.no-styling) {
-        @apply relative bg-none link font-medium text-[var(--primary)]
+        /* ★ 2026-10-21：去掉 `@apply link` —— `.link` 定义在 main.css 的 @layer 里，
+           而 Tailwind 处理 markdown.css 时那个层不在同一编译单元，构建直接失败
+           （`The 'link' class does not exist`）。这里只需要链接的基本样式，
+           `.link` 提供的 rounded/padding/expand-animation 对正文链接本来也不合适。 */
+        @apply relative bg-none font-medium text-[var(--primary)]
         underline decoration-[var(--link-underline)] decoration-1 decoration-dashed underline-offset-4;
         box-decoration-break: clone;
         -webkit-box-decoration-break: clone;

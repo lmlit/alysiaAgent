@@ -20,6 +20,7 @@ import {
   LIFE_MOOD_NOTE_PROMPT,
   LIFE_REFLECTION_PROMPT,
   LIFE_DECLINE_PROMPT,
+  LIFE_DIARY_PROMPT,
 } from '../prompts/life.js';
 import type { ProactiveService } from '../proactive.js';
 import type { AlysiaCore } from '@alysia/core';
@@ -153,6 +154,19 @@ export const lifeModule: Module = {
           systemPrompt: LIFE_REFLECTION_PROMPT,
           responseFormat: 'json',
           // 低温/忠（反思要真实,不要高采样率的发挥）
+          sampling: { ...DEFAULT_SAMPLING.life.generateSummary },
+        });
+        return resp.role === 'assistant' ? resp.completionText.trim() : '';
+      },
+
+      // ★ 2026-10-21（add-daily-diary）：日记正文——**纯文本**，与反思的 JSON 分开。
+      //   采样用 generateSummary 槽（长文本、低温），且**不能加 responseFormat: 'json'**
+      //   （日记是散文，强制 JSON 会逼模型输出对象）。
+      generateDiary: async (context: string) => {
+        const resp = await core.providerManager.textChatWithFallback({
+          prompt: context,
+          sessionId: 'life-diary',
+          systemPrompt: LIFE_DIARY_PROMPT,
           sampling: { ...DEFAULT_SAMPLING.life.generateSummary },
         });
         return resp.role === 'assistant' ? resp.completionText.trim() : '';

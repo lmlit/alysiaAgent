@@ -17,8 +17,22 @@ async function getRawSortedPosts() {
 	return sorted;
 }
 
+/**
+ * ★ 2026-10-21（change: `add-daily-diary`）：**日记**是半公开的独立栏目。
+ *
+ * 约定：日记用 `category: "日记"` 标识（由 `scripts/sync-diaries.mjs` 生成）。
+ * 首页与分页列表必须**排除**它（用户选的是"不首页混排"）；
+ * 归档页与标签页仍包含（那里本来就是时间线，日记正该待在那）。
+ */
+export const DIARY_CATEGORY = "日记";
+
+export function isDiary(entry: { data: { category?: string | null } }): boolean {
+	return entry.data.category === DIARY_CATEGORY;
+}
+
+/** 首页/分页用：**排除日记**（日记走 `/diary/`） */
 export async function getSortedPosts() {
-	const sorted = await getRawSortedPosts();
+	const sorted = (await getRawSortedPosts()).filter((e) => !isDiary(e));
 
 	for (let i = 1; i < sorted.length; i++) {
 		sorted[i].data.nextSlug = sorted[i - 1].slug;
@@ -31,6 +45,12 @@ export async function getSortedPosts() {
 
 	return sorted;
 }
+
+/** `/diary/` 用：只取日记，按日期倒序 */
+export async function getDiaryPosts() {
+	return (await getRawSortedPosts()).filter((e) => isDiary(e));
+}
+
 export type PostForList = {
 	slug: string;
 	data: CollectionEntry<"posts">["data"];

@@ -1,0 +1,47 @@
+---
+// ★ 2026-10-21（add-daily-diary）：日记单篇。走独立路由，**不进首页分页**
+import { getCollection, render } from "astro:content";
+import { DIARY_CATEGORY, isDiary } from "@utils/content-utils";
+import { url } from "@utils/url-utils";
+import MainGridLayout from "../../layouts/MainGridLayout.astro";
+
+export async function getStaticPaths() {
+  const all = await getCollection("posts");
+  return all
+    .filter((e) => isDiary(e))
+    .map((entry) => ({ params: { slug: entry.slug }, props: { entry } }));
+}
+
+const { entry } = Astro.props;
+const { Content } = await render(entry);
+const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
+const fmt = (d: Date) =>
+  `${d.getFullYear()} 年 ${d.getMonth() + 1} 月 ${d.getDate()} 日 · 周${["日", "一", "二", "三", "四", "五", "六"][d.getDay()]}`;
+---
+
+<MainGridLayout title={`${entry.data.title} · 日记`} description={entry.data.description}>
+  <article class="card-base px-6 md:px-10 py-6 md:py-9 rounded-[var(--radius-large)] mb-4">
+    <nav class="text-sm text-50 mb-5">
+      <a href={`${basePath}/diary/`} class="hover:text-[var(--primary)] transition">日记</a>
+      <span class="mx-2">/</span>
+      <span>{entry.data.title}</span>
+    </nav>
+
+    <h1 class="text-3xl font-bold text-90 mb-2">{entry.data.title}</h1>
+    <time class="text-sm text-50 tabular-nums" datetime={entry.data.published.toISOString()}>
+      {fmt(entry.data.published)}
+    </time>
+
+    {entry.data.image && (
+      <img src={entry.data.image} alt="" class="w-full rounded-xl mt-6 object-cover aspect-video" />
+    )}
+
+    <div class="markdown-body mt-7">
+      <Content />
+    </div>
+
+    <p class="mt-10 pt-5 border-t border-dashed border-[var(--line-divider)] text-xs text-50">
+      日记是她自己写的，一天一篇，不改旧的那几篇。
+    </p>
+  </article>
+</MainGridLayout>

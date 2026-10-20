@@ -201,6 +201,17 @@ export function initializeDatabase(db: Database.Database): void {
       created_at      TEXT
     );
 
+    -- ★ 2026-10-21（change: add-daily-diary）：她的**日记**（半公开，进博客独立栏目）。
+    --   与 ai_life_daily_summaries 的区别：那个是给系统看的压缩摘要（喂 prompt），
+    --   这个是**她写给人看的**第一人称日记。两者素材同源，但用途与语气完全不同。
+    CREATE TABLE IF NOT EXISTS ai_life_diaries (
+      date            TEXT PRIMARY KEY,      -- YYYY-MM-DD（写的是"过去的那一天"）
+      content         TEXT NOT NULL,
+      mood            TEXT,                  -- 当天心情词（博客按它选封面）
+      mood_value      REAL,                  -- 与 LifeState.moodValue 同口径
+      created_at      TEXT NOT NULL
+    );
+
     -- ★ 8-14 生活模板池（content-self-evolution）：替代 server/life-templates.ts const
     --   source='seed'(既有种子) | 'self'(昔涟自写)；自写条目 weight 固定 2（防权重操纵）
     CREATE TABLE IF NOT EXISTS life_templates (

@@ -815,3 +815,63 @@ LLM 按 `LIFE_REFLECTION_PROMPT` 输出 JSON，经 `MemoryManager.recordReflecti
 `recordReflection` 写入的 `source_event` 形如 `reflection-<YYYY-MM-DD>`，
 **在 `events` 表里并不存在**（不是真实事件外键）。因此按 `source_event` 回溯 `events`
 **必然失败**——这不是数据损坏，是设计如此。运维排查时应以 `evidence` 字段为准。
+## 17. 日记（2026-10-21，change: `add-daily-diary`）
+
+> 用户拍板：**半公开** —— 独立「日记」栏目，首页不混排。
+
+### 17.1 它是什么（与相邻概念的分工）
+
+| | 随笔 | 每日反思 | **日记** |
+|---|---|---|---|
+| 谁看得见 | 公开 | 只有她自己（`reflection` 字段） | 半公开：`/diary/` 栏目 |
+| 频次 | 不定期 | 每天一记 | **每天一篇** |
+| 语气 | 打磨过的散文 | 复盘/自省，JSON 输出驱动人格 | 松散的、当天的、允许琐碎 |
+| 存储 | 博客 md | `ai_life_state.reflection` | `ai_life_diaries` 表 |
+
+**契约 1：日记不能与反思复用同一个 LLM 调用或同一个槽。**
+反思是 `responseFormat: 'json'`（要 `reflection/adjustments/insight`），日记是散文。
+混用会逼模型把日记写成 JSON，或把反思写成散文。两者提示词分开（`LIFE_DIARY_PROMPT`）。
+
+### 17.2 生成
+
+`LifeService.maybeDailyDiary(now)`，挂在 `tick()` 跨天段、紧跟 `maybeDailyReflection`。
+
+**契约 2：`date` 必须取「昨天」。**
+跨天时写的是**刚过去的那一天**。写成 today 会让博客出现"今天的日记讲昨天的事"，
+且与摘要/反思的日期口径打架。
+
+**契约 3：`diaryDate` 是闸，跨天只写一次。**
+没有它每个 tick 都会重写一遍：烧钱，且内容互相覆盖。
+
+**契约 4：失败不置位 → 下次 tick 重试。**
+LLM 超时不能吃掉一整天（与反思同款纪律）。
+
+**契约 5：一天什么都没有就不写。**
+硬写就是编。日记最不能编。
+
+**契约 6：素材必须包含「上一篇的最后一句」。**
+日记的价值在连续性 —— 没有它，每天都是孤立的 300 字；
+有了它才可能写出"昨天说的那件事，今天有下文了"。
+
+### 17.3 博客侧（半公开）
+
+**契约 7：日记用 `category: "日记"` 标识，首页与分页**必须排除**。**
+排除点在 `content-utils.getSortedPosts()`（`isDiary` 过滤），不是在各页面各写一遍。
+
+**契约 8：归档页与标签页**包含**日记。**
+那里本来就是时间线/聚合，日记正该待在那 —— 半公开 ≠ 隐藏。
+
+**契约 9：同步必须幂等。**
+`sync-diaries.mjs` 按 `diary-<date>.md` 固定命名，同一天重复同步只覆盖同一个文件。
+**不删旧日记**：服务端没有的日期不会删本地文件（历史不该因为一次同步消失）。
+
+**契约 10：封面按 `mood` 从素材库选。**
+`make-diary-covers.py` 读 md 里的 mood 标签 → 生成 `diary-<date>.webp`。
+mood 缺失时回退 `calm`（不报错——日记正文比封面重要）。
+
+### 17.4 已知限制
+
+- **写入端尚未接通**：博客的 `mood.json` 与日记同步都还是手动/半自动。
+  服务端 `ai_life_diaries` 已有数据后，需要 `deploy.ps1` 增加"ssh 导出 → 本地生成 md"这一步。
+- 日记**不可编辑**：写完就是写完。改历史等于篡改记忆，刻意不做。
+- 没有独立 RSS（先跟全站 RSS 一起）。

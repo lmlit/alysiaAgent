@@ -871,6 +871,24 @@ export class MemoryManager {
     return this.lifeStore.getRecentSummaries(days);
   }
 
+  // ── ★ 2026-10-21 她的日记（change: add-daily-diary）──────────────────────
+  //   与 listLifeSummaries 分开：摘要喂 prompt（第三人称、压缩），日记给人看（第一人称、完整）
+
+  /** 写一篇日记（date = 被写的那一天；重复写覆盖） */
+  saveDiary(input: { date: string; content: string; mood?: string; moodValue?: number }): void {
+    this.lifeStore.saveDiary(input);
+  }
+
+  /** 按日期倒序列出日记（博客导出 / 控制台） */
+  listDiaries(limit: number = 30): Array<{ date: string; content: string; mood: string; moodValue: number; createdAt: string }> {
+    return this.lifeStore.listDiaries(limit);
+  }
+
+  /** 最近一篇日记的最后一句（新日记要接上它，保证连续性） */
+  getLastDiaryTail(): string {
+    return this.lifeStore.getLastDiaryTail();
+  }
+
   /** ★ 用户近况摘要（事件生成器用）：活跃 facts 前 5 条 */
   getUserActivitySummary(): string {
     const facts = this.profileStore.getActiveFacts()

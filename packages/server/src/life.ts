@@ -49,6 +49,15 @@ export interface LifeOpts {
    * 缺失则拒绝能力整体关闭（降级为"每轮都要说话"）。
    */
   generateDecline?: (context: string) => Promise<string>;
+  /**
+   * ★ 2026-10-21（change: `add-daily-diary`）：**日记正文生成**。
+   *
+   * 与 `generateReflection` 的区别（别混）：
+   *   - 反思：JSON 输出，驱动人格微调，只有她自己看
+   *   - 日记：纯文本，300-600 字，会公开到她博客的独立栏目
+   * 缺失则日记功能整体关闭（降级为不写日记）。
+   */
+  generateDiary?: (context: string) => Promise<string>;
   /** ★ 2026-10-20：拒绝概率（0-1，缺省 0.15）。设 0 或负数 = 关闭拒绝权。 */
   declineChance?: number;
   /** ★ 今天已主动联系的内容（ProactiveService.getTodayActivity），
@@ -145,6 +154,8 @@ interface LifeState {
   moodNoteAnalyzedAt: number;
   /** ★ 8-31 每日反思（life-reflection-loop）：上次反思的日期 key（跨天触发,失败不置位可重试） */
   reflectionDate: string | null;
+  /** ★ 2026-10-21（add-daily-diary）：上次写日记的日期 key（跨天触发，失败不置位可重试） */
+  diaryDate?: string | null;
   /** ★ 2026-10-20（tie-intimacy-to-speech）：上一轮解析出的亲密度档位 —— 迟滞的基准 */
   intimacyTier?: IntimacyTierName;
   /** ★ 2026-10-20：「最近在忙吗」上次问的时间（**每 7 天最多一次**，持久化防重启刷屏） */
@@ -229,6 +240,7 @@ export class LifeService {
         chatPushesToday: s.chatPushesToday ?? 0,
         moodNoteAnalyzedAt: s.moodNoteAnalyzedAt ?? 0,
         reflectionDate: s.reflectionDate ?? null,
+        diaryDate: s.diaryDate ?? null,
         // ★ 2026-10-20（tie-intimacy-to-speech）：档位迟滞与「问一次」去重
         intimacyTier: s.intimacyTier,
         lastAskAt: s.lastAskAt ?? 0,
@@ -453,6 +465,9 @@ export class LifeService {
 
     // ★ 8-31 每日反思（life-reflection-loop）：跨天触发一次——她复盘自己的一天
     await this.maybeDailyReflection(now);
+
+    // ★ 2026-10-21（add-daily-diary）：跨天写日记——写的是**刚过去的那一天**
+    await this.maybeDailyDiary(now);
 
     // 亲密度更新
     this.updateIntimacy();
@@ -1294,8 +1309,58 @@ export class LifeService {
     }
   }
 
-  // ── 亲密度 ──────────────────────────────────────────
+  /**
+   * ★ 2026-10-21（change: `add-daily-diary`）：跨天写一篇日记。
+   *
+   * 与 `maybeDailyReflection` 的分工见 `LIFE_DIARY_PROMPT` 注释：
+   * 反思是 JSON、驱动人格、只有她自己看；日记是纯文本、会**进博客**。
+   *
+   * 三条刻意的约束：
+   * ① `date` 取**昨天**（写的是刚过去的那一天），与 reflection 的 today 判据分开
+   * ② 失败**不置位** → 下一次 tick 会重试（同 reflection；别让一次 LLM 超时吃掉一整天）
+   * ③ 一天什么都没有就**不写** —— 硬写就是编，日记最不能编
+   */
+  private async maybeDailyDiary(now: Date): Promise<void> {
+    const today = localDateKey(now);
+    if (this.state.diaryDate === today) return;
+    if (!this.opts.generateDiary) return;
 
+    const events = this.memoryManager.listLifeEvents(1) as any[];
+    const snapshot = this.memoryManager.getLifeSnapshot?.() ?? {};
+    const summaries = (this.memoryManager.listLifeSummaries?.(3) ?? [])
+      .map((s: any) => `- ${s.date}: ${s.summary}`).join('\n');
+    const tail = this.memoryManager.getLastDiaryTail?.() ?? '';
+    if (events.length === 0 && !summaries) return;
+
+    const ctx = [
+      `【今天的事】${events.slice(-10).map((e: any) => `- ${e.content.slice(0, 80)}`).join('\n') || '（今天没有特别的事）'}`,
+      summaries ? `【近三天】\n${summaries}` : '',
+      `【心情】${snapshot.mood || '（无）'} / ${snapshot.moodNote || '（无氛围描述）'}`,
+      tail ? `【上一篇的最后一句】${tail}` : '',
+    ].filter(Boolean).join('\n');
+
+    try {
+      const text = String(await this.opts.generateDiary(ctx)).trim();
+      if (!text) {
+        logger.warn('[Diary] empty response, will retry next tick');
+        return;
+      }
+      const date = localDateKey(new Date(now.getTime() - 86_400_000));
+      this.memoryManager.saveDiary({
+        date,
+        content: text,
+        mood: String(snapshot.mood ?? ''),
+        moodValue: Number(snapshot.moodValue ?? 0),
+      });
+      this.state.diaryDate = today;
+      this.saveState();
+      logger.info(`[Diary] ${date}: ${text.slice(0, 40)}… (${text.length}字)`);
+    } catch (err: any) {
+      logger.warn(`[Diary] daily diary failed: ${err.message}`);
+    }
+  }
+
+  // ── 亲密度 ──────────────────────────────────────────
   /** 互动数据推导 0-100：频率 + 时长 + 主动占比。
    *  数据来自 getRecentMessages（近 7 天最多 500 条，附 createdAt）。
    *  ★ spec §11 衰减 + 审查修复：全部接 persona.memory_config 旋钮（不再硬编码）。

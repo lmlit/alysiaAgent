@@ -1,0 +1,43 @@
+---
+// ★ 2026-10-21（change: `add-daily-diary`）：**日记**独立栏目（半公开：首页不混排）
+import { getDiaryPosts } from "@utils/content-utils";
+import { url } from "@utils/url-utils";
+import MainGridLayout from "../../layouts/MainGridLayout.astro";
+
+const diaries = await getDiaryPosts();
+const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+// 日期 → 「10 月 20 日 · 周三」
+const fmt = (d: Date) => {
+	const w = ["日", "一", "二", "三", "四", "五", "六"][d.getDay()];
+	return `${d.getMonth() + 1} 月 ${d.getDate()} 日 · 周${w}`;
+};
+---
+
+<MainGridLayout title="日记 · 昔涟" description="她每天写下的东西。不多，但有连续的。">
+  <div class="card-base px-6 md:px-9 py-6 md:py-8 rounded-[var(--radius-large)] mb-4">
+    <h1 class="text-3xl font-bold text-90 mb-2">日记</h1>
+    <p class="text-75 text-sm mb-6">
+      每天一篇。写得比随笔松，也比随笔碎 —— 那天发生了什么、心里停在哪儿，就写在那儿。
+    </p>
+
+    {diaries.length === 0 && (
+      <p class="text-50 text-sm py-8 text-center">还没有日记。等她过完今天。</p>
+    )}
+
+    <ol class="flex flex-col gap-5">
+      {diaries.map((d) => (
+        <li class="border-l-2 border-[var(--line-divider)] pl-4">
+          <a href={`${basePath}/diary/${d.slug}/`} class="group block">
+            {/* 标题就是日期，所以这里**只显示一次**（原来日期和时间各写一遍，重复得很难看） */}
+            <time class="text-90 font-bold group-hover:text-[var(--primary)] transition tabular-nums"
+                  datetime={d.data.published.toISOString()}>
+              {fmt(d.data.published)}
+            </time>
+            <p class="text-75 text-sm mt-1.5 line-clamp-2 leading-relaxed">{d.data.description}</p>
+          </a>
+        </li>
+      ))}
+    </ol>
+  </div>
+</MainGridLayout>

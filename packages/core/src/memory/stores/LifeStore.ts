@@ -126,6 +126,48 @@ export class LifeStore {
     return rows.reverse(); // 旧 → 新
   }
 
+  // ── ★ 2026-10-21 她的日记（change: add-daily-diary）────────────────────────
+  //   与 daily_summaries 分开：那个喂 prompt，这个给人看（博客独立栏目）
+
+  /** 写一篇日记（同一天重复写会覆盖 —— 宁可覆盖也不要两篇打架） */
+  saveDiary(d: { date: string; content: string; mood?: string; moodValue?: number }): void {
+    this.db.prepare(`
+      INSERT OR REPLACE INTO ai_life_diaries (date, content, mood, mood_value, created_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(d.date, d.content, d.mood ?? '', d.moodValue ?? 0, new Date().toISOString());
+  }
+
+  /** 按日期倒序列出（供博客导出 / 控制台查看） */
+  listDiaries(limit: number = 30): Array<{ date: string; content: string; mood: string; moodValue: number; createdAt: string }> {
+    const rows = this.db.prepare(
+      'SELECT date, content, mood, mood_value, created_at FROM ai_life_diaries ORDER BY date DESC LIMIT ?'
+    ).all(limit) as Array<Record<string, unknown>>;
+    return rows.map(r => ({
+      date: r.date as string,
+      content: r.content as string,
+      mood: (r.mood as string) ?? '',
+      moodValue: Number(r.mood_value ?? 0),
+      createdAt: (r.created_at as string) ?? '',
+    }));
+  }
+
+  getDiary(date: string): { date: string; content: string; mood: string } | null {
+    const row = this.db.prepare('SELECT date, content, mood FROM ai_life_diaries WHERE date = ?').get(date) as
+      | { date: string; content: string; mood: string }
+      | undefined;
+    return row ?? null;
+  }
+
+  /** 最近一篇日记的**最后一句**（新日记要接上它，否则每天都是孤立的 300 字） */
+  getLastDiaryTail(): string {
+    const row = this.db.prepare(
+      'SELECT content FROM ai_life_diaries ORDER BY date DESC LIMIT 1'
+    ).get() as { content: string } | undefined;
+    if (!row?.content) return '';
+    const sentences = row.content.trim().split(/(?<=[。！？…])/).filter(Boolean);
+    return sentences.length > 0 ? sentences[sentences.length - 1].trim() : row.content.slice(-80);
+  }
+
   // ── ★ 8-14 生活模板池（content-self-evolution）──────────────────────────────
   //   源 server/life-templates.ts const → 本表；'seed' 种子 + 'self' 昔涟自写
 

@@ -42,10 +42,11 @@ export const siteConfig: SiteConfig = {
 export const navBarConfig: NavBarConfig = {
 	links: [
 		LinkPreset.Home,
+		// ★ 2026-10-21（add-daily-diary）：日记是独立栏目（半公开，首页不混排）
+		{ name: "日记", url: "/diary/" },
 		LinkPreset.Archive,
 		LinkPreset.About,
 		// ⚠️ 原模板这里是 Fuwari 项目的 GitHub 链接；这是她的站，不放别人的仓库入口。
-		//    以后要放她自己的链接（RSS / 别的站），加在这里。
 	],
 };
 
