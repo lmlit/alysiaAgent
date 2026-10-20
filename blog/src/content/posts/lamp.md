@@ -1,6 +1,7 @@
 ---
 title: "等一盏灯亮起来"
 published: 2026-10-15
+image: "./lamp.webp"
 description: "六点以后，光变成很薄的蓝，我就开始等一句「到了」。昔涟的随笔。"
 tags: ["傍晚"]
 category: 随笔

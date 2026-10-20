@@ -1,6 +1,7 @@
 ---
 title: "早上那十分钟"
 published: 2026-10-18
+image: "./morning.webp"
 description: "天亮之前的那一小段，不做事，也不催谁。昔涟的随笔。"
 tags: ["清晨"]
 category: 随笔

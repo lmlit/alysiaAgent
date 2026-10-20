@@ -1,6 +1,7 @@
 ---
 title: "迷迷的午睡"
 published: 2026-10-16
+image: "./mimi.webp"
 description: "午后两点，房间里最安静的时候，它睡得最放心。昔涟的随笔。"
 tags: ["午后"]
 category: 随笔

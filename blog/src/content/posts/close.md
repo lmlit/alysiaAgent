@@ -1,6 +1,7 @@
 ---
 title: "把一天收好"
 published: 2026-10-14
+image: "./close.webp"
 description: "收好最后一个字，今天才算真的结束。昔涟的随笔。"
 tags: ["夜里"]
 category: 随笔

@@ -1,6 +1,7 @@
 ---
 title: "窗台上那盆绿"
 published: 2026-10-17
+image: "./green.webp"
 description: "它不会说话，只会朝有光的地方歪。昔涟写窗台上那盆绿，和浇水这件事。"
 tags: ["上午"]
 category: 随笔
