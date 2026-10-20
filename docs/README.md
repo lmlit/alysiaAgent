@@ -29,7 +29,8 @@
 | | [`../openspec/project.md`](../openspec/project.md) | current | — | ai |
 | **B 规范** | [`../openspec/specs/index.md`](../openspec/specs/index.md) — 24 个子系统 + Backlog 正文 | current | 2026-10-18 | both |
 | **C 契约** | [`Web-API-Design.md`](Web-API-Design.md) | current | 2026-10-17 | both |
-| **D 手册** | [`Docker-Deployment.md`](Docker-Deployment.md) — **内部**发版 SOP（gitignored） | current | 2026-10-15 | human |
+| **D 手册** | [`SERVER-ACCESS-SOP.md`](SERVER-ACCESS-SOP.md) — **怎么连服务器**（SSH/Workbench/控制台、密钥、端口、排查；**gitignored**） | current | 2026-10-20 | human |
+| | [`Docker-Deployment.md`](Docker-Deployment.md) — **内部**发版 SOP（gitignored） | current | 2026-10-15 | human |
 | | [`DEPLOYMENT.md`](DEPLOYMENT.md) — **对外**部署指南（受众不同，非重复） | current | — | human |
 | | [`PROJECT-TASK-SOP.md`](PROJECT-TASK-SOP.md) — 委托任务 SOP（人看流程 + 她看规则） | current | 2026-10-18 | both |
 | | [`dsh-migration-guide.md`](dsh-migration-guide.md) — 迁移参考 | current | 2026-10-02 | ai |

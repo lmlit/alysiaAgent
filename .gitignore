@@ -1,4 +1,4 @@
-node_modules/
+﻿node_modules/
 dist/
 .env
 *.db
@@ -19,6 +19,8 @@ packages/server/server.log
 # ★ 2026-10-02 安全清理：运维类文档含服务器地址/账号/凭据路径，不进公开仓库
 #   （历史里的旧值另议；轮换过的密码不回收，见 HANDOFF「安全」段）
 docs/HANDOFF.md
+# ★ 2026-10-20：服务器接入 SOP（含真实 IP/主机名，公开仓库不能进 git）
+docs/SERVER-ACCESS-SOP.md
 packages/server/scripts/sync-from-server.sh
 
 # ★ 2026-10-02：本地工作目录与资产库——此前是"未跟踪但未忽略"，
@@ -38,9 +40,9 @@ cyrene-assets/
 #   内含 npm 安装的 dsh CLI（体积大）+ 隔离的 DSH_HOME；属一次性实验资产，不进仓库
 .probe/
 
-# ���ز����ݴ棨������������һ���Խű��������ֿ⣩
+# ���ز����ݴ棨������������һ���Խű��������ֿ⣩
 .deploy/
 
 
-# ��ʱ�ļ���һ���Խű�/�ύ��Ϣ�ȣ��������� git add -A �����Ǵ�����
+# ��ʱ�ļ���һ���Խű�/�ύ��Ϣ�ȣ��������� git add -A �����Ǵ�����
 .tmp/
