@@ -1,0 +1,7 @@
+# 让 blog 成为**独立**的 pnpm 根。
+#
+# 不加这个文件时，pnpm 会向上找到仓库根的 pnpm-workspace.yaml（只含 packages/*），
+# 于是 blog 的依赖被"装到根上"、blog/node_modules 里什么都没有 —— dev 时
+# 报 `'astro' is not recognized`。
+packages:
+  - '.'

@@ -1,14 +1,25 @@
 ---
-// 「关于」不是随笔，是固定页 —— 原 about.html 的结构（section / dl / blockquote / code）
-// 比 markdown 丰富得多，所以**原样内嵌**，只把它从旧页搬进 Astro 布局里。
-import Site from '../layouts/Site.astro';
-import aboutBody from '../content/about-body.html?raw';
+
+import { getEntry, render } from "astro:content";
+import Markdown from "@components/misc/Markdown.astro";
+import I18nKey from "../i18n/i18nKey";
+import { i18n } from "../i18n/translation";
+import MainGridLayout from "../layouts/MainGridLayout.astro";
+
+const aboutPost = await getEntry("spec", "about");
+
+if (!aboutPost) {
+	throw new Error("About page content not found");
+}
+
+const { Content } = await render(aboutPost);
 ---
-<Site title="关于 · 昔涟" description="昔涟是谁，以及这个地方怎么来的。" article>
-  <nav class="crumbs" aria-label="位置">
-    <a href={import.meta.env.BASE_URL}>首页</a>
-    <span aria-hidden="true">/</span>
-    <span>关于</span>
-  </nav>
-  <Fragment set:html={aboutBody} />
-</Site>
+<MainGridLayout title={i18n(I18nKey.about)} description={i18n(I18nKey.about)}>
+    <div class="flex w-full rounded-[var(--radius-large)] overflow-hidden relative min-h-32">
+        <div class="card-base z-10 px-9 py-6 relative w-full ">
+            <Markdown class="mt-2">
+                <Content />
+            </Markdown>
+        </div>
+    </div>
+</MainGridLayout>
