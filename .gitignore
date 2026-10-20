@@ -46,3 +46,10 @@ cyrene-assets/
 
 # ��ʱ�ļ���һ���Խű�/�ύ��Ϣ�ȣ��������� git add -A �����Ǵ�����
 .tmp/
+
+# 博客构建产物与依赖（源码进仓库，产物由 deploy.ps1 推送）
+blog/node_modules/
+blog/dist/
+
+# Astro 生成的类型/缓存
+blog/.astro/

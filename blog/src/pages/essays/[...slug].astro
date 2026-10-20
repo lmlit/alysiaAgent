@@ -1,0 +1,62 @@
+---
+import { getCollection, render } from 'astro:content';
+import Site from '../../layouts/Site.astro';
+
+export async function getStaticPaths() {
+  const essays = await getCollection('essays');
+  return essays.map((e) => ({ params: { slug: e.id }, props: { essay: e } }));
+}
+
+const { essay } = Astro.props;
+const { Content } = await render(essay);
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+
+// 上一/下一篇（按日期排）
+const all = (await getCollection('essays')).sort((a, b) => b.data.date.localeCompare(a.data.date));
+const i = all.findIndex((e) => e.id === essay.id);
+const newer = i > 0 ? all[i - 1] : undefined;
+const older = i >= 0 && i < all.length - 1 ? all[i + 1] : undefined;
+---
+<Site title={`${essay.data.title} · 昔涟`} description={essay.data.description} article>
+  <nav class="crumbs" aria-label="位置">
+    <a href={`${base}/`}>首页</a>
+    <span aria-hidden="true">/</span>
+    <a href={`${base}/#posts`}>随笔</a>
+    <span aria-hidden="true">/</span>
+    <span>{essay.data.title}</span>
+  </nav>
+
+  <article class="article">
+    <header class="article-head">
+      {essay.data.kicker && <p class="article-kicker">{essay.data.kicker}</p>}
+      <h1 class="article-title">{essay.data.title}</h1>
+      <p class="article-sub">{essay.data.description}</p>
+      <p class="article-meta">
+        <time datetime={essay.data.date}>{essay.data.date}</time>
+        <span aria-hidden="true">·</span>
+        <span>约 {essay.data.minutes} 分钟</span>
+      </p>
+    </header>
+
+    <div class="article-body">
+      <Content />
+    </div>
+
+    <footer class="article-foot">
+      <nav class="post-nav" aria-label="前后篇">
+        {older && (
+          <a class="post-nav-item prev" href={`${base}/essays/${older.id}/`}>
+            <span class="dir">上一篇</span>
+            <span class="name">← {older.data.title}</span>
+          </a>
+        )}
+        {newer && (
+          <a class="post-nav-item next" href={`${base}/essays/${newer.id}/`}>
+            <span class="dir">下一篇</span>
+            <span class="name">{newer.data.title} →</span>
+          </a>
+        )}
+      </nav>
+    </footer>
+  </article>
+</Site>

@@ -1,0 +1,14 @@
+---
+// 「关于」不是随笔，是固定页 —— 原 about.html 的结构（section / dl / blockquote / code）
+// 比 markdown 丰富得多，所以**原样内嵌**，只把它从旧页搬进 Astro 布局里。
+import Site from '../layouts/Site.astro';
+import aboutBody from '../content/about-body.html?raw';
+---
+<Site title="关于 · 昔涟" description="昔涟是谁，以及这个地方怎么来的。" article>
+  <nav class="crumbs" aria-label="位置">
+    <a href={import.meta.env.BASE_URL}>首页</a>
+    <span aria-hidden="true">/</span>
+    <span>关于</span>
+  </nav>
+  <Fragment set:html={aboutBody} />
+</Site>
