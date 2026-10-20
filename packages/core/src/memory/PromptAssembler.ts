@@ -7,6 +7,8 @@ import type { WorldbookStore } from './stores/WorldbookStore.js';
 import type { CodeContextStore } from './stores/CodeContextStore.js';
 import type { SearchResult, WorldbookEntry } from './types.js';
 import { TokenBudget } from './TokenBudget.js';
+// ★ 2026-10-20（make-her-brief）：说话的分寸（产品级约束，放代码以免受库里的旧人设影响）
+import { CHAT_BREVITY_DIRECTIVE } from '../prompts/chat.js';
 // ★ 2026-10-19（change: watch-for-stuck-work）：她自己留意到的事（由看门狗写入）
 import { getSelfNotices, renderSelfNoticeBlock } from './self-notice.js';
 import { logger } from '../utils/logger.js';
@@ -46,7 +48,7 @@ const CHARACTER_FACTS_IN_PROMPT = 8;
 export type ChatBlockKey =
   | 'selfNotice' | 'persona' | 'overlay' | 'basics' | 'preferences'
   | 'facts' | 'characterFacts' | 'pendingConfirm' | 'recentConversations'
-  | 'life' | 'memories';
+  | 'life' | 'memories' | 'brevity';
 
 /** 顺序 = 组装顺序；策略见上方说明。**顺序本身仍是行为**（决定谁先占预算）。 */
 export const CHAT_BLOCK_POLICY: Record<ChatBlockKey, 'required' | 'optional'> = {
@@ -61,6 +63,8 @@ export const CHAT_BLOCK_POLICY: Record<ChatBlockKey, 'required' | 'optional'> = 
   recentConversations: 'optional',
   life: 'optional',
   memories: 'optional',
+  // ★ 2026-10-20（make-her-brief）：输出约束，**绝不能因预算被丢**
+  brevity: 'required',
 };
 
 export type CodeBlockKey = 'persona' | 'techProfile' | 'projectContext' | 'worldbook' | 'life' | 'memories';
@@ -303,6 +307,11 @@ ${rangeText}`;
 
     // Worldbook 已改为 Agent 工具 lookup_worldbook，不再注入 Prompt
     // Agent 在需要背景知识时会主动调用工具查询
+
+    // ★ 2026-10-20（change: `make-her-brief`）：**说话的分寸**放**最后一个必选块**。
+    //   为什么在最后：它是"输出约束"，离生成位置越近越有效（近因）；
+    //   为什么 required：它被预算丢掉就等于她今晚话痨 —— 丢它比丢任何 optional 块都糟。
+    this.pushChatBlock('brevity', CHAT_BREVITY_DIRECTIVE, budget, blocks, dropped);
 
     // ★ tabular-prompt-blocks：预算不足丢掉的块**必须留痕** ——
     //   否则"她今天没读到自己的自省"与"她读到了"在日志里同形（10-15 那次事故=22 天无人发现）。
