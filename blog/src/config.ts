@@ -42,8 +42,9 @@ export const siteConfig: SiteConfig = {
 export const navBarConfig: NavBarConfig = {
 	links: [
 		LinkPreset.Home,
-		// ★ 2026-10-21（add-daily-diary）：日记是独立栏目（半公开，首页不混排）
+		// ★ 2026-10-21：日记与信都是独立栏目（不按日/想写才写，首页不混排）
 		{ name: "日记", url: "/diary/" },
+		{ name: "信", url: "/letters/" },
 		LinkPreset.Archive,
 		LinkPreset.About,
 		// ⚠️ 原模板这里是 Fuwari 项目的 GitHub 链接；这是她的站，不放别人的仓库入口。

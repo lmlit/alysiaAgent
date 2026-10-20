@@ -25,14 +25,20 @@ async function getRawSortedPosts() {
  * 归档页与标签页仍包含（那里本来就是时间线，日记正该待在那）。
  */
 export const DIARY_CATEGORY = "日记";
+/** ★ 2026-10-21（add-letters）：信也是独立栏目（不按日，想写才写） */
+export const LETTER_CATEGORY = "信";
 
 export function isDiary(entry: { data: { category?: string | null } }): boolean {
 	return entry.data.category === DIARY_CATEGORY;
 }
 
-/** 首页/分页用：**排除日记**（日记走 `/diary/`） */
+export function isLetter(entry: { data: { category?: string | null } }): boolean {
+	return entry.data.category === LETTER_CATEGORY;
+}
+
+/** 首页/分页用：**排除日记与信**（它们各自有独立栏目） */
 export async function getSortedPosts() {
-	const sorted = (await getRawSortedPosts()).filter((e) => !isDiary(e));
+	const sorted = (await getRawSortedPosts()).filter((e) => !isDiary(e) && !isLetter(e));
 
 	for (let i = 1; i < sorted.length; i++) {
 		sorted[i].data.nextSlug = sorted[i - 1].slug;
@@ -49,6 +55,11 @@ export async function getSortedPosts() {
 /** `/diary/` 用：只取日记，按日期倒序 */
 export async function getDiaryPosts() {
 	return (await getRawSortedPosts()).filter((e) => isDiary(e));
+}
+
+/** `/letters/` 用：只取信，按日期倒序 */
+export async function getLetterPosts() {
+	return (await getRawSortedPosts()).filter((e) => isLetter(e));
 }
 
 export type PostForList = {

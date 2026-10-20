@@ -21,6 +21,7 @@ import {
   LIFE_REFLECTION_PROMPT,
   LIFE_DECLINE_PROMPT,
   LIFE_DIARY_PROMPT,
+  LIFE_LETTER_PROMPT,
 } from '../prompts/life.js';
 import type { ProactiveService } from '../proactive.js';
 import type { AlysiaCore } from '@alysia/core';
@@ -167,6 +168,17 @@ export const lifeModule: Module = {
           prompt: context,
           sessionId: 'life-diary',
           systemPrompt: LIFE_DIARY_PROMPT,
+          sampling: { ...DEFAULT_SAMPLING.life.generateSummary },
+        });
+        return resp.role === 'assistant' ? resp.completionText.trim() : '';
+      },
+
+      // ★ 2026-10-21（add-letters）：信（想写才写；允许回 NONE = 这周没话说）
+      generateLetter: async (context: string) => {
+        const resp = await core.providerManager.textChatWithFallback({
+          prompt: context,
+          sessionId: 'life-letter',
+          systemPrompt: LIFE_LETTER_PROMPT,
           sampling: { ...DEFAULT_SAMPLING.life.generateSummary },
         });
         return resp.role === 'assistant' ? resp.completionText.trim() : '';

@@ -168,6 +168,34 @@ export class LifeStore {
     return sentences.length > 0 ? sentences[sentences.length - 1].trim() : row.content.slice(-80);
   }
 
+  // ── ★ 2026-10-21 信（change: add-letters）────────────────────────────────
+  //   与日记同源不同频：日记每天写，信"想写才写"（LLM 判断，没话说就不写）
+
+  saveLetter(l: { date: string; content: string; mood?: string; week?: string }): void {
+    this.db.prepare(`
+      INSERT OR REPLACE INTO ai_life_letters (date, content, mood, week, created_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(l.date, l.content, l.mood ?? '', l.week ?? '', new Date().toISOString());
+  }
+
+  listLetters(limit: number = 50): Array<{ date: string; content: string; mood: string }> {
+    const rows = this.db.prepare(
+      'SELECT date, content, mood FROM ai_life_letters ORDER BY date DESC LIMIT ?'
+    ).all(limit) as Array<Record<string, unknown>>;
+    return rows.map(r => ({
+      date: r.date as string,
+      content: r.content as string,
+      mood: (r.mood as string) ?? '',
+    }));
+  }
+
+  /** 某个周 key 是否已经写过信（触发去重） */
+  hasLetterForWeek(week: string): boolean {
+    if (!week) return false;
+    const row = this.db.prepare('SELECT 1 AS ok FROM ai_life_letters WHERE week = ? LIMIT 1').get(week);
+    return !!row;
+  }
+
   // ── ★ 8-14 生活模板池（content-self-evolution）──────────────────────────────
   //   源 server/life-templates.ts const → 本表；'seed' 种子 + 'self' 昔涟自写
 

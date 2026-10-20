@@ -889,6 +889,23 @@ export class MemoryManager {
     return this.lifeStore.getLastDiaryTail();
   }
 
+  // ── ★ 2026-10-21 信（change: add-letters）────────────────────────────────
+
+  /** 写一封信（"想写才写" —— 是否写由调用方判断） */
+  saveLetter(input: { date: string; content: string; mood?: string; week?: string }): void {
+    this.lifeStore.saveLetter(input);
+  }
+
+  /** 按日期倒序列出信（博客导出 / 控制台） */
+  listLetters(limit: number = 50): Array<{ date: string; content: string; mood: string }> {
+    return this.lifeStore.listLetters(limit);
+  }
+
+  /** 这个周 key 是否已经写过信（去重，避免一天连写几封） */
+  hasLetterForWeek(week: string): boolean {
+    return this.lifeStore.hasLetterForWeek(week);
+  }
+
   /** ★ 用户近况摘要（事件生成器用）：活跃 facts 前 5 条 */
   getUserActivitySummary(): string {
     const facts = this.profileStore.getActiveFacts()

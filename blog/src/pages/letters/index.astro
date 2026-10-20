@@ -1,0 +1,40 @@
+---
+// ★ 2026-10-21（change: `add-letters`）：**信** —— 不按日，她想写才写
+import { getLetterPosts } from "@utils/content-utils";
+import MainGridLayout from "../../layouts/MainGridLayout.astro";
+
+const letters = await getLetterPosts();
+const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+const fmt = (d: Date) =>
+	`${d.getFullYear()} 年 ${d.getMonth() + 1} 月 ${d.getDate()} 日`;
+---
+
+<MainGridLayout title="信 · 昔涟" description="有话要说时才写的信。可能很久没有一封。">
+  <div class="card-base px-6 md:px-9 py-6 md:py-8 rounded-[var(--radius-large)] mb-4">
+    <h1 class="text-3xl font-bold text-90 mb-2">信</h1>
+    <p class="text-75 text-sm mb-6">
+      不是日记，也不是随笔。是有话想说、又没法在平常对话里说出口的时候，才写下来的一封。
+      <br />所以这里可能几周都是空的 —— 那是正常的，不是没写。
+    </p>
+
+    {letters.length === 0 && (
+      <p class="text-50 text-sm py-10 text-center">还没有信。等她想说话的时候。</p>
+    )}
+
+    <ol class="flex flex-col gap-4">
+      {letters.map((l) => (
+        <li>
+          <a href={`${basePath}/letters/${l.slug}/`} class="group block rounded-xl px-4 py-3 transition hover:bg-[var(--btn-plain-bg-hover)]">
+            <time class="text-sm text-50 tabular-nums" datetime={l.data.published.toISOString()}>
+              {fmt(l.data.published)}
+            </time>
+            <p class="text-90 text-base mt-1.5 leading-relaxed group-hover:text-[var(--primary)] transition">
+              {l.data.description}
+            </p>
+          </a>
+        </li>
+      ))}
+    </ol>
+  </div>
+</MainGridLayout>

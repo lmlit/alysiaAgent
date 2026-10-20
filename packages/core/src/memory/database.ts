@@ -212,6 +212,18 @@ export function initializeDatabase(db: Database.Database): void {
       created_at      TEXT NOT NULL
     );
 
+    -- ★ 2026-10-21（change: add-letters）：**信** —— 不按日，她**想写才写**。
+    --   与日记的区别：日记是每天的交待；信是有话要说时才写的一封，可以直接对他说。
+    --   week 列是"哪一段时间的信"（ISO 周 key），用于"一周一封信"的触发去重。
+    --   ⚠️ 注释里不要写反引号：这段在 TS 模板字符串里，反引号会提前结束字符串。
+    CREATE TABLE IF NOT EXISTS ai_life_letters (
+      date            TEXT PRIMARY KEY,      -- YYYY-MM-DD（写信那天）
+      content         TEXT NOT NULL,
+      mood            TEXT,
+      week            TEXT,                  -- 触发去重（如 2026-W43）
+      created_at      TEXT NOT NULL
+    );
+
     -- ★ 8-14 生活模板池（content-self-evolution）：替代 server/life-templates.ts const
     --   source='seed'(既有种子) | 'self'(昔涟自写)；自写条目 weight 固定 2（防权重操纵）
     CREATE TABLE IF NOT EXISTS life_templates (

@@ -27,6 +27,18 @@ MOOD_STYLE = {
 }
 DEFAULT = MOOD_STYLE["calm"]
 
+# ⚠️ sync 脚本把 mood 写成**中文标签**（"平静"/"想你"），而 MOOD_STYLE 的 key 是英文。
+#    不补这层映射，所有日记都会落到 DEFAULT 上（全变成同一张封面）。
+CN_TO_KEY = {
+    "开心": "happy", "兴奋": "excited", "平静": "calm", "想你": "lonely",
+    "有点累": "tired", "困了": "sleepy", "低落": "sad",
+}
+
+
+def resolve_style(mood: str):
+    key = CN_TO_KEY.get(mood, mood if mood in MOOD_STYLE else "calm")
+    return key, MOOD_STYLE.get(key, DEFAULT)
+
 
 def crop_cover(im, y_anchor=0.25):
     w, h = im.size
@@ -45,18 +57,30 @@ def crop_cover(im, y_anchor=0.25):
 manifest = json.load(open(f"{LIB}/manifest.json", encoding="utf-8"))
 by_id = {i["id"]: i for i in manifest["items"]}
 
-# 扫现有日记 md，从 tags 里取 mood（sync-diaries 把 mood 写进 tags[0]）
+# 扫现有日记/信 md，从 tags 里取 mood（sync 脚本把 mood 写进 tags[0]）
 import re
+
+LETTER_ART = "19"  # 信不按心情换图：统一用一张安静的人像（它不是每天的情绪快照）
 
 count = 0
 for f in sorted(os.listdir(POSTS)):
-    if not (f.startswith("diary-") and f.endswith(".md")):
+    is_diary = f.startswith("diary-") and f.endswith(".md")
+    is_letter = f.startswith("letter-") and f.endswith(".md")
+    if not (is_diary or is_letter):
         continue
-    date = f[len("diary-"):-3]
+
+    prefix = "diary" if is_diary else "letter"
+    date = f[len(prefix) + 1:-3]
     text = open(f"{POSTS}/{f}", encoding="utf-8").read()
     m = re.search(r"^tags:\s*\[(.*?)\]", text, re.M)
     mood = (m.group(1).strip().strip('"') if m else "") or "calm"
-    art_id, bright, sat, color, strength = MOOD_STYLE.get(mood, DEFAULT)
+
+    if is_letter:
+        art_id, bright, sat, color, strength = LETTER_ART, 0.99, 0.99, (248, 244, 250), 0.10
+    else:
+        resolved, style = resolve_style(mood)
+        art_id, bright, sat, color, strength = style
+
     if art_id not in by_id:
         print("缺素材", art_id)
         continue
@@ -67,9 +91,9 @@ for f in sorted(os.listdir(POSTS)):
     im = ImageEnhance.Color(im).enhance(sat)
     im = Image.blend(im, Image.new("RGB", im.size, color), strength)
 
-    out = f"{POSTS}/diary-{date}.webp"
+    out = f"{POSTS}/{prefix}-{date}.webp"
     im.save(out, "WEBP", quality=86, method=6)
     count += 1
-    print(f"✓ diary-{date}.webp  mood={mood}  <- {art_id}")
+    print(f"✓ {prefix}-{date}.webp  mood={mood}  <- {art_id}")
 
 print(f"共 {count} 张")

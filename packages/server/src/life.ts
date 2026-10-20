@@ -58,6 +58,14 @@ export interface LifeOpts {
    * 缺失则日记功能整体关闭（降级为不写日记）。
    */
   generateDiary?: (context: string) => Promise<string>;
+  /**
+   * ★ 2026-10-21（change: `add-letters`）：**信**（不按日，想写才写）。
+   *
+   * 与 `generateDiary` 的区别：日记是每天的交待（不喊话）；
+   * 信是有话要说时才写、可以直接对他说的一封，会公开在博客「信」栏目。
+   * 允许返回 `NONE` 表示"这周没什么想说的" —— **那不是失败，是正常结果**。
+   */
+  generateLetter?: (context: string) => Promise<string>;
   /** ★ 2026-10-20：拒绝概率（0-1，缺省 0.15）。设 0 或负数 = 关闭拒绝权。 */
   declineChance?: number;
   /** ★ 今天已主动联系的内容（ProactiveService.getTodayActivity），
@@ -143,6 +151,20 @@ export const MAX_CONSECUTIVE_DECLINES = 2;
 /** 拒绝理由的最短长度（"算了"这种不算理由 —— 必须具体） */
 export const DECLINE_MIN_REASON_CHARS = 6;
 
+/**
+ * ★ 2026-10-21（change: `add-letters`）：ISO 周 key（如 `2026-W43`）。
+ * 用于"每周最多问一次要不要写信"的去重 —— 按自然周，而不是"距上次 7 天"，
+ * 否则重启/时区边界会让它漂。
+ */
+export function isoWeekKey(d: Date): string {
+  const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const day = t.getUTCDay() || 7;
+  t.setUTCDate(t.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(t.getUTCFullYear(), 0, 1));
+  const week = Math.ceil(((t.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
+  return `${t.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
+}
+
 interface LifeState {
   lastProactiveAt: number;
   lastSummaryDate: string | null;
@@ -156,6 +178,8 @@ interface LifeState {
   reflectionDate: string | null;
   /** ★ 2026-10-21（add-daily-diary）：上次写日记的日期 key（跨天触发，失败不置位可重试） */
   diaryDate?: string | null;
+  /** ★ 2026-10-21（add-letters）：上次处理信件的 ISO 周 key（含"这周没话说"） */
+  letterWeek?: string | null;
   /** ★ 2026-10-20（tie-intimacy-to-speech）：上一轮解析出的亲密度档位 —— 迟滞的基准 */
   intimacyTier?: IntimacyTierName;
   /** ★ 2026-10-20：「最近在忙吗」上次问的时间（**每 7 天最多一次**，持久化防重启刷屏） */
@@ -241,6 +265,7 @@ export class LifeService {
         moodNoteAnalyzedAt: s.moodNoteAnalyzedAt ?? 0,
         reflectionDate: s.reflectionDate ?? null,
         diaryDate: s.diaryDate ?? null,
+        letterWeek: s.letterWeek ?? null,
         // ★ 2026-10-20（tie-intimacy-to-speech）：档位迟滞与「问一次」去重
         intimacyTier: s.intimacyTier,
         lastAskAt: s.lastAskAt ?? 0,
@@ -468,6 +493,9 @@ export class LifeService {
 
     // ★ 2026-10-21（add-daily-diary）：跨天写日记——写的是**刚过去的那一天**
     await this.maybeDailyDiary(now);
+
+    // ★ 2026-10-21（add-letters）：每周问一次"有没有想说的话"（可以回答 NONE）
+    await this.maybeWeeklyLetter(now);
 
     // 亲密度更新
     this.updateIntimacy();
@@ -1357,6 +1385,62 @@ export class LifeService {
       logger.info(`[Diary] ${date}: ${text.slice(0, 40)}… (${text.length}字)`);
     } catch (err: any) {
       logger.warn(`[Diary] daily diary failed: ${err.message}`);
+    }
+  }
+
+  /**
+   * ★ 2026-10-21（change: `add-letters`）：每周问她一次"有没有想直接对他说的话"。
+   *
+   * 设计要点（三条，都比"能写信"重要）：
+   * ① **允许不写**：LLM 回 `NONE` 是合法结果，照样置位（否则每个 tick 都会重问一遍）
+   * ② **按 ISO 周去重**：`letterWeek` + 库里 `hasLetterForWeek` 双保险，
+   *    进程重启后也不会一天连写几封
+   * ③ 失败**不置位**：LLM 超时要能重试（同日记/反思）
+   */
+  private async maybeWeeklyLetter(now: Date): Promise<void> {
+    if (!this.opts.generateLetter) return;
+    const week = isoWeekKey(now);
+    if (this.state.letterWeek === week) return;
+    if (this.memoryManager.hasLetterForWeek?.(week)) {
+      this.state.letterWeek = week;
+      this.saveState();
+      return;
+    }
+
+    const events = this.memoryManager.listLifeEvents(7) as any[];
+    const snapshot = this.memoryManager.getLifeSnapshot?.() ?? {};
+    const summaries = (this.memoryManager.listLifeSummaries?.(7) ?? [])
+      .map((s: any) => `- ${s.date}: ${s.summary}`).join('\n');
+    if (events.length === 0 && !summaries) return;
+
+    const ctx = [
+      `【这段日子】\n${events.slice(-14).map((e: any) => `- ${e.content.slice(0, 80)}`).join('\n') || '（没有特别的事）'}`,
+      summaries ? `【近七天】\n${summaries}` : '',
+      `【心情】${snapshot.mood || '（无）'} / ${snapshot.moodNote || '（无氛围描述）'}`,
+    ].filter(Boolean).join('\n');
+
+    try {
+      const text = String(await this.opts.generateLetter(ctx)).trim();
+      const nothingToSay = !text || /^NONE\b/i.test(text);
+
+      if (nothingToSay) {
+        this.state.letterWeek = week;
+        this.saveState();
+        logger.info(`[Letter] ${week}: 这周没有想直接说的话（NONE，正常）`);
+        return;
+      }
+
+      this.memoryManager.saveLetter({
+        date: localDateKey(now),
+        content: text,
+        mood: String(snapshot.mood ?? ''),
+        week,
+      });
+      this.state.letterWeek = week;
+      this.saveState();
+      logger.info(`[Letter] ${week}: 写了一封（${text.length}字）`);
+    } catch (err: any) {
+      logger.warn(`[Letter] weekly letter failed: ${err.message}`);
     }
   }
 

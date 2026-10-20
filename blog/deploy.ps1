@@ -1,4 +1,4 @@
-# 昔涟博客 —— 本地构建 + 推送到服务器
+﻿# 昔涟博客 —— 本地构建 + 推送到服务器
 #
 # 为什么本地构建：服务器 2C/1.8G，Astro 构建会吃内存；产物是纯静态，推上去就行。
 #
@@ -49,6 +49,7 @@ try {
         Push-Location $repo
         try {
           node blog/scripts/sync-diaries.mjs --input $dataFile
+          node blog/scripts/sync-letters.mjs --input $dataFile
           node blog/scripts/sync-mood.mjs --input $dataFile
           python blog/scripts/make-diary-covers.py 2>$null
         } finally { Pop-Location }

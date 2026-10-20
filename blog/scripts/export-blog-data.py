@@ -68,8 +68,20 @@ def read_mood(conn):
     }
 
 
+def read_letters(conn):
+    """信：不按日，想写才写（可能很久没有一封）"""
+    try:
+        rows = conn.execute(
+            "SELECT date, content, mood FROM ai_life_letters ORDER BY date DESC LIMIT 60"
+        ).fetchall()
+        return [{"date": r[0], "content": r[1], "mood": r[2] or ""} for r in rows]
+    except sqlite3.OperationalError as e:
+        print(f"export-blog-data: letters unavailable: {e}", file=sys.stderr)
+        return []
+
+
 def main() -> int:
-    out = {"diaries": [], "mood": {}}
+    out = {"diaries": [], "letters": [], "mood": {}}
     try:
         conn = connect_ro()
     except Exception as e:  # noqa: BLE001
@@ -79,6 +91,7 @@ def main() -> int:
 
     try:
         out["diaries"] = read_diaries(conn)
+        out["letters"] = read_letters(conn)
         out["mood"] = read_mood(conn)
     finally:
         conn.close()
