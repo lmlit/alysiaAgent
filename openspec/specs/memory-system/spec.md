@@ -835,6 +835,34 @@ request body 相同还不够 —— 两条链路若在**URL 拼接 / 请求头 /
 > 把变体"统一"成生产提示词会让诊断脚本失灵（噪音盖过要验的东西）。
 > 为此 4 个记忆提示词已导出到 `@alysia/core/memory` barrel（core 不暴露深路径）。
 
+#### 4.1.6 `processed` 位：**只写不读**（2026-10-20 查证，change: `log-cron-compaction`；KI-27）
+
+> 这一条是"查日志该写什么"时挖出来的，顺手把语义钉死，免得下一个人照着字段名想象它的作用。
+
+**现状（已核实）**：`processed` 是位掩码（1=画像 / 2=摘要 / 4=人格 / 8=知识），
+写入点很多，但**读取侧只有 `getUnprocessed`**（`WHERE processed = 0`），
+而 `getUnprocessed` **唯一的调用者是 `CronProcessor.compactOldEvents`**。
+
+具体地：
+
+| 环节 | 是否按 `processed` 过滤 | 依据 |
+|---|---|---|
+| 会话摘要 | ❌ **不筛** | 走 `getBySession`；`MemoryManager.summaryAnchor` 注释：「窗口锚点是唯一的闸」 |
+| 画像提取 | ❌ 不筛 | 同样由会话结算经 `getBySession` 驱动 |
+| 人格扫描（Realtime） | ❌ 只**写**位，从不读 | `RealtimeProcessor` |
+
+**⇒ 所以 `cron` 的 compaction（把 >7 天未处理事件标 `ALL_FLAGS`）**不是"放弃学习"**，
+它只是**清空 `getUnprocessed` 的积压**（语义卫生：让"未处理"回到 0，
+免得将来做补处理/回填时捞到陈货）。
+
+⚠️ **登记为技术债 KI-27**：要么**赋予语义**（按位判断该不该处理），要么**删掉**这两件事之一：
+位掩码 / `getUnprocessed`。让它继续"假装在工作"是最坏选项。
+
+**契约：`compactOldEvents` 必须留痕。**
+有积压时打一条 info（条数 + 最老天数 + **明写"不影响摘要/画像"**）；>500 条时额外 warn
+（通常意味着有一段时间没跑结算）。日志不能只写"清理了 N 条"——
+因为那会让人以为学到了什么，而实际什么都没发生。
+
 ### 4.2 人格自适应引擎
 
 触发源:

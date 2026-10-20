@@ -873,6 +873,30 @@
 
 ---
 
+### KI-27 🟡 `processed` 位掩码**只写不读**（"已处理"没有消费者）
+
+- **现象**：`events.processed` 是位掩码（1=画像 / 2=摘要 / 4=人格 / 8=知识），
+  写入点遍布 `RealtimeProcessor` / `SessionEndProcessor` / `CronProcessor`，
+  但**读取侧只有 `EventStore.getUnprocessed`**（`WHERE processed = 0`）——
+  而它的**唯一调用者是 `CronProcessor.compactOldEvents`** 自己。
+- **影响**：
+  ① compaction 的名字/行为容易让人以为"超过 7 天不处理就永远不学了"（**我本人在
+     2026-10-20 就这么以为过，并据此写过错误的 proposal**）；实际摘要与画像走
+     `getBySession`，**完全不看 processed**；
+  ② 真正的风险在将来：有人想基于 "未处理" 做补处理/回填时，会捞到已被 compaction
+     标记过的陈货，或者反过来——看到 `processed=5` 以为"画像+人格都做过了"，
+     而实际没有任何一步按这个位做过判断。
+- **证据**：`MemoryManager.summaryAnchor` 注释「`getBySession` **不按 `processed` 过滤**，
+  所以窗口锚点是唯一的闸」；`grep getUnprocessed` 全仓只有 CronProcessor 两个调用点。
+- **建议方向**：二选一 ——
+  **A. 赋予语义**：让各处理器按自己的位判断"这条我处理过没有"（那才是位掩码该有的样子）；
+  **B. 删掉一半**：若确实不需要按位判重，删掉位掩码与 `getUnprocessed`，只留 `archived`。
+  ⚠️ **不许"留着不用"**：这是"看起来在工作"的典型，比没有更危险。
+- **已做（2026-10-20，`log-cron-compaction`）**：compaction 补了日志并**明写它不影响摘要/画像**；
+  语义写进 `memory-system` §4.1.6；本条登记在此等决策。
+
+---
+
 ## 📌 已定名但未开 change
 
 | 名字 | 内容 | 出处 |
