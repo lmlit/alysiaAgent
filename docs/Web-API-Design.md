@@ -152,6 +152,23 @@ LLM 客户端，该客户端有 **120s 超时**。超时会让本请求以错误
 修复前线上实测该接口曾**挂住 117 分钟**（KI-21）。
 签名与返回结构不变；超时可重试，失败窗口由 cron 的补处理机制兜底。
 
+**入口校验**（2026-10-20 `guard-session-extract-endpoint`，KI-18）：本接口此前
+**对 `id` 不设任何校验**（同文件邻居都有边界：`/api/ingest` 只收 `dsh:`、
+archive/delete 只收 `webui:`），任何过了鉴权的调用方都能对任意会话触发结算。
+
+| 情形 | 状态码 | 说明 |
+|---|---|---|
+| 正常会话 | 200 | 原行为不变 |
+| `id` 为空 / 解码后含 `/` | **400** | 畸形 id，不进结算 |
+| `dsh:unknown` | **400** | **拒**：它是适配器拿不到 `session.id` 时的退化桶，不是真实会话 |
+| 该会话**零事件** | **404** | 「会话不存在」不许长得像「提取成功」 |
+
+新 core 方法（只读、纯数据）：`MemoryManager.countSessionEvents(sessionId): number`
+—— 包装 `EventStore.countBySession`。判据刻意用「有没有事件」而不是
+「会不会产出新事实」：后者是结算的**结果**，拿来当入口判据会把「干净但真实」的会话误杀。
+
+⚠️ **刻意不加**「只允许 `dsh:` 前缀」：本接口同时服务 WebUI 会话的手动提取。
+
 ---
 
 ### 2.3 `GET /api/profile` — 画像快照
@@ -392,6 +409,8 @@ dsh 插件只回传原始事件；提取 / 5 道护栏 / 事实去重 / supersed
 |-----------|------|
 | `getLifeSnapshot()` | AI 生活状态快照（活动/心情/亲密度/**moodValue 8-27 新增**） |
 | `listLifeEvents(days)` | 生活事件列表（默认 7 天，含 id/wbEntryId/delivered/**origin 8-27 新增**） |
+| **`getLastUserMessageAt()`** | **最后一条「真人」消息的时间（ISO）/ null**。★ 2026-10-20（`tie-intimacy-to-speech`）：亲密度档位用它算 `idleDays`；**已排除** `skip_profile`/`synthetic` 机器注入与非 `message` 类型，**不过滤归档**。只读纯数据 |
+| **`summarizeContextSlice({turns, previousSummary})`** | **把被上下文压缩丢弃的轮次压成一段回忆**（纯数据进出，**不落库、不改状态**）。★ 2026-10-20（`put-dropped-turns-back`）：由 `AgentHooks.summarizeDroppedTurns` 调用；⚠️ 显式走 `profile.deepRewrite` **纯文本**槽（默认槽是 json_object，会 400） |
 | `listLifeSummaries(days)` | 近 N 天每日生活摘要（生成器回顾用） |
 | `recordLifeEvent(...)` | 记录 AI 生活事件（LifeService 内部，返回事件 id；**origin 8-27 新增**） |
 | `markLifeEventDelivered(id)` | 标记事件已推送（delivered=1，LifeService 推送成功后） |

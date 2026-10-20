@@ -85,6 +85,16 @@
 
 ### KI-3 🟡 两个 `ILLMService` 实现无一致性契约测试
 
+> ★ **2026-10-20 已修**（change: [`unify-memory-llm-client`](../openspec/archive/2026-10-20-unify-memory-llm-client/proposal.md)）。
+> **本条的前提已经不成立了**：原文写「两者行为**现已一致**」，但 KI-21 给生产补了 120s 超时与
+> `[LLM:memory]` 观测之后，`OpenAILLMService` **一样都没有** ⇒ E2E 测的客户端**不是生产跑的那个**。
+> 做法：抽出唯一实现 `memory/services/MemoryLlmClient.ts`，生产模块只做 `new MemoryLlmClient(...)`，
+> `OpenAILLMService` 降级为 6 行适配器（保留构造签名给 4 个测试文件）。
+> 契约测试 `tests/memory/unit/memory-llm-contract.test.ts` 锁住 KI-3 的原始要求
+> （**同一 slot ⇒ request body 逐字相同**）+ 两者都带 `signal` + 生产缺省不带采样字段。
+> 只剩**两条刻意差异**（构造函数默认槽 / `throwOnEmpty`），已写进代码注释与
+> `memory-system` §4.1.4 契约 7.2。
+
 - **现象**：生产链路用 `AlysiaCore` 的**内联字面量**实现（遵守三参契约）；
   E2E / 单测用 `memory/services/OpenAILLMService.ts`。两者行为**现已一致**，但无测试锁住。
 - **证据**：`packages/core/src/modules/resources.ts`（内联）vs `packages/core/src/memory/services/OpenAILLMService.ts`。
@@ -374,6 +384,16 @@
 
 ### KI-7 🟡 `/stop` 命令只打日志，不做中断
 
+> ★ **2026-10-20 已修**（change: [`make-stop-really-stop`](../openspec/archive/2026-10-20-make-stop-really-stop/proposal.md)）。
+> 本条自陈的那句「待 AgentRunner 支持 AbortController」**早就过时**——`AbortRegistry` 一直在，
+> `isGenerating()` 就在用它。做法：`commandsModule` inject `al:coalescer`，
+> `/stop` 调 `getAbortRegistry().abort(sessionId)`。
+> ★ **顺带修了一条假的回话**：`createSessionCommands` 以前无论有没有在飞都硬回「已停止当前操作。」
+> —— 那正是本条要消灭的形态（看着生效、其实没发生）。现在回调可返回文案，
+> 两种结果分别回「已中断…」/「此刻没有正在生成的回复」。
+> ⚠️ 诚实边界已写进 `alysia-architecture` §6.3.1：只中断在飞的 LLM 请求，
+> **中断不了已进入工具执行的副作用**（工具层没有 cancel 协议）。
+
 - **现象**：`/stop` 打印「requested」但不真的中断。
 - **证据**：`packages/core/src/modules/capabilities.ts` 的 `/stop` 回调，
   源码注释自陈「实际中断机制待 AgentRunner 支持 AbortController」（该注释早于 Coalescer 落地，已过时）。
@@ -382,6 +402,14 @@
 - **建议方向**：接 `coalescer.getAbortRegistry()`（接口已存在，`isGenerating()` 就在用）。
 
 ### KI-8 🟡 根目录 `config.yml` 是死文件
+
+> ★ **2026-10-20 已修**（change: [`remove-dead-root-config`](../openspec/archive/2026-10-20-remove-dead-root-config/proposal.md)）。
+> 取证结果比原记载更细：`.gitignore` 的 `config.yml` 模式**没有斜杠 ⇒ 任意层级都忽略**，
+> 所以根目录那份**从来没被 git 跟踪**（不是仓库内容，是本机遗留）。删除前确认过
+> **根 `package.json` 没有 `start` 脚本**，没人从根目录启动。
+> 文件已删；`packages/server/config.yml` 一字未动。
+> ★ 因为**删文件传播不到别人**（它没被跟踪），持久的那一半写进了
+> `alysia-architecture` §7.3 契约「配置文件只有一份」。
 
 - **现象**：服务从 `packages/server` 启动 → 读 `packages/server/config.yml`（活的）；
   根目录那份少了 `webuiToken` 等行。**改错文件毫无提示**。
@@ -402,6 +430,15 @@
 
 ### KI-9 🟡 `memory/services/` 疑似半死代码
 
+> ★ **2026-10-20 已修**（change: [`unify-memory-llm-client`](../openspec/archive/2026-10-20-unify-memory-llm-client/proposal.md)，与 KI-3 同根因同 change）。
+> 选了本条建议的**后半条**：「把生产那套抽成正式类」——`MemoryLlmClient` 就是那个正式类，
+> 生产模块改为 `new MemoryLlmClient(...)`；`OpenAILLMService` 变成它的适配器，
+> **不再是第二套实现**，所以「改一处以为生效了其实没有」这个失效模式被结构性消除。
+> ⚠️ **没有删** `OpenAILLMService` / `OpenAIEmbedService`：前者被 4 个测试文件构造（E2E / 单测），
+> 删它要动 4 处调用方，是纯噪音。它是**适配器**，不再是分叉源。
+> 仍未做：把记忆客户端收编进 `ProviderManager`（补 fallback）—— 独立 change，见
+> `docs/dsh-plugin-architecture.md` §5。
+
 - **现象**：`AlysiaCore.start()` 历史上用的是**内联对象字面量**（现搬到 `modules/resources.ts`），
   **没有用** `memory/services/OpenAILLMService.ts` / `OpenAIEmbedService.ts` /
   `memory/services/config.ts`。后三者只有测试在用。
@@ -412,6 +449,17 @@
   **这是 P2/P3 重构时该顺手解决的结构问题。**
 
 ### KI-18 🟡 `/api/sessions/:id/extract` 无任何校验
+
+> ★ **2026-10-20 已修**（change: [`guard-session-extract-endpoint`](../openspec/archive/2026-10-20-guard-session-extract-endpoint/proposal.md)）。
+> 两道闸：① 形状（空 / 解码后含 `/` ⇒ 400；`dsh:unknown` ⇒ 400，**复用 `ingest.ts` 的常量**）
+> ② 存在性（`countSessionEvents(id) === 0` ⇒ **404**，且不调 `extractProfile`）。
+> 新 core 方法 `MemoryManager.countSessionEvents()`（只读纯数据，包装 `EventStore.countBySession`），
+> 已登记 `docs/Web-API-Design.md` §2.2。
+> ★ 判据刻意用「有没有事件」而不是「会不会产出新事实」：后者是结算的**结果**，
+> 拿来当入口判据会把「干净但真实」的会话误杀。
+> ★ **刻意不加**「只允许 `dsh:`」——本端点同时服务 WebUI 会话的手动提取。
+> ⚠️ 残余：`extractProfile` 对**零事件**仍返回成功形状，本 change 只在**入口**堵住；
+> 核心方法本身的语义没动（改动会影响 `onSessionEnd` 等其它调用方）。
 
 - **现象**：`packages/server/src/webui/server.ts:223-227` 的 extract 路由**对 session id 不设防**——
   而同文件的邻居都有边界：`/api/ingest` 只收 `dsh:` 前缀（`ingest.ts:41`）、
@@ -518,7 +566,16 @@
 >   messageEvents（不看 `skip_profile`）⇒ 合成文本会进摘要、日后被召回。
 >   已让 `SessionEndProcessor` 排除 `synthetic`（**只排 synthetic**，不动群聊 NPC 的既有行为）。
 >
-> 存量 116 条事件与由它们产出的 facts 仍需单独的数据修复方案（**未做**）。
+> 存量 116 条事件与由它们产出的 facts **已于 2026-10-17 清除**
+> （change: `purge-synthetic-context-pollution`，见本节开头的记录：180 条注入 + 1 条派生 fact）。
+> **上面那句「未做」是当时的记录，已过时** —— 于 2026-10-20 更正。
+>
+> 📌 **复验工具**（2026-10-20，change: `plan-synthetic-data-cleanup`）：
+> `scripts/synthetic-data-audit.cjs`（**只读**，`node:sqlite`，`--backup` 仅文件复制）。
+> 想确认清理是否仍然成立、或担心新环境又进了污染，跑它即可：
+> 判据是 **`facts.fromSynthetic == 0`**，而 `events.synthetic` **非 0 是正确的**（事件不删）。
+> 若真的又出现 `fromSynthetic > 0`，清理步骤见
+> `docs/PLAN-2026-10-20-clean-synthetic-facts.md`。
 > 下面保留原始记录作为依据。
 
 - **现象**：全库 **116 条** events 的 payload 以

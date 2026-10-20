@@ -129,3 +129,47 @@ WebUI 管理面板零鉴权绑 0.0.0.0 是 P0 隐私风险（公网部署下任�
 - 路径判断**先剥 query**——原实现 `req.url === '/api/health'` 精确匹配，
   带 query 的 `/api/health?probe=1` 会被误拦（healthcheck 变体会踩到）
 - 回归测试见 `packages/server/tests/webui-auth.test.ts`（补非 API 路径用例）
+
+## 7. 会话端点校验（2026-10-20，change: `guard-session-extract-endpoint`；KI-18）
+
+### 7.1 问题：同文件的邻居都有边界，只有结算端点没有
+
+| 端点 | 改前的边界 |
+|---|---|
+| `POST /api/ingest` | 只收 `dsh:` 前缀（`ingest.ts`） |
+| `POST /api/sessions/:id/archive` | 只收 `webui:` |
+| `DELETE /api/sessions/:id` | 只收 `webui:` |
+| **`POST /api/sessions/:id/extract`** | **无** |
+
+后果两层：① **成本**——任意 id 都能触发结算（摘要 + 画像提取 + 人格确认），全是真 LLM 调用，
+而摘要槽正是本项目已爆三次预算事故的那个；② **正确性**——结算不该发生在不该结算的会话上。
+2026-10-02 的子 agent 污染事件里，它正是「插件回传 + 结算」链路的落点
+（插件侧过滤已堵住那一条，**端点本身当时仍敞着**）。
+
+还有一层是**失败不可见**：会话不存在时 `extractProfile` 返回
+`{factsExtracted:0, summaryGenerated:false}` —— 一个**成功形状的空转**，
+前端「提取画像」按钮分不清「这个会话很干净」和「这个会话根本不存在」。
+
+### 7.2 契约
+
+**契约 1：`id` 形状必须校验。** 空、或解码后含 `/` ⇒ **400**。
+
+**契约 2：`dsh:unknown` 必须拒（400）。**
+它是适配器拿不到 `session.id` 时的**退化桶**（`ingest.ts` 的 `UNKNOWN_SESSION_ID`），
+不是真实会话；结算它会把多个真实会话的内容混进同一份摘要与画像。
+判据**复用同一个常量**，不另造字符串。
+
+**契约 3：零事件 ⇒ 404，且不得调用 `extractProfile`。**
+判据是「**有没有事件**」，不是「会不会产出新事实」——
+后者是结算的**结果**，拿来当入口判据会把「干净但真实」的会话误杀。
+
+**契约 4：存在性由 core 暴露，路由不碰 DB。**
+`MemoryManager.countSessionEvents(sessionId): number`（只读、纯数据，包装
+`EventStore.countBySession`）—— 遵守「Web 端接口兼容」硬约束，
+登记在 `docs/Web-API-Design.md` §2.2。
+
+**契约 5：刻意不加「只允许 `dsh:` 前缀」。**
+本端点同时服务 WebUI 会话的手动提取；按来源一刀切会砍掉合法用法
+（这也正是当初没加校验的合理部分）。
+
+测试：`packages/server/tests/extract-endpoint-guard.test.ts`（4 条，含正常路径不回归）。

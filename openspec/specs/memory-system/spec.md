@@ -335,11 +335,26 @@ query → Worldbook 先匹配 → query → embed API → 向量
 `ageFactor = 1 − e^(−ageHours / halfLife)`、`halfLife = 24 / decay_rate`。
 另有 `importance > importance_threshold → +0.15`。
 
-> ⚠️ **对账分歧（未决）**：上一版本节写的是加权融合
-> `向量距离 × 0.5 + 时间衰减 × 0.3 + 重要性 × 0.2` —— **该加权形式从未实现过**，
-> 一直是上面的乘性衰减。按对账规则（doc 已声明 impl 没接 → 改 impl）应补实现，
-> 但 `重要性` 当前**没有数据来源**（见⑥），无法完整实现。
-> **待定**：补加权融合 vs 认可现状改 doc。
+> ★ **2026-10-20 已决（change: `ratify-recall-weighting`）—— 旧加权形式不实现，认可现状。**
+>
+> 上一版本节写的是加权融合 `向量距离 × 0.5 + 时间衰减 × 0.3 + 重要性 × 0.2`。
+> 它**从未实现**，而**现在也不实现** —— 理由不是"没数据"（`重要性` 已于 9-25 接线），
+> 而是**它会退回一个已被实测修掉的 bug**：
+>
+> `mergeWithQuota`（9-25 `optimize-recall-pipeline`）的实测结论是
+> **不同来源的分数不可比** —— 生活事件是 2-4 句长微叙事、聊天是短问句，
+> 长文本与短查询的嵌入天然更远；实测 46 条 `life_event` 在 6 个话题里
+> **一条都进不了最终 5 条**，尽管它们**路内排名第一**。
+>
+> 而 `向量×0.5 + 时间×0.3 + 重要性×0.2` **正是一个全局绝对分**。
+> 现设计改用「**每路相对阈值 + 每路保底 top-1 + 剩余按分补**」，
+> 相对而非绝对才不受长度分布影响。
+>
+> **通用判据（后人别再犯）**：涉及**跨来源**的排序，一律禁止"全局加权求和"；
+> **权重只在路内使用**。`+0.15` 的重要度加分属于**路内**，故保留。
+>
+> **调系数的前提是攒数据，不是补公式** —— 观测（`[Recall] 候选 → 过阈值 → 选中 | 重要度加分×N`）
+> 已于 9-25 上线，见 `tune-recall-with-runtime-data`（⏳ 等运行数据）。
 
 **⑥ `importance` 已接线（2026-09-25, wire-importance-signal）**
 
@@ -375,6 +390,28 @@ query → Worldbook 先匹配 → query → embed API → 向量
 **⑦ `confirmation_bias` / `retention_bias` 未接线**：需要"记忆的情绪极性"与
 "与既有信念的冲突度"，当前数据里都没有。硬接会变成和 `importance` 一样的空转旋钮。
 （`retention_bias` 的语义已在 8-28 转向角色性格，见 §2.2）
+
+> ★ **2026-10-20 更新（change: `wire-retention-bias-into-recall`）**：
+>
+> **`retention_bias` 已接线**，因为那个数据缺口**先被补上了**——
+> 新增 `moodDeltaToPolarity()`（valence：1/-1/0）并在生活事件向量
+> `metadata.polarity` 落库，`applyKnobsToRetrieved` 才有依据按正负微调。
+>
+> 三条必须记住的约束：
+> 1. **强度与正负是两条轴，不许合并**。重要度用强度（arousal，`Math.abs`）——
+>    「难过」与「雀跃」都是高分是**有意**的；正负只服务 `retention_bias`。
+>    合并的后果是把负面时刻当低价值 ⇒ 那不是"偏向正面"，是**失忆**。
+> 2. **判不出正负一律 0（不猜）**，且**只对新事件生效**（存量向量无 `polarity`
+>    ⇒ 不追溯改排序）。
+> 3. **力度 = `RETENTION_BIAS_IN_RECALL = 0.1`**：默认 bias 0.2 下单条 ±2%、复利约 4%，
+>    只够做**同档内次序微调**。⭐ 这个值是被单测逼出来的 —— 初版 0.3 时
+>    「0.8 的偏好记忆能翻掉 0.9 的强匹配」，那不叫"微微偏向"。
+>
+> **`confirmation_bias` 仍未接**，且**不该硬接**：它要的是「这条记忆与既有信念的**冲突度**」，
+> 而当前数据里既没有信念极性、也没有两两冲突的度量。要做必须先有一个
+> "信念冲突检测"的数据源（独立 change），否则又一个空转旋钮。
+> 它目前**唯一的用途**是亲密度变化的平滑（`(1 - c × 0.7)`），那是**数值平滑**不是召回排序，
+> 两者语义不同，别混。
 
 ### 3.4 存储抽象层接口
 
@@ -646,6 +683,158 @@ TS 不报错（少形参可赋给多形参签名），但槽位会被静默丢�
 → cron 的 `retryFailedSummaries()` 后续补处理。
 **任何一次超时都不得导致某个窗口被永久跳过。**
 
+#### 4.1.4 ★ 记忆链路 LLM 客户端**只能有一个实现**（2026-10-20，change: `unify-memory-llm-client`；KI-3 + KI-9）
+
+> 本节之前的 5/6 条契约都在描述**一个客户端**的行为；而代码里其实有**两个**：
+> 生产（`modules/resources.ts` 内联字面量）和 `memory/services/OpenAILLMService.ts`
+> （E2E / 单测用）。**它们已经分叉了**，分叉方向最坏：
+
+| | 生产（改前） | `OpenAILLMService`（改前） |
+|---|---|---|
+| 120s 超时（契约 6.1） | ✅ | ❌ **没有** |
+| `[LLM:memory]` 观测（契约 5） | ✅ | ❌ **没有** |
+| 空响应 | warn + 返回 `''` | **抛错** |
+
+于是 **E2E 测的客户端不是生产跑的那个** —— KI-3 原文「两者行为现已一致」
+在 KI-21 落地后**已经不成立**。同族血案：本类曾少声明第三参 `sampling` 而静默丢弃，
+E2E 全绿、生产 `CronProcessor` 被套 `json_object` → 400。
+
+**契约 7：记忆链路只允许存在一个客户端实现，两处入口必须共用它。**
+
+- 唯一实现 = `packages/core/src/memory/services/MemoryLlmClient.ts`
+- 生产装配：`memoryLlmModule` **只做** `new MemoryLlmClient(...)`，不得再写内联 fetch
+- `OpenAILLMService` 是**适配器**（保留 `new OpenAILLMService(config)` 签名给 4 个测试文件），
+  不得再有自己的请求构造
+
+**契约 7.1：两个入口的 request body 必须逐字相同（同一 slot 时）。**
+
+由 `tests/memory/unit/memory-llm-contract.test.ts` 锁住。KI-3 的原始要求就是这一条。
+另有两条断言：两者都带 `signal`（超时能力不是生产独有）、
+生产语义下不传 slot ⇒ **不带任何采样字段**（走服务端默认）。
+
+**契约 7.2：只允许两条**刻意**差异，且必须写进代码注释与本表。**
+
+1. **构造函数默认槽**（仅适配器有）：测试便利。生产**不预置默认槽** ——
+   预置会让「缺省 = 走服务端默认」退化成隐式行为。
+2. **`throwOnEmpty`**（仅适配器为 `true`）：E2E 必须空响应**响亮失败**，
+   否则测试会拿空串继续跑；生产按契约 5 处理（warn + 返回 `''`）。
+
+**契约 7.3：超时的「可读错误」由标志位定义，不由「谁先赢得 race」定义。**
+`controller.abort()` 会**同步**触发 fetch 的 reject，而 `Promise.race` 只认先落定的那个
+⇒ 调用方拿到的会是底层 `AbortError`（"This operation was aborted"），
+而不是契约 6.2 要求的「LLM 请求超时（120s）」。
+故客户端用 `timedOut` 标志在 `catch` 里统一重写超时错误。**实测在 mock 下必现**。
+
+**契约 7.4：契约测试必须锁「信封」，不只是 body。**
+（2026-10-20，change: `tidy-a-class-seams`）
+
+request body 相同还不够 —— 两条链路若在**URL 拼接 / 请求头 / 错误文案**上分叉，
+排查时最先看到的正是这三样（"key 没带？""路径拼错？""报错格式不一样？"）。
+`memory-llm-contract.test.ts` 因此同时断言：
+
+| 断言 | 内容 |
+|---|---|
+| URL | `${baseUrl}/chat/completions` 逐字相同 |
+| 请求头 | `Content-Type: application/json` + `Authorization: Bearer <key>` |
+| 错误文案 | `LLM API error <status>: <body>`（两条链路同形） |
+| 默认超时 | `MEMORY_LLM_TIMEOUT_MS === 120_000`（契约 6.1 的批处理口径，不是聊天链路的 60s） |
+
+**契约 7.5：收编 `ProviderManager` 的能力已就位，但**默认关闭**。**
+（2026-10-20，change: `let-memory-use-provider`）
+
+背景：记忆客户端一直**绕开 `ProviderManager` 直连 fetch**，所以没有 fallback。
+
+现在有了两条路：
+
+| 开关 | 走向 | 行为 |
+|---|---|---|
+| `llmConfig.viaProvider` 缺省 **false** | 直连 fetch | **完全不变**（现状） |
+| `viaProvider: true` | `textChatWithFallback` | 获得 fallback + 统一 provider 观测 |
+
+**为什么默认关**（不是没做完，是代价明确）：
+
+1. **今天只有一个 provider** ⇒ fallback 实际空转，收益为零；
+2. 走 provider 会**多打一行 `[LLM]`**，而契约 5 钉的是 `[LLM:memory]`
+   —— 两行并存会让 token 统计**重复计数**；
+3. 错误文案由 provider 生成，本类要多一层翻译（已在 `completeViaProvider` 实现并有测试），
+   那是**新的失败面**。
+
+**打开的前提**（缺一不可）：
+- **注册了 ≥2 个 provider**（否则 fallback 无意义）；
+- 接受日志里同时出现 `[LLM]`（provider 层）与 `[LLM:memory]`（槽位归属），
+  统计时**只认后者**；
+- 回滚方式：`viaProvider` 设回 false（或删掉它）。
+
+**开关打开后必须成立的等价性**（已有测试 `memory-llm-via-provider.test.ts`）：
+- **超时要带过去**：provider 默认 60s，记忆必须显式传 120s
+  （为此 `ProviderRequest` 新增 `timeoutMs`，缺省仍是 60000 ⇒ 聊天链路不变）
+- **错误语义翻译回契约**：provider 的 `{role:'err'}` → 超时转「LLM 请求超时（120s）」、
+  API 错误补成 `LLM API error <status>: <body>`
+- **`[LLM:memory]` 不丢**：即使走 provider，槽位归属仍由本类打
+
+> 不做 `inject: ['al:provider']`：两个模块没有依赖边，绑定 inject 会锁死装配顺序，
+> 并让 10 个只测 memory-llm 的既有单测全部要加桩（**为功能付假成本**）。
+> 改用 `providerRef` 懒取 ⇒ 装配顺序无关，未启用时不多一次 `ctx.get`。
+
+#### 4.1.5 ★ 提示词资产与块投放策略（2026-10-20，change: `organize-prompt-layer`）
+
+> 本节回答两个此前**没有答案**的问题：「记忆链路的提示词放在哪」、
+> 「预算不够时**丢谁**、凭什么是它」。
+
+**契约 1：记忆链路的提示词只有一处家 —— `packages/core/src/prompts/memory.ts`。**
+
+| 常量 | 调用方 | sampling 槽 | 输出契约 |
+|---|---|---|---|
+| `SESSION_SUMMARY_SYSTEM_PROMPT` | `SessionEndProcessor` | `session.summary` | **JSON** |
+| `PROFILE_EXTRACT_SYSTEM_PROMPT` | `ProfileExtractor.extract` | `profile.extract` | **JSON**（`json_object`） |
+| `buildCorrectionPrompt(activeFacts)` | `ProfileExtractor.detectCorrection` | `profile.extract` | JSON |
+| `CRON_DEEP_PROFILE_SYSTEM_PROMPT` | `CronProcessor.deepProfile` | `profile.deepRewrite` | **纯文本** |
+
+⚠️ 最后一行的槽位**不可**与 `profile.extract` 互换：后者带 `response_format: json_object`，
+而本 prompt 里没有 "json" 字样 ⇒ API 400。这是 2026-10-01 `fix-profile-extract-empty-response`
+的事故根因，也是那两个槽被拆开的原因。
+
+**契约 2：改提示词内容 = 行为变更。**
+外置的目的之一是让改动可定位，**不是**让它可以随手改。
+改内容必须开 change 并说明意图；本文件里的搬移是**逐字**的（做过字面量比对，4/4 相同）。
+
+**契约 3：块的优先级必须显式声明（`CHAT_BLOCK_POLICY` / `CODE_BLOCK_POLICY`）。**
+
+- `required`：**无条件先占预算**。人格（`persona`）与「她自己注意到的事」（`selfNotice`）属此类 ——
+  丢掉它们不是"预算不够"，是 bug
+- `optional`：`canFit` 通过才进；不足时**记名**
+
+> 背景：此前"哪块被丢"由**调用顺序**决定（谁先 `reserve` 谁先活），
+> 于是「人格绝不能被丢」**没有任何一处写明**。10-15 那次【关于我】整块被丢
+> （31 条自省吃满 3200 预算、她一条都读不到、22 天无人发现）就是这个结构的必然结果：
+> **顺序即优先级，而优先级没被记录过。**
+
+**契约 4：丢弃必须留痕。**
+预算不足时打一行 `[Prompt] 预算不足，本轮丢弃 N 块：<keys>`（chat 与 code 各一行，INFO 级）。
+理由同契约 3：没有这行，"她今天没读到自己的自省"与"她读到了"在日志里**同形**。
+
+**契约 5：`PromptAssembler` 的行为由 characterization 快照锁住。**
+`tests/memory/unit/prompt-assembler-characterization.test.ts` 覆盖
+`chat/empty`（哪些块完全不出现）、`chat/rich`（正常顺序）、
+**`chat/starved`（预算饥饿时丢谁）**、`code/rich`。
+⚠️ **禁止 `vitest -u`**：快照一旦被更新就从"证据"退化成"装饰"。
+改块顺序/策略/预算 = 行为变更 → 快照**应当**变化，但那时必须走 change 并说明。
+
+> 仍未做（A 类余项）：`server/scripts/*.ts` 里 4 处 prompt 副本改 import；
+> 统一客户端观测字段的扩展契约测试。
+
+**契约 6：验证脚本里的提示词分两类，处理方式**不同**。**（2026-10-20，change: `tidy-a-class-seams`）
+
+| 脚本 | 性质 | 规矩 |
+|---|---|---|
+| `verify-session-summary-fix.ts` | 与生产**逐字相同**的副本 | **必须 import**（副本靠人"保持一致"必然漂移） |
+| `life-e2e-verify.ts` / `verify-micro-narrative.ts` / `show-life-effect.ts` | **故意简化**的诊断变体 | 文件内**必须注明**"故意 ≠ 生产，别当 bug 修" |
+| `digest-worldbook.ts` | 独有提示词（无生产对应物） | 不动 |
+
+> 要消灭的不是"变体"，是「**看起来像副本、其实是变体**」这种歧义。
+> 把变体"统一"成生产提示词会让诊断脚本失灵（噪音盖过要验的东西）。
+> 为此 4 个记忆提示词已导出到 `@alysia/core/memory` barrel（core 不暴露深路径）。
+
 ### 4.2 人格自适应引擎
 
 触发源:
@@ -682,6 +871,30 @@ memory_config: {
 
 **记忆人格联动 (v2)**: 人格自适应引擎每次调整时，同步评估是否影响记忆行为，通过同一 PersonaAdapter 输出 `memory_config` 增量。LLM 根据交互模式判断角色是否"变得更念旧/更健忘/更记仇"，与 tone/speech/emotional 共用同一护栏机制。
 
+> ★ **2026-10-20 已落地并修正两处**（change: `fix-memory-knob-regression`，B4）。
+>
+> **契约 A：记忆旋钮与人格参数共用同一套护栏**（实现于 `PersonaAdapter._applyLocked`）：
+> `|Δ| ≤ 0.1` / 每参数 5 分钟冷却 / 同向 ≤3 次 / 24h 回归 / 显式指令 bypass。
+> 记忆旋钮走的是**同一个** `apply()`，不是旁路。
+>
+> **契约 B：24h 回归的目标是「各自默认值」，不是 0。**
+> 旧实现一律回归到 `0` —— 而记忆旋钮的默认值不是 0（`DEFAULT_MEMORY_CONFIG`：
+> `decay_rate 0.3` / `importance_threshold 0.4` / `retention_bias 0.2` / …）。
+> 于是"回到默认"实际变成**单向漂移**：
+> `decay_rate → 0` = **永不遗忘**、`importance_threshold → 0` = **什么都记**、
+> `retention_bias → 0` = 丢掉"微微偏向正面"。
+> 现在按**分段**回归（`currentValue` vs `target` 的差决定方向），人的参数仍回 0，旋钮回各自默认。
+>
+> **契约 C：记忆旋钮按各自值域钳制，不共用 `[-1, 1]`。**
+> `retention_bias` 是双向 `[-1, 1]`；`decay_rate` / `importance_threshold` /
+> `recency_weight` / `confirmation_bias` 是 `[0, 1]`（负值无定义；
+> 旧实现能让 `decay_rate = -0.4`，下游只在个别处 `Math.max(rate, 0.05)` 兜底）。
+>
+> ⚠️ **已知限制（未修，独立 change）**：`processSignal` 只应用 `adjustments[0]`。
+> 即模型同时给出「人格 + 记忆」两条时，**第二条被丢弃**。
+> 修它要把返回值从单条改成数组、并让 `apply` 串行过护栏——改动面跨 MemoryManager 与 6 个测试，
+> 不在本次范围内，记在此处防遗忘。
+
 **召回管道接线 (8-12，memory-knobs-into-recall-pipeline)**: `MemoryManager.read()`
 排序前应用旋钮（`applyKnobsToRetrieved`，三路检索统一）：
 - `decay_rate`：遗忘速度——半衰期 = 24h / decay_rate（0.3 → ~80h 半衰；1 → 24h；0 → 不忘）
@@ -691,8 +904,12 @@ memory_config: {
   （服务端 ingest importance 恒 0 期间不生效，importance 计算接入后自动生效）
 - 知识库（无时间字段）天然不衰减；metadata 缺时间按最新处理
 - 事件向量 metadata 已有 created_at；会话向量补 updated_at（存量向量无时间 → 不衰减）
-- `retention_bias` / `confirmation_bias`：存储/提取情感偏向——未接线（作用面需
-  importance/情感计算支持，后续）
+- `retention_bias`：★ **2026-10-20 已接线**（change: `wire-retention-bias-into-recall`）——
+  `score × (1 + retention_bias × polarity × 0.1)`，`polarity ∈ {1,-1}` 来自
+  `metadata.polarity`（新生活事件；存量无此字段 ⇒ 不调整）。
+  **只做路内次序微调**（复利约 4%），不改阈值判定，**禁止**拿它做跨来源加权。
+- `confirmation_bias`：**仍未接线，且不该硬接** —— 需要「与既有信念的冲突度」数据源，
+  当前不存在。它现有唯一用途是**亲密度平滑**（数值平滑 ≠ 召回排序，别混）。详见 §3 ⑦。
 - 对外：`MemoryManager.adjustMemoryConfig / getMemoryConfig`（Web 契约）
 
 ### 4.4 安全护栏

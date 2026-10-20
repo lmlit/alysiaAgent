@@ -753,13 +753,134 @@ MessageSession.toString 拼接，与 QQ adapter 同模式；与 QQ 通道完全�
 |------|------|
 | `/new` | 新建对话，清空上下文 |
 | `/reset` | 重置当前对话，保留人格设置 |
-| `/stop` | 停止正在运行的 Agent (中断生成) |
+| `/stop` | 中断该会话**在飞的 LLM 生成**（见下方契约） |
 | `/stats` | 查看当前会话 Token 用量 |
+
+#### 6.3.1 `/stop` 的中断契约（2026-10-20，change: `make-stop-really-stop`；KI-7）
+
+**此前是空转的**：只 `logger.info` 一行「requested」，源码注释自陈
+「实际中断机制待 AgentRunner 支持 AbortController」——**那句早已过时**：
+`Coalescer` 落地后 `AbortRegistry` 就存在，`isGenerating()` 一直在用它。
+本表 §6.3 早就写着「中断生成」，属于 **doc 对、impl 缺** ⇒ 修 impl，不动 doc 的语义。
+
+| 契约 | 内容 |
+|---|---|
+| 动作 | `commandsModule` inject `al:coalescer`，`/stop` 调 `getAbortRegistry().abort(sessionId)` |
+| 作用域 | **只该 session**（命令自带 sessionId） |
+| 与 Coalescer 的区别 | 那个是「新消息到了 → 换这个」（输入合并）；本命令是用户显式说「别说了」。**动作相同，必须分别接线** |
+| 回话**必须如实** | 有在飞 → 「已中断…」；无在飞 → 「此刻没有正在生成的回复」。**禁止**无论有没有都回「已停止」 |
+| ⚠️ 诚实边界 | 只中断**在飞的 LLM 请求**（signal 一路透传到 fetch）。**中断不了已经进入工具执行的副作用**（写文件 / 发消息）—— 工具层没有 cancel 协议（同 `project-tasks` §6 契约 15） |
+
+---
+
+## 6.4 上下文预算、截断与压缩（2026-10-20，change: `observe-and-hold-context-compaction`）
+
+> 这一节补的是**一直存在、但从没写下来**的两套机制，以及它们之间的一个洞。
+
+### 6.4.1 两套机制（各管各的）
+
+| 机制 | 触发 | 依据 | 效果 |
+|---|---|---|---|
+| **压缩** | `usage.input > 8000`（`CONTEXT_COMPACT_TRIGGER_TOKENS`） | **真实 token**（API 返回） | 调 `onSessionEnd` 生成会话摘要 → 下一轮以 `[最近对话]` 回到 system prompt |
+| **截断** | 每步请求前 | `content.length / 3`（**估算**） | `AgentContext.truncate` 丢掉最旧的 turn |
+
+**契约 1：两把尺子不可比，这是已知债、不是设计。**
+压缩用真实 token、截断用字符估算（中文低估 2~3 倍）。
+实测表现是"压缩比截断积极得多"，但这**不是刻意调的**。
+要统一，必须先拿到 `length / 3` 与真实 token 的比值分布 —— **不许拍脑袋改**。
+`AgentContext.estimateTokens()` 的注释与本条为证。
+
+**契约 2：压缩触发必须留痕。**
+触发打 `[Compact] input=N > 8000 → 触发会话摘要 session=…`；完成后打 `[Compact] 摘要完成`；
+失败打 `[Compact] 摘要失败 → 暂停截断`。
+（此前 `if (usage.input > 8_000)` 是裸数字、零日志 —— 没人知道线上触发过几次。）
+
+### 6.4.2 洞里填的东西
+
+**契约 3：摘要失败时**暂停截断**（`hold`）。**
+
+原行为是两条独立的链：压缩 fire-and-forget，截断每步照跑。于是存在：
+
+1. 某轮 input > 8000 → 触发摘要
+2. 下一轮 `truncate` 把最早几轮 splice 掉
+3. 摘要**失败了**（LLM 超时 / 空响应 —— 本项目栽过三次）
+
+⇒ 那几轮从上下文消失、也没变成摘要。它们仍在 DB 里（会话结束能摘到），
+但在**当下这个会话里**她真的不记得了，日志只有一行 error。
+
+**契约 4：不截断有硬上限（`HARD_CEILING_FACTOR = 2`）。**
+估算超过 `maxTokens × 2` 时**仍然截断**并打 warn ——
+不截断会超模型上下文直接 400，那是换一种崩法，不是修复。
+
+**契约 5：判定必须是纯函数、可穷举测试。**
+`decideTruncation({maxTokens, estimatedTokens, compactionFailed})` 返回三种结局：
+`truncate/normal` · `hold/compaction-failed` · `truncate/over-hard-ceiling`。
+`run()` 与 `runStream()` **共用同一个** `applyTruncation`（别让两条链路分叉）。
+
+**契约 6：失败状态是进程内注册表，有界 + 会过期 + 显式 clear。**
+`memory/compaction-status.ts`：`MAX_ENTRIES=200`（超界丢最旧）、
+`TTL=30min`（一次偶发失败不该永久压制截断）、成功时 `clearCompactionFailed`。
+⚠️ 选模块级而非构造依赖：写入方是 pipeline、读取方是 runner，两者无共享对象；
+给 `AgentRunner` 加形参会牵动所有构造点与 30+ 测试 —— 为一个小状态付大代价。
+（同 `self-notice.ts` 形状。）
+
+---
+
+## 6.5 把被丢弃的轮次压回上下文（2026-10-20，change: `put-dropped-turns-back`）
+
+> §6.4 解决了"摘要失败时别急着截断"。本节解决另一半：
+> **截断本身丢掉的东西，能不能以压缩的形式回来。**
+
+### 6.5.1 契约
+
+**契约 1：`truncate()` 必须返回被丢弃的轮次。**
+以前返回 `void` —— 丢掉的内容连句柄都没有，"压回去"无从谈起。
+
+**契约 2：压缩是 `AgentHooks.summarizeDroppedTurns`，core 不持有 LLM。**
+`AgentRunner` 只负责"什么时候压、插到哪"；用哪个模型、什么温度由实现方（pipeline）决定。
+未实现该 hook ⇒ 保持旧行为（直接丢弃），**零兼容成本**。
+
+**契约 3：攒批，不逐条压。**
+日志阈值 `COMPACT_MIN_TURNS = 4` **或** `COMPACT_MIN_CHARS = 1200`（满足其一即压）。
+长会话每步可能只丢 1 个 turn，逐条压就是**一步一次 LLM 调用**且多半没新信息。
+
+**契约 4：插在 `system` 之后。**
+摘要的语义是"更早的对话"，必须排在现有对话前；但 system 必须是第一条消息
+（`insertAfterSystem` 跳过**所有**前导 system）。
+
+**契约 5：累积摘要用替换，不用追加。**
+第二次压缩把「旧摘要 + 新丢弃」再压一遍，**替换**同一条摘要消息。
+否则摘要会自己撑爆上下文 —— 压缩手段变成膨胀来源。
+
+**契约 6：失败与空返回都必须留痕，且不阻塞本轮。**
+压缩抛错 ⇒ `warn` 限频 + 明说"这批已丢弃"（否则"丢了"和"没丢"同形）；
+返回空串 ⇒ 不插空块 + `warn` 限频。
+
+**契约 7：压缩提示词只保事实，不保文风。**
+`prompts/context.ts` 与 `prompts/memory.ts` **分开**：后者是长期记忆的提取/摘要，
+用它压上下文会把她当下的语气、承诺、正在做的事一起抹平。
+上下文压缩强制：只留事实、**不许编造**、第三人称要点、≤400 字。
+
+**契约 8：必须走纯文本槽。**
+`MemoryManager.summarizeContextSlice` 显式传 `profile.deepRewrite`。
+⚠️ 默认槽是 `profile.extract`（`response_format: json_object`），
+而压缩提示词里没有 "json" 字样 ⇒ 会直接 API 400（2026-10-01 同一坑）。
+
+### 6.5.2 怎么证明它真的有用（**可证伪判据**）
+
+⚠️ 这套机制**能跑通**（单测全绿）不代表**它让人更聪明**。上线后必须验：
+
+1. 造一段足够长的会话（>3 次压缩），记下**中途**发生的三件事（承诺/决定/待办）
+2. 会话继续到很远之后，再问「前面说的那三件事」
+3. **判据**：三件事里至少 2 件还能答对 ⇒ 压缩有效；
+   若只答得出最近那件 ⇒ 压缩在退化成"更长一点的窗口"，应退回 `summarizeDroppedTurns` 不实现
+
+**不许用"看起来还在"当验收**。压缩最大的风险不是丢，是**编造**
+（把没发生过的事总结成发生过）—— 那比遗忘更糟，因为没人会怀疑。
 
 ---
 
 ## 7. 部署
-
 ### 7.1 Dockerfile
 
 ```dockerfile
@@ -789,7 +910,22 @@ services:
       - ./config.yml:/app/config.yml
 ```
 
-### 7.3 配置示例 (config.yml)
+### 7.3 配置文件只有一份 —— `packages/server/config.yml`
+
+**契约**（2026-10-20，change: `remove-dead-root-config`；KI-8）：
+
+- 服务从 **`packages/server`** 启动，`config.ts` 缺省取 `./config.yml`
+  ⇒ 活的配置**只可能是 `packages/server/config.yml`**
+- **仓库根目录不得再有 `config.yml`**。历史上那份是死文件，且与活的已经漂移
+  （缺 `webuiToken` 等行）。改它**毫无提示** —— 这是 `server-bind-host` 那次
+  真实发生过的坑（第一版写错文件、实测没生效才发现）
+- ⚠️ `.gitignore` 的 `config.yml` 模式**无斜杠 ⇒ 任意层级都忽略**，
+  所以这两份文件**都不受版本控制**（只有 `config.example.yml` 是模板）。
+  本契约靠**文档 + 删文件**保证，不靠 git
+- 部署时挂载的是 `./config.yml:/app/config.yml`（见 §7.2），
+  容器内 `/app` 即 `packages/server` 的产物目录 —— 与上一条一致
+
+### 7.4 配置示例 (config.yml)
 
 ```yaml
 bot:

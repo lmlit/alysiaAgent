@@ -45,18 +45,26 @@
 
 | 条目 | 一句话 | 卡在 | 权威出处 |
 |---|---|---|---|
-| KI-3 | 两个 `ILLMService` 实现无一致性契约测试 | 🤖 | [KNOWN-ISSUES #KI-3](KNOWN-ISSUES.md#L86) |
-| KI-7 | `/stop` 只打日志，不做中断 | 🤖 | [KNOWN-ISSUES #KI-7](KNOWN-ISSUES.md#L375) |
-| KI-8 | 根目录 `config.yml` 是死文件（与 `packages/server/config.yml` 双份漂移） | 🤖 | [KNOWN-ISSUES #KI-8](KNOWN-ISSUES.md#L384) |
-| KI-9 | `memory/services/` 半死代码（仅测试在用） | 🤖 | [KNOWN-ISSUES #KI-9](KNOWN-ISSUES.md#L403) |
-| KI-10 | 内核缺「只排序、不依赖服务」的表达（`after?`） | 🤖 | [KNOWN-ISSUES #KI-10](KNOWN-ISSUES.md#L392) |
-| KI-18 | `/api/sessions/:id/extract` 无任何校验 | 🤖 | [KNOWN-ISSUES #KI-18](KNOWN-ISSUES.md#L414) |
+| KI-10 | 内核缺「只排序、不依赖服务」的表达（`after?`） | ⏸ 结论是「现在只有 1 处，不值得加」，**记着待观察** | [KNOWN-ISSUES #KI-10](KNOWN-ISSUES.md#L392) |
+| ~~KI-3~~ ✅ | **2026-10-20 已修**（`unify-memory-llm-client`，与 KI-9 同根因）：抽出唯一实现 `MemoryLlmClient`，`OpenAILLMService` 降级为适配器；契约测试锁住「同一 slot ⇒ request body 逐字相同」。★ 顺带纠正了本条前提——KI-21 之后两者**已不一致**（生产有超时/观测，测试那个没有） | — | [KNOWN-ISSUES #KI-3](KNOWN-ISSUES.md#L86) |
+| ~~KI-7~~ ✅ | **2026-10-20 已修**（`make-stop-really-stop`）：`/stop` 接 `AbortRegistry.abort()`；★ 顺带修了「无论有没有在飞都回『已停止』」的假回话 | — | [KNOWN-ISSUES #KI-7](KNOWN-ISSUES.md#L375) |
+| ~~KI-8~~ ✅ | **2026-10-20 已修**（`remove-dead-root-config`）：根目录死文件已删；★ 取证发现 `.gitignore` 的 `config.yml` 无斜杠 ⇒ 任意层级忽略，所以那份**从未被 git 跟踪** | — | [KNOWN-ISSUES #KI-8](KNOWN-ISSUES.md#L384) |
+| ~~KI-9~~ ✅ | **2026-10-20 已修**（同上 change）：生产改用正式类，适配器不再是第二套实现 | — | [KNOWN-ISSUES #KI-9](KNOWN-ISSUES.md#L403) |
+| ~~KI-18~~ ✅ | **2026-10-20 已修**（`guard-session-extract-endpoint`）：形状 400 / `dsh:unknown` 400 / 零事件 404 | — | [KNOWN-ISSUES #KI-18](KNOWN-ISSUES.md#L414) |
 | ~~向量检索静默退化~~ ✅ | **2026-10-19 已修**（`fix-empty-embed-query`）：不是 API 变更，是**空查询**（`query=""`）也去请求 embedding ⇒ 智谱 `400 code 1213`。现在空查询直接走文本检索、`al:embed` 对空文本不发请求 | — | [spec §7](openspec/specs/memory-system/spec.md) |
 
 ## C. 能力机会（不是缺陷，是"要不要做"）
 
 | 条目 | 一句话 | 卡在 | 权威出处 |
 |---|---|---|---|
+| ~~B1 recall-weight-formula~~ ✅ | **2026-10-20 决议：不实现**（`ratify-recall-weighting`，已归档）。不是"没数据"，而是旧公式 `向量×0.5+时间×0.3+重要性×0.2` 是**全局绝对分** —— 9-25 实测 46 条 life_event 全被 conversation 挤掉、尽管路内第一，就是跨源比分造成的。★ 通用判据：**跨来源禁止全局加权求和，权重只在路内用**。观测（`[Recall] …`）早已上线，调系数等数据 | ✅ 已决（ratify） | [spec §7](../openspec/specs/memory-system/spec.md) |
+| ~~B2 knobs-into-recall~~ ✅ | **2026-10-20 已接 `retention_bias`**（`wire-retention-bias-into-recall`，已归档）：先补 valence 数据源（`metadata.polarity`，判不出记 0 不猜、只对新事件），再接 `score×(1+bias×polarity×0.1)` + `[Recall] 极性调整×N`。★ 力度 0.1 是**被单测逼出来的**（初版 0.3 能让 0.8 翻掉 0.9）。`confirmation_bias` **明确不接**（要"信念冲突度"，无数据源；别与亲密度平滑混淆） | ✅ 已上线 | [spec §3⑦](../openspec/specs/memory-system/spec.md) |
+| ~~B3 fold-memory-llm-into-provider~~ ✅ | **2026-10-20 已做，默认关**（`let-memory-use-provider`，已归档）：`viaProvider` 开关 + 等价性测试（120s 必须带过去 / 错误语义翻译回契约 / `[LLM:memory]` 不丢）。★ **默认关的理由**：今天只有一个 provider ⇒ fallback 空转；走 provider 会多打一行 `[LLM]` 让 token 统计重复计数。**打开前提**：≥2 个 provider + 接受两行日志 | ✅ 能力就位（默认关） | [spec §4.1.4 契约 7.5](../openspec/specs/memory-system/spec.md) |
+| ~~B4 memory-persona-link-v2~~ ✅ | **2026-10-20 查证后是"修 bug"而非"从零做"**（`fix-memory-knob-regression`，已归档）：`memory.*` 早就接进了 `applyToParam`/`regressIfStale`，但**共用的默认假设是错的** —— ① 24h 回归一律朝 **0**，而旋钮默认是 0.2/0.3/0.4 ⇒「`decay_rate→0`=永不遗忘、`importance_threshold→0`=什么都记」= **单向漂移**（改成分段回归，旋钮回各自默认）；② 通用 `clamp(-1,1)` 让 `decay_rate` 能变负（改为按值域：`retention_bias [-1,1]`，其余 `[0,1]`）。⚠️ 已知限制：只应用 `adjustments[0]` | ✅ 已上线 | [spec §4.3](../openspec/specs/memory-system/spec.md) |
+| ~~B5 dsh-persona-single-source~~ ✅ | **2026-10-20 已定（用户拍板「维持两份，标清来源」）**（`label-dual-persona-sources`，已归档）：两份人格的关系写进 `persona.ts` 与 `soul.md` 顶部（源 / 浓缩 / 何时必须同步），并加**守卫测试** `tests/persona-sync.test.ts` —— 三条锚句按**概念**判据（身份/内在性/连续性），漏改会红；另断言浓缩 < 原文 1/3。★ 不合并的理由：dsh 每轮全量发 prefix，塞 13KB 等于白烧 token | ✅ 已上线 | [persona.ts](../packages/dsh-adapter/src/persona.ts) |
+| ~~B6 clean-synthetic-facts~~ ✅ | **2026-10-20 查证：多半已不用做**。KI-20 的存量 **2026-10-17 已清**（`purge-synthetic-context-pollution`：180 条注入 + 1 条派生 fact），我先前的「116 条未清」是**旧信息**。本次交付改为：**只读复验工具** `scripts/synthetic-data-audit.cjs`（`readOnly`、`--backup` 仅文件复制含 `-wal`、已用最小库自测）+ 预案文档。判据：`facts.fromSynthetic == 0`，而 `events.synthetic` **非 0 是对的**（事件不删） | ✅ 工具就绪 | [PLAN](PLAN-2026-10-20-clean-synthetic-facts.md) |
+| ~~tie-intimacy-to-speech~~ ✅ | **2026-10-20 已修并归档**：亲密度接上推送闸（四档 / 只降不升 / idle 只认真人 user 消息 / 迟滞 +5 / 他回来了只一次）。★ 顺带修掉**每日上限形同虚设**（计数复位挂在"摘要成功"上，失败时每 tick 清零，实测上限 3 发出 4 条） | ✅ 已上线 | [spec §11.1](../openspec/specs/ai-life-system/spec.md) |
+| ~~let-her-decline-a-day~~ ✅ | **2026-10-20 已实现并归档**（用户拍板「可以拒绝」）：她可以这一轮不说话，但必须留理由（`internal` + `origin='decline'`，可被召回）。★ 关键判断：P1-6 防的是**生产故障**，不防**她的意愿** —— 拒绝路径照样续期锁。护栏：概率 0.15 / 连续上限 2 / 理由 ≥6 字 / **fail-open** | ✅ 已上线 | [spec §11.2](../openspec/specs/ai-life-system/spec.md) |
 | retire-glm-vision-bridge | DeepSeek 原生可看图，GLM 那层技术上冗余（但记忆是纯文本的） | 🧑 决策 | [proposal](../openspec/changes/retire-glm-vision-bridge/proposal.md) |
 | improve-sticker-selection | 表情包无权重/无冷却/无管理入口 | 🧑 先定三件事 | [proposal](../openspec/changes/improve-sticker-selection/proposal.md) |
 | tune-recall-with-runtime-data | 召回系数是拍脑袋的，该由运行数据定 | ⏳ 先补观测 | [proposal](../openspec/changes/tune-recall-with-runtime-data/proposal.md) |
@@ -92,9 +100,11 @@
 
 ## F. 已销账（**不在此重复正文**）
 
-26 条 KI 中 **14 条已修**：KI-4 / 6 / 12 / 13 / 14 / 15 / 16 / 17 / 19 / 20 / 21 / 22 / 23 / 24。
+26 条 KI 中 **19 条已修**：KI-3 / 4 / 6 / 7 / 8 / 9 / 12 / 13 / 14 / 15 / 16 / 17 / 18 / 19 / 20 / 21 / 22 / 23 / 24
+（其中 2026-10-20 新增 5 条：KI-3 / KI-7 / KI-8 / KI-9 / KI-18 —— 四个 change 已归档）。
 证据与契约审计在 [KNOWN-ISSUES](KNOWN-ISSUES.md) 各自小节（带 ★ 与 change 链接）。
-本表不列它们，只留这一行计数 —— **下次整理时核这个数字**：`26 - 14 = 12 条在办`。
+本表不列它们，只留这一行计数 —— **下次整理时核这个数字**：`26 - 19 = 7 条在办`
+（KI-1 / 2 / 5 / 10 / 11 / 25 / 26，其中 KI-10 是「记着待观察」）。
 
 ---
 
