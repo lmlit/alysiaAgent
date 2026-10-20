@@ -69,7 +69,18 @@ function readInput() {
 	}
 	// 从 stdin 读（deploy.ps1 走这条）
 	const raw = fs.readFileSync(0, 'utf8');
-	return JSON.parse(raw || '[]');
+	return JSON.parse(raw || '{}');
+}
+
+/**
+ * ★ 2026-10-21（change: `sync-mood-to-blog`）：输入既可以是一个**数组**（旧格式，
+ * 只有日记），也可以是 `{ diaries, mood }`（新格式，一次 ssh 拿全）。
+ * 两种都得认 —— 否则改导出格式就会把旧调用打挂。
+ */
+function pickDiaries(payload) {
+	if (Array.isArray(payload)) return payload;
+	if (payload && Array.isArray(payload.diaries)) return payload.diaries;
+	return [];
 }
 
 /** 「10 月 20 日」—— 标题用中文日期，比 ISO 更像人写的 */
@@ -83,9 +94,9 @@ function normalize(content) {
 	return String(content ?? '').replace(/\r\n/g, '\n').trim();
 }
 
-const rows = readInput();
+const rows = pickDiaries(readInput());
 if (!Array.isArray(rows)) {
-	console.error('输入必须是数组');
+	console.error('输入里没有 diaries 数组');
 	process.exit(1);
 }
 if (rows.length === 0) {

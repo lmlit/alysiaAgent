@@ -33,26 +33,28 @@ function Invoke-Remote([string]$Script) {
 Push-Location $PSScriptRoot
 $tmp = $null
 try {
-  # ★ 2026-10-21（change: add-daily-diary）：构建前先把她最新的日记同步下来。
-  #   为什么在构建前：日记是 markdown，不先落盘，这次构建里就没有它。
-  #   读不到库/表不存在 ⇒ export 脚本输出 []，这里静默跳过（博客不该因为"今天没日记"而失败）。
+  # ★ 2026-10-21：构建前从服务端拉一次数据（日记 + 心情）。
+  #   - 日记是 markdown，不先落盘这次构建里就没有它
+  #   - 心情写进 src/data/mood.json，决定侧栏头像的观感
+  #   - 读不到库/表不存在 ⇒ 导出脚本输出空结构 + exit 0，这里跳过（博客不该因此构建失败）
   if (-not $SkipDiaries) {
-    Write-Host "== 同步日记 ==" -ForegroundColor Cyan
+    Write-Host "== 同步日记与心情 ==" -ForegroundColor Cyan
     try {
-      $exportPy = [IO.File]::ReadAllText((Join-Path $PSScriptRoot "scripts\export-diaries.py"))
+      $exportPy = [IO.File]::ReadAllText((Join-Path $PSScriptRoot "scripts\export-blog-data.py"))
       $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($exportPy -replace "`r`n", "`n")))
-      $json = ssh -o BatchMode=yes $HostName "echo $b64 | base64 -d > /tmp/export-diaries.py && python3 /tmp/export-diaries.py"
+      $json = ssh -o BatchMode=yes $HostName "echo $b64 | base64 -d > /tmp/export-blog-data.py && python3 /tmp/export-blog-data.py"
       if ($LASTEXITCODE -eq 0 -and $json) {
-        $diaryFile = Join-Path $env:TEMP "diaries-$([guid]::NewGuid().ToString('N')).json"
-        [IO.File]::WriteAllText($diaryFile, ($json -join "`n"), (New-Object Text.UTF8Encoding($false)))
+        $dataFile = Join-Path $env:TEMP "blogdata-$([guid]::NewGuid().ToString('N')).json"
+        [IO.File]::WriteAllText($dataFile, ($json -join "`n"), (New-Object Text.UTF8Encoding($false)))
         Push-Location $repo
         try {
-          node blog/scripts/sync-diaries.mjs --input $diaryFile
+          node blog/scripts/sync-diaries.mjs --input $dataFile
+          node blog/scripts/sync-mood.mjs --input $dataFile
           python blog/scripts/make-diary-covers.py 2>$null
         } finally { Pop-Location }
-        Remove-Item $diaryFile -Force -ErrorAction SilentlyContinue
+        Remove-Item $dataFile -Force -ErrorAction SilentlyContinue
       } else {
-        Write-Host "  跳过（导出失败或服务端无日记）" -ForegroundColor DarkYellow
+        Write-Host "  跳过（导出失败或服务端无数据）" -ForegroundColor DarkYellow
       }
     } catch {
       Write-Host ("  跳过（{0}）" -f $_.Exception.Message) -ForegroundColor DarkYellow
