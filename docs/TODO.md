@@ -90,7 +90,6 @@
 | fix-reflection-insight-misroute | **已归档但未部署** ⇒ 线上每日反思仍会把 `insight` 错写进用户画像 | 🧑 发版会连带 console 改动 | [proposal](../openspec/archive/2026-10-15-fix-reflection-insight-misroute/proposal.md) |
 | 历史画像回填 | 线上 `basics`/`facts` 长期稀疏，修复只保证从此往后 | 🧑 需连服务器 | [specs/index.md](../openspec/specs/index.md) |
 | **镜像推送不通**（2026-10-21） | 本地 Docker **29** 导出的 OCI tar，服务器 Docker **26.1.3** `docker load` 读不了；`export`+`import` 出来的文件系统是空的（连 `sh` 都没有）。最终用 **dist 热替换**上线（`docker cp` + `restart`）。要真正换镜像需：服务器升 Docker / skopeo 转 docker-archive / 服务器侧 build。★ 教训：**`compose up` 前必须先用 `docker run --entrypoint sh` 验证镜像能起** —— `compose up` 会 recreate，那一步没有回退点，唯一保险是预打 rollback tag | 🧑 待定 | [HANDOFF](HANDOFF.md) |
-| **works 区未做**（2026-10-21） | 用户要求的"她生成的网站挂进博客"没做：日记/信/心情同步已完成并上线，但 `/works/` 栏目（读 `/srv/alysia-runner/toys` 之类产物）尚未实现 | 🤖 已登记 | — |
 | **镜像与线上漂移**（2026-10-19） | 本次是 `docker cp` 热替换 dist（备份 `/root/alysia/backups/dist-20261019-200542/`）；下次 `compose up -d` 重建会**退回镜像旧码** | 🧑 下次发版统一重打镜像 | [验收记录 §0](ACCEPTANCE-2026-10-19-WAKE.md) |
 | **存量 31 条 `needs_review`**（2026-10-19） | 改前遗留：24 条卡在 `intent`（18 条结果 ≤80 字，基本是探针）；**不改**的理由：不阻塞任何链路、watchdog 不对 needs_review 报警、产物都在工作区 | 🧑 想清掉再说一声 | [验收记录 §4](ACCEPTANCE-2026-10-19-WAKE.md) |
 

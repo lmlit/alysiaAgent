@@ -51,6 +51,7 @@ try {
           node blog/scripts/sync-diaries.mjs --input $dataFile
           node blog/scripts/sync-letters.mjs --input $dataFile
           node blog/scripts/sync-mood.mjs --input $dataFile
+          node blog/scripts/sync-works.mjs --input $dataFile
           python blog/scripts/make-diary-covers.py 2>$null
         } finally { Pop-Location }
         Remove-Item $dataFile -Force -ErrorAction SilentlyContinue

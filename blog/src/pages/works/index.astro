@@ -1,0 +1,60 @@
+---
+// ★ 2026-10-21（change: `add-works-gallery`）：她生成的页面
+//
+// 链接直接指向基站的 `/p/<projectId>/<file>`：**不复制进博客产物**。
+// 复制会立刻产生两份副本，改一处忘另一处，最后没人知道哪个是真的。
+import works from "../../data/works.json";
+import MainGridLayout from "../../layouts/MainGridLayout.astro";
+
+const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
+const total = works.reduce((n, w) => n + w.pages.length, 0);
+
+const fmtDate = (ms: number) => {
+	if (!ms || ms < 1_000_000_000_000) return "";
+	const d = new Date(ms * 1000);
+	return `${d.getFullYear()} 年 ${d.getMonth() + 1} 月 ${d.getDate()} 日`;
+};
+---
+
+<MainGridLayout title="作品 · 昔涟" description="她做的页面：小玩意、一页东西、慢慢转的钟。">
+  <div class="card-base px-6 md:px-9 py-6 md:py-8 rounded-[var(--radius-large)] mb-4">
+    <h1 class="text-3xl font-bold text-90 mb-2">作品</h1>
+    <p class="text-75 text-sm mb-6">
+      她做的页面。都是一个 html 加一点 css 就够了的那种，
+      纯静态、没有外部依赖，打开就是完整的。
+    </p>
+
+    {works.length === 0 && (
+      <p class="text-50 text-sm py-10 text-center">还没有作品。等她做出第一个。</p>
+    )}
+
+    {works.map((w) => (
+      <section class="mb-8 last:mb-0">
+        <h2 class="text-sm text-50 mb-3 tabular-nums">{w.projectId}</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {w.pages.map((p) => (
+            <a
+              href={`/p/${w.projectId}/${p.file}`}
+              target="_blank"
+              rel="noopener"
+              class="group block rounded-xl px-4 py-4 border border-[var(--line-divider)] transition hover:bg-[var(--btn-plain-bg-hover)] hover:-translate-y-0.5"
+            >
+              <div class="flex items-baseline justify-between gap-3">
+                <h3 class="text-90 font-bold group-hover:text-[var(--primary)] transition">
+                  {p.title}
+                </h3>
+                <span class="text-xs text-50 shrink-0">↗</span>
+              </div>
+              {p.description && (
+                <p class="text-75 text-sm mt-1.5 leading-relaxed line-clamp-2">{p.description}</p>
+              )}
+              {fmtDate(p.updatedAt) && (
+                <p class="text-xs text-50 mt-2 tabular-nums">{fmtDate(p.updatedAt)}</p>
+              )}
+            </a>
+          ))}
+        </div>
+      </section>
+    ))}
+  </div>
+</MainGridLayout>

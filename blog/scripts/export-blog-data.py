@@ -80,12 +80,91 @@ def read_letters(conn):
         return []
 
 
+# ── ★ 2026-10-21（change: `add-works-gallery`）：她生成的页面 ──────────────
+#   数据源不是 DB，而是 runner 工作区：/srv/alysia-runner/<项目>/public/
+#   基站已经把 public/ 挂到 /p/<projectId>/ 对外可访问，所以这里只需要目录清单。
+RUNNER_ROOT = "/srv/alysia-runner"
+
+import os
+import re
+
+
+def _read_title_desc(path):
+    """从 html 里取 <title> 与 meta description（取不到就给空，不猜）"""
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            html = f.read(20000)
+    except OSError:
+        return "", ""
+    t = re.search(r"<title[^>]*>(.*?)</title>", html, re.S | re.I)
+    d = re.search(r'<meta\s+name=["\']description["\']\s+content=["\'](.*?)["\']', html, re.S | re.I)
+    clean = lambda s: re.sub(r"\s+", " ", s).strip() if s else ""
+    return clean(t.group(1) if t else ""), clean(d.group(1) if d else "")
+
+
+def read_works():
+    """列出她的作品：每个项目的 public/ 下的 html 页面。
+
+    ⚠️ 排除 `alysia-blog` —— 那是博客自己，写在"作品"里会自我指涉。
+    """
+    works = []
+    try:
+        projects = sorted(os.listdir(RUNNER_ROOT))
+    except OSError as e:
+        print(f"export-blog-data: runner root unavailable: {e}", file=sys.stderr)
+        return works
+
+    for pid_dir in projects:
+        base = os.path.join(RUNNER_ROOT, pid_dir)
+        pub = os.path.join(base, "public")
+        if not os.path.isdir(pub):
+            continue
+
+        project_id = pid_dir
+        meta_path = os.path.join(base, ".alysia-project.json")
+        if os.path.isfile(meta_path):
+            try:
+                with open(meta_path, encoding="utf-8") as f:
+                    project_id = json.load(f).get("projectId") or pid_dir
+            except (OSError, ValueError):
+                pass
+
+        if project_id == "alysia-blog":
+            continue
+
+        pages = []
+        for name in sorted(os.listdir(pub)):
+            if not name.endswith(".html"):
+                continue
+            path = os.path.join(pub, name)
+            title, desc = _read_title_desc(path)
+            try:
+                mtime = int(os.path.getmtime(path))
+            except OSError:
+                mtime = 0
+            pages.append(
+                {
+                    "file": name,
+                    "title": title or name.replace(".html", ""),
+                    "description": desc,
+                    "updatedAt": mtime,
+                }
+            )
+
+        if pages:
+            works.append({"projectId": project_id, "pages": pages})
+
+    return works
+
+
 def main() -> int:
-    out = {"diaries": [], "letters": [], "mood": {}}
+    out = {"diaries": [], "letters": [], "mood": {}, "works": []}
     try:
         conn = connect_ro()
     except Exception as e:  # noqa: BLE001
         print(f"export-blog-data: db open failed: {e}", file=sys.stderr)
+        # 库打不开也要把作品带出去（它不依赖 DB）
+        out["works"] = read_works()
         json.dump(out, sys.stdout, ensure_ascii=False)
         return 0
 
@@ -96,6 +175,7 @@ def main() -> int:
     finally:
         conn.close()
 
+    out["works"] = read_works()
     json.dump(out, sys.stdout, ensure_ascii=False)
     return 0
 

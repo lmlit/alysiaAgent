@@ -45,6 +45,8 @@ export const navBarConfig: NavBarConfig = {
 		// ★ 2026-10-21：日记与信都是独立栏目（不按日/想写才写，首页不混排）
 		{ name: "日记", url: "/diary/" },
 		{ name: "信", url: "/letters/" },
+		// ★ 2026-10-21（add-works-gallery）：她生成的页面（入口在这，页面在基站 /p/ 下）
+		{ name: "作品", url: "/works/" },
 		LinkPreset.Archive,
 		LinkPreset.About,
 		// ⚠️ 原模板这里是 Fuwari 项目的 GitHub 链接；这是她的站，不放别人的仓库入口。
