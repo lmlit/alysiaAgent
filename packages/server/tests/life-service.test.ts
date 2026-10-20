@@ -691,8 +691,10 @@ describe('LifeService — 剧情延续与推送节奏（8-09）', () => {
       cooldownHours: 0,
       generateEvent: async () => '{"content":"想分享的事","type":"chat"}',
     });
-    // ★ lastSummaryDate 置今天：防止 tick 开头的跨天检测把计数重置为 0
+    // ★ 2026-10-20（tie-intimacy-to-speech）：计数现在有**日期锚点**（pushCountDate）。
+    //   只设 chatPushesToday 而不设锚点 → tick 开头会认为"换天了"而清零（这正是修复点）。
     (svc as any).state.lastSummaryDate = '2026-08-06';
+    (svc as any).state.pushCountDate = '2026-08-06';
     (svc as any).state.chatPushesToday = 1; // 当日已满
     await svc.tick();
     expect(qqOff.sendProactive).not.toHaveBeenCalled();
@@ -714,18 +716,45 @@ describe('LifeService — 剧情延续与推送节奏（8-09）', () => {
     expect(memoryManager.recordLifeEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'chat' }));
   });
 
-  it('跨天重置：chat 推送计数归零', async () => {
-    freezeTime(23); // 今天
+  /**
+   * ★ 2026-10-20（change: tie-intimacy-to-speech）语义变更：
+   * 计数复位**不再挂在「摘要生成成功」上**，改为按日期（`pushCountDate`）独立复位。
+   *
+   * 原因：旧判据是 `lastSummaryDate !== today`，而它只在摘要**成功**后置位 ——
+   * 没有 `generateSummary` 回调、或摘要连续失败时，**每个 tick 都会把计数清零**，
+   * 每日上限形同虚设（实测：上限 3 发出了 4 条）。
+   */
+  it('跨天重置：chat 推送计数按**日期**归零（与摘要成败解耦）', async () => {
+    freezeTime(23);
     const { memoryManager, qqOff } = makeMocks({ listLifeEvents: vi.fn().mockReturnValue([]) });
     const svc = new LifeService(memoryManager as any, qqOff as any, {
       ownerOpenid: 'openid-1', stateFile: undefined,
       generateEvent: async () => '{"content":"x","type":"chat"}',
     });
     (svc as any).state.chatPushesToday = 4;
-    (svc as any).state.lastSummaryDate = '2026-08-05'; // 非今天 → 触发跨天逻辑
-    // 直接验证 maybeGenerateDailySummary 的重置副作用
-    await (svc as any).maybeGenerateDailySummary(new Date('2026-08-06T23:30:00'));
+    (svc as any).state.pushCountDate = '2026-08-05'; // 昨天 → 换天
+    // 不依赖 maybeGenerateDailySummary（摘要可能根本没有生成器）
+    (svc as any).resetDailyPushCount(new Date('2026-08-06T23:30:00'));
     expect((svc as any).state.chatPushesToday).toBe(0);
+    expect((svc as any).state.pushCountDate).toBe('2026-08-06');
+  });
+
+  it('★ 回归：同一天内**摘要失败**不得清零推送计数（旧实现的每日上限失效点）', async () => {
+    freezeTime(23);
+    const { memoryManager, qqOff } = makeMocks({ listLifeEvents: vi.fn().mockReturnValue([]) });
+    const svc = new LifeService(memoryManager as any, qqOff as any, {
+      ownerOpenid: 'openid-1', stateFile: undefined,
+      // ⚠️ 刻意**不给** generateSummary：旧实现下 lastSummaryDate 永远为 null
+      generateEvent: async () => '{"content":"x","type":"chat"}',
+    });
+    (svc as any).state.chatPushesToday = 3;
+    (svc as any).state.pushCountDate = '2026-08-06';
+    (svc as any).state.lastSummaryDate = null;
+
+    await (svc as any).maybeGenerateDailySummary(new Date('2026-08-06T23:30:00'));
+    (svc as any).resetDailyPushCount(new Date('2026-08-06T23:30:00'));
+
+    expect((svc as any).state.chatPushesToday, '同一天内计数必须活着').toBe(3);
   });
 });
 

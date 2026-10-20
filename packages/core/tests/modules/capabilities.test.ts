@@ -78,9 +78,39 @@ describe('al:tools', () => {
 });
 
 describe('al:commands', () => {
+  // ★ 2026-10-20（change: make-stop-really-stop）：commandsModule 现在也 inject `al:coalescer`
+  //   —— `/stop` 要真的 abort（KI-7）。少了这个 stub 模块根本装不起来。
+  const coalescer = (registry: unknown) => ['al:coalescer', { getAbortRegistry: () => registry }] as [string, unknown];
+
   it('提供 CommandRegistry（会话命令 + stats）', async () => {
-    const r = await runModule(commandsModule, { ownerId: 'o1' }, [['al:memory', { getTokenStats: () => ({}) }]]);
+    const r = await runModule(commandsModule, { ownerId: 'o1' }, [
+      ['al:memory', { getTokenStats: () => ({}) }],
+      coalescer({ isInFlight: () => false, abort() {} }),
+    ]);
     expect(r.get('al:commands')).toBeInstanceOf(CommandRegistry);
+    await r.stop();
+  });
+
+  it('★ /stop 真的 abort，并**如实回话**（KI-7：以前无论有没有在飞都回「已停止」）', async () => {
+    const state = { inFlight: true, aborted: [] as string[] };
+    const r = await runModule(commandsModule, { ownerId: 'o1' }, [
+      ['al:memory', { getTokenStats: () => ({}) }],
+      coalescer({
+        isInFlight: () => state.inFlight,
+        abort: (id: string) => { state.aborted.push(id); },
+      }),
+    ]);
+    const cmds = r.get<CommandRegistry>('al:commands')!;
+    const event = { unifiedMsgOrigin: 'qq:private:abc' } as never;
+
+    const reply1 = await cmds.execute(event, '/stop');
+    expect(state.aborted, '/stop 必须真的 abort，而不是只打日志').toEqual(['qq:private:abc']);
+    expect(reply1 ?? '').toContain('已中断');
+
+    state.inFlight = false;
+    const reply2 = await cmds.execute(event, '/stop');
+    expect(reply2 ?? '').toContain('没有正在生成');
+
     await r.stop();
   });
 });

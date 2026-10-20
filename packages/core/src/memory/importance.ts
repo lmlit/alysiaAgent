@@ -48,6 +48,46 @@ const MOOD_WORD_INTENSITY: Record<string, number> = {
 /** 词表未收录时的强度（不判 0 —— 有情绪标记本身就有信息） */
 const MOOD_WORD_FALLBACK = 0.5;
 
+// ── 情绪**正负**（valence）—— ★ 2026-10-20，change: `wire-retention-bias-into-recall` ──
+//
+// ⚠️ **这是一条与强度完全不同的轴，别合并**：
+//   - 强度（arousal，上面的 `MOOD_WORD_INTENSITY`）决定"值不值得记"
+//     —— 所以「难过」和「雀跃」都高分；设计上刻意不看正负。
+//   - 正负（valence，下面两张表）只服务 `retention_bias`
+//     —— 「念旧/记仇」是**挑哪一类更愿意想起**，与记忆强度无关。
+//
+// 合并它们的后果：把「难过」当低强度 ⇒ 负面时刻进不了长期记忆 ——
+// 那不是"偏向正面"，是**失忆**。
+
+const MOOD_WORD_POSITIVE = new Set([
+  '开心', '高兴', '兴奋', '雀跃', '安心', '温柔', '温暖', '舒缓', '热闹', 'warm', '平静', '安静',
+]);
+const MOOD_WORD_NEGATIVE = new Set([
+  '低落', '失落', '担心', '生气', '难过', '委屈', '烦躁', '焦虑', '孤独', '疲惫',
+]);
+
+/**
+ * 把 `mood_delta` 归一成**情绪正负**：`1` 正 / `-1` 负 / `0` 判不出来。
+ *
+ * ★ 判不出来一律返回 **0**（中立），**不猜** —— `retention_bias` 只在
+ *   有明确正负时才调整排序；没 valence 的记忆保持原分。
+ *   这正是"先造数据源，再接旋钮"的顺序：没有依据就不许偏移。
+ */
+export function moodDeltaToPolarity(raw: string | null | undefined): -1 | 0 | 1 {
+  const s = String(raw ?? '').trim();
+  if (!s) return 0;
+
+  const n = Number(s.replace(/^\+/, ''));
+  if (Number.isFinite(n)) return n > 0 ? 1 : n < 0 ? -1 : 0;
+
+  if (MOOD_WORD_POSITIVE.has(s)) return 1;
+  if (MOOD_WORD_NEGATIVE.has(s)) return -1;
+  // 子串匹配（"有点难过" 命中 "难过"）；负向优先判，避免"不太开心"被当正向
+  for (const w of MOOD_WORD_NEGATIVE) if (s.includes(w)) return -1;
+  for (const w of MOOD_WORD_POSITIVE) if (s.includes(w)) return 1;
+  return 0;
+}
+
 /**
  * 把 `mood_delta` 归一成情绪强度 0~1。
  *

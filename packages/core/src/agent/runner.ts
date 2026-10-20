@@ -8,8 +8,18 @@ import type { ToolRegistry } from '../tools/registry.js';
 import { MessageChain } from '../platform/chain.js';
 import { stripToolCallText } from '../utils/tool-call-strip.js';
 import { logger } from '../utils/logger.js';
+// ★ 2026-10-20（change: observe-and-hold-context-compaction）
+import { decideTruncation } from './truncation-policy.js';
+import { isCompactionFailed } from '../memory/compaction-status.js';
+import { warnThrottled } from '../utils/write-trace.js';
 
 const DEFAULT_MAX_STEPS = 10;
+
+/** ★ 2026-10-20（put-dropped-turns-back）：攒够多少才压一次（防每步一次 LLM 调用） */
+const COMPACT_MIN_TURNS = 4;
+const COMPACT_MIN_CHARS = 1200;
+/** 摘要硬上限（超了截断）：它是回忆，不是档案 */
+const COMPACT_MAX_SUMMARY_CHARS = 800;
 
 export class AgentRunner {
   private hooks: AgentHooks;
@@ -23,6 +33,86 @@ export class AgentRunner {
   ) {
     this.hooks = hooks ?? new NoopAgentHooks();
     this.maxSteps = maxSteps ?? DEFAULT_MAX_STEPS;
+  }
+
+  /**
+   * 按截断策略处理上下文（★ 2026-10-20）。
+   *
+   * 三种结局见 `truncation-policy.ts`；这里只负责执行 + 留痕。
+   * ⚠️ **不截断**只在"摘要压缩失败"时发生，且有硬上限兜底 —— 正常路径零变化。
+   */
+  private async applyTruncation(ctx: AgentContext, maxTokens: number, sessionId: string): Promise<void> {
+    const estimated = ctx.estimateTokens();
+    const decision = decideTruncation({
+      maxTokens,
+      estimatedTokens: estimated,
+      compactionFailed: isCompactionFailed(sessionId),
+    });
+
+    if (decision.action === 'truncate') {
+      // ★ 2026-10-20（put-dropped-turns-back）：接住被丢的轮次，攒批后压成回忆
+      const dropped = ctx.truncate(maxTokens);
+      ctx.addDropped(dropped);
+      if (decision.reason === 'over-hard-ceiling') {
+        logger.warn(
+          `[AgentRunner] 压缩失败但仍超硬上限（估算 ${Math.round(estimated)} > ${maxTokens * 2}）→ 强制截断` +
+          ` session=${sessionId.slice(-12)}`,
+        );
+      }
+      await this.compressDroppedTurns(ctx, sessionId);
+      return;
+    }
+
+    // hold：保住"还没被摘要覆盖"的对话。限频，否则每步一条会淹掉日志
+    warnThrottled(
+      'runner-hold-truncate',
+      `[AgentRunner] 摘要压缩失败中 → **本轮不截断**（估算 ${Math.round(estimated)} tokens，上限 ${maxTokens}）` +
+      ` session=${sessionId.slice(-12)}`,
+    );
+  }
+
+  /**
+   * ★ 2026-10-20（change: `put-dropped-turns-back`）：把攒够的被丢弃轮次压成一段回忆插回头部。
+   *
+   * 四条约束：
+   * ① **攒批**：不足 `COMPACT_MIN_TURNS` 条且不足 `COMPACT_MIN_CHARS` 字 → 再等等
+   *    （长会话每步丢 1 条，逐条压会一步一次 LLM 调用）
+   * ② **不实现就不做**：hooks 没提供 `summarizeDroppedTurns` ⇒ 保持旧行为（直接丢）
+   * ③ **失败不阻塞**：压缩失败只留痕（warn，限频），本轮照常继续
+   * ④ **累积摘要**：下次把旧摘要 + 新丢弃合并，而不是不断追加新块
+   */
+  private async compressDroppedTurns(ctx: AgentContext, sessionId: string): Promise<void> {
+    if (!this.hooks.summarizeDroppedTurns) return;
+    if (ctx.droppedBufferLength() === 0) return;
+    if (ctx.droppedBufferLength() < COMPACT_MIN_TURNS && ctx.droppedBufferChars() < COMPACT_MIN_CHARS) {
+      return;
+    }
+
+    const turns = ctx.takeDroppedBuffer().map(m => ({ role: m.role, content: m.content }));
+    const previousSummary = ctx.getContextSummary();
+    const started = Date.now();
+    try {
+      const text = await this.hooks.summarizeDroppedTurns({ turns, previousSummary });
+      const trimmed = String(text ?? '').trim();
+      if (!trimmed) {
+        warnThrottled(
+          'runner-compact-empty',
+          `[AgentRunner] 上下文压缩返回空 → 这批轮次未插回（${turns.length} 条，session=${sessionId.slice(-12)}）`,
+        );
+        return;
+      }
+      ctx.setContextSummary(trimmed.slice(0, COMPACT_MAX_SUMMARY_CHARS));
+      logger.info(
+        `[AgentRunner] 上下文压缩：${turns.length} 条轮次 → ${trimmed.length} 字回忆` +
+        `${previousSummary ? '（与旧摘要合并）' : ''} (${Date.now() - started}ms) session=${sessionId.slice(-12)}`,
+      );
+    } catch (err: any) {
+      // 压缩失败 = 这批真的丢了。必须留痕（否则"丢了"和"没丢"同形）
+      warnThrottled(
+        'runner-compact-failed',
+        `[AgentRunner] 上下文压缩失败 → ${turns.length} 条轮次**已丢弃**：${err?.message ?? err}`,
+      );
+    }
   }
 
   async run(
@@ -62,9 +152,10 @@ export class AgentRunner {
       stepCount++;
 
       // Truncate based on default provider's max context tokens
+      // ★ 2026-10-20：改走策略（压缩失败时暂不截断），见 applyTruncation
       const provider = this.providerManager.getDefault();
       const maxTokens = provider?.config?.maxContextTokens || 16000;
-      ctx.truncate(maxTokens);
+      await this.applyTruncation(ctx, maxTokens, sessionId);
 
       const req = {
         prompt,
@@ -237,7 +328,8 @@ export class AgentRunner {
 
       const provider = this.providerManager.getDefault();
       const maxTokens = provider?.config?.maxContextTokens || 16000;
-      ctx.truncate(maxTokens);
+      // ★ 2026-10-20：流式路径与 run() 用**同一条**策略（别让两条链路行为分叉）
+      await this.applyTruncation(ctx, maxTokens, sessionId);
 
       const req = {
         prompt,

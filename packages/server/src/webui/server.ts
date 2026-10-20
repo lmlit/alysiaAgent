@@ -34,7 +34,7 @@ import Fastify from 'fastify';
 import type { AlysiaCore } from '@alysia/core';
 import { logger } from '@alysia/core';
 import { registerChatRoutes } from './chat.js';
-import { MAX_INGEST_BATCH, validateIngestEvent, normalizeIngestEvent } from '../ingest.js';
+import { MAX_INGEST_BATCH, validateIngestEvent, normalizeIngestEvent, UNKNOWN_SESSION_ID } from '../ingest.js';
 import type { MemoryEvent } from '@alysia/core/memory';
 import { computeTaskWindow } from '@alysia/core/memory';
 import { PHASE_PROMPTS, type LoopPhase } from '@alysia/core/memory';
@@ -415,10 +415,41 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
     return { ok: true };
   });
 
-  app.post('/api/sessions/:id/extract', async (req) => {
+  /**
+   * ★ 2026-10-20（change: guard-session-extract-endpoint；KI-18）：**入口校验**。
+   *
+   * 此前这条路由对 `id` 一个字都不看，而同文件邻居都有边界（`/api/ingest` 只收 `dsh:`、
+   * archive/delete 只收 `webui:`）—— 于是任何过了鉴权的调用方都能对**任意会话**触发结算
+   * （摘要 + 画像提取 + 人格确认，全是真 LLM 调用，且摘要槽正是已爆三次预算事故的那个）。
+   *
+   * 两道闸，**刻意只收到"不能是垃圾"为止**：
+   *   ① 形状：非空、不含 `/`、不是 `dsh:unknown`（复用 ingest 的常量，不新造字符串）
+   *   ② 存在性：零事件 ⇒ 404 响亮失败
+   *
+   * ⚠️ **不加**「只允许 `dsh:` 前缀」：extract 同时服务 WebUI 会话的手动提取，
+   *   按来源一刀切会砍掉合法用法 —— 这也正是当初没加校验的合理部分。
+   */
+  app.post('/api/sessions/:id/extract', async (req, reply) => {
     const { id } = req.params as { id: string };
-    const result = await core.memoryManager.extractProfile(id);
-    return result;
+    const sid = String(id ?? '').trim();
+    if (!sid || sid.includes('/')) {
+      return reply.code(400).send({ ok: false, error: '会话 id 不合法（空或含 /）' });
+    }
+    if (sid === UNKNOWN_SESSION_ID) {
+      return reply.code(400).send({
+        ok: false,
+        error: '拒绝对 dsh:unknown 结算：它不是真实会话 id（适配器拿不到 session.id 时的退化桶），'
+          + '结算它会把多个真实会话的内容混进同一份摘要与画像',
+      });
+    }
+    // 存在性：判据是"有没有事件"，不是"会不会产出新事实"（后者是结算结果，不能当入口判据）
+    if (core.memoryManager.countSessionEvents(sid) === 0) {
+      return reply.code(404).send({
+        ok: false,
+        error: `会话不存在或没有任何事件：${sid} —— 结算不会凭空产出东西，这不等于"提取成功"`,
+      });
+    }
+    return core.memoryManager.extractProfile(sid);
   });
 
   /**

@@ -1,5 +1,7 @@
 // src/memory/engines/PersonaAdapter.ts
 import type { MemoryEvent, PersonaAdjustment } from '../types.js';
+// ★ 2026-10-20（change: `fix-memory-knob-regression`）：记忆旋钮的回归目标要用**各自的默认值**
+import { DEFAULT_MEMORY_CONFIG } from '../types.js';
 import { PersonaStore } from '../stores/PersonaStore.js';
 import type { ILLMService } from '../interfaces/ILLMService.js';
 import { logger } from '../../utils/logger.js';
@@ -14,6 +16,21 @@ const COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
 const MAX_CONSECUTIVE_SAME_DIRECTION = 3;
 const STALE_THRESHOLD_MS = 24 * 60 * 60 * 1000; // 24 hours
 const REGRESSION_AMOUNT = 0.05;
+
+/**
+ * ★ 2026-10-20（change: `fix-memory-knob-regression`）：记忆旋钮的**各自值域**。
+ *
+ * 为什么不能统一 `clamp(-1, 1)`：`decay_rate` / `importance_threshold` /
+ * `recency_weight` / `confirmation_bias` 的语义域都是 **0..1**（"0=不忘"这种），
+ * 负值无定义；只有 `retention_bias` 是双向的（-1 记得坏 / +1 记得好）。
+ */
+const MEMORY_KNOB_BOUNDS: Record<string, [number, number]> = {
+  retention_bias: [-1, 1],
+  decay_rate: [0, 1],
+  importance_threshold: [0, 1],
+  recency_weight: [0, 1],
+  confirmation_bias: [0, 1],
+};
 const EXPLICIT_PATTERN = /不要|别|不许|不可以|必须|以后都|千万别|请务必|我叫|叫我/;
 
 export class PersonaAdapter {
@@ -206,9 +223,22 @@ export class PersonaAdapter {
   }
 
   /**
-   * Regress persona params that haven't been adjusted in 24+ hours back toward 0.
-   * Each stale param moves 0.05 toward the default (0), without overshooting.
+   * Regress persona params that haven't been adjusted in 24+ hours back toward **default**.
+   * Each stale param moves 0.05 toward the default, without overshooting.
    * ★ 8-29 Overlay 豁免：已固化的参数（overlay_notes 有记录）不再回归——稳定演化保留。
+   *
+   * ★ 2026-10-20（change: `fix-memory-knob-regression`；B4）—— **记忆旋钮的回归目标是错的**：
+   *
+   *   旧实现一律「回归到 0」，但记忆旋钮的**默认值不是 0**（`DEFAULT_MEMORY_CONFIG`：
+   *   `decay_rate 0.3` / `importance_threshold 0.4` / `retention_bias 0.2` / …）。
+   *   于是"24 小时后回到默认"实际变成了**把旋钮推向极端**：
+   *     - `decay_rate → 0` = **永不遗忘**（语义是"0=不忘"）
+   *     - `importance_threshold → 0` = **什么都记**（"只记大事"的反面）
+   *     - `retention_bias → 0` = 不再有任何偏向（而她的默认是"微微偏向正面"）
+   *
+   *   这不是"回归"，是**单向漂移**：每次 stale 都往极端挪 0.05，且**没有界线**。
+   *   修法：记忆旋钮回归到 `DEFAULT_MEMORY_CONFIG` 的对应值（分段：按数值维护，
+   *   而不是按 "0" 这个字面量）。
    */
   private regressIfStale(): void {
     const now = Date.now();
@@ -220,6 +250,8 @@ export class PersonaAdapter {
       const persona = this.store.get();
       const paramParts = param.split('.');
       let currentValue = 0;
+      /** 回归目标：人格参数是 0（中性），**记忆旋钮是各自的默认值** */
+      let target = 0;
 
       if (paramParts[0] === 'tone' && paramParts[1]) {
         const tone = JSON.parse(persona.tone);
@@ -233,14 +265,17 @@ export class PersonaAdapter {
       } else if (paramParts[0] === 'memory' && paramParts[1]) {
         const config = this.store.getMemoryConfig();
         currentValue = (config as unknown as Record<string, number>)[paramParts[1]] || 0;
+        // ★ 关键修复：目标是该旋钮的默认值，不是 0
+        target = (DEFAULT_MEMORY_CONFIG as unknown as Record<string, number>)[paramParts[1]] ?? 0;
       }
 
-      if (currentValue === 0) continue;
+      if (currentValue === target) continue;
 
-      // Move 0.05 toward 0, but don't overshoot
-      const regressionDelta = currentValue > 0
-        ? -Math.min(REGRESSION_AMOUNT, Math.abs(currentValue))
-        : Math.min(REGRESSION_AMOUNT, Math.abs(currentValue));
+      // 朝目标挪 REGRESSION_AMOUNT，不越过目标（分段判断，不是简单的正负）
+      const gap = currentValue - target;
+      const regressionDelta = gap > 0
+        ? -Math.min(REGRESSION_AMOUNT, gap)
+        : Math.min(REGRESSION_AMOUNT, -gap);
 
       this.applyToParam(param, regressionDelta);
       this.lastAdjustmentTime.set(param, now);
@@ -248,7 +283,9 @@ export class PersonaAdapter {
       this.store.addAdaptationHint({
         trigger: 'stale_regression',
         adjustment: { [param]: regressionDelta },
-        evidence: 'No signal for >24h, regressed toward default',
+        evidence: target === 0
+          ? 'No signal for >24h, regressed toward default'
+          : `No signal for >24h, regressed toward default (${target})`,
         applied_at: new Date().toISOString(),
         // ★ add-memory-channel-field：**系统发起**的回归，不是任何用户渠道
         channel: 'system' as MemoryChannel,
@@ -275,9 +312,15 @@ export class PersonaAdapter {
     } else if (paramParts[0] === 'memory' && paramParts[1]) {
       // v2: 记忆人格旋钮
       const config = this.store.getMemoryConfig();
-      const key = paramParts[1] as keyof typeof config;
+      const key = paramParts[1];
       if (key in config) {
-        (config as unknown as Record<string, number>)[key] = this.clamp(((config as unknown as Record<string, number>)[key] || 0) + delta);
+        const cur = (config as unknown as Record<string, number>)[key] || 0;
+        // ★ 2026-10-20（change: `fix-memory-knob-regression`）：**按各自值域钳制**。
+        //   旧实现走通用的 `clamp(-1,1)`，于是 `decay_rate` 能被调到 **-0.4**
+        //   —— 而它的语义是 0..1（"0=不忘"），负值没有定义，下游只在个别地方
+        //   `Math.max(decay_rate, 0.05)` 兜了一下，别处照样吃负值。
+        const [lo, hi] = MEMORY_KNOB_BOUNDS[key] ?? [-1, 1];
+        (config as unknown as Record<string, number>)[key] = Math.max(lo, Math.min(hi, cur + delta));
         this.store.updateMemoryConfig(config);
       }
     }

@@ -40,11 +40,13 @@ import {
   finalizeNotice,
   MAX_NOTICE_CHARS,
 } from './project-task-result.js';
-import { lifeEventImportance } from './importance.js';
+import { lifeEventImportance, moodDeltaToPolarity } from './importance.js';
 import { WorldbookMatcher } from './engines/WorldbookMatcher.js';
 import { PersonaAdapter } from './engines/PersonaAdapter.js';
 import { ProfileExtractor } from './engines/ProfileExtractor.js';
 import { readWorldviewBlock } from '../persona/loader.js';
+// ★ 2026-10-20（put-dropped-turns-back）：上下文压缩的提示词（与长期记忆的 prompts/memory 分开）
+import { CONTEXT_COMPACT_SYSTEM_PROMPT, CONTEXT_COMPACT_MERGE_SYSTEM_PROMPT } from '../prompts/context.js';
 import { RealtimeProcessor } from './processors/RealtimeProcessor.js';
 import { SessionEndProcessor } from './processors/SessionEndProcessor.js';
 import { CronProcessor } from './processors/CronProcessor.js';
@@ -111,6 +113,23 @@ const TOKEN_STATS_FILE = './data/token_stats.json';
  *  用相对而非绝对，是因为不同来源的文本长度不同、绝对分不可比
  *  （长文本与短查询的嵌入天然更远）—— 绝对阈值会把长文本来源整路误杀。 */
 const RELATIVE_KEEP = 0.7;
+
+/**
+ * ★ 2026-10-20（change: `wire-retention-bias-into-recall`）：`retention_bias` 在召回里的**强度系数**。
+ *
+ * **为什么是 0.1**（这是被单测逼出来的，不是拍的）：
+ *   - 默认 `retention_bias = 0.2` ⇒ 单条最多 **±2%**；一正一负**复利**后约 **4%**
+ *   - 起初写 0.3（单条 ±6%、复利 12.8%），当场被测试否掉：
+ *     **0.8 的偏好记忆能翻掉 0.9 的强匹配** —— 那不叫"微微偏向"
+ *   - 现在的力度只够做**同档内次序微调**（真实分差 <4% 时），
+ *     绝不改变 `RELATIVE_KEEP = 0.7` 的阈值判定，也不改变"哪一路有代表"
+ *   - 想让它更有力就改这里 —— **但那是调参，先看 `[Recall] 极性调整×N` 的分布**
+ *
+ * ⚠️ 只作用于**有 valence** 的记忆（新生活事件的 `metadata.polarity`）；
+ * 存量向量没有该字段 ⇒ 完全不受影响（不追溯改排序）。
+ * ⚠️ 这是**路内**调整，不是跨来源加权 —— 见 spec §7 的通用判据。
+ */
+const RETENTION_BIAS_IN_RECALL = 0.1;
 
 function chunkText(text: string, size = KB_CHUNK_SIZE, overlap = KB_CHUNK_OVERLAP): string[] {
   if (text.length <= size) return [text];
@@ -608,8 +627,10 @@ export class MemoryManager {
   }
 
   /** ★ 记录 AI 生活事件 + 更新当前活动。返回事件 id（LifeService 推送成功后标记 delivered 用）
-   *  ★ 8-27 扩展 origin（'regular' | 'followup' 对话余波） */
-  recordLifeEvent(input: { type: 'chat' | 'internal'; content: string; moodDelta?: string; referenceEventId?: string; wbEntryId?: string; origin?: 'regular' | 'followup' }): string {
+   *  ★ 8-27 扩展 origin（'regular' | 'followup' 对话余波）
+   *  ★ 2026-10-20（change: let-her-decline-a-day）：再扩展 'decline' ——
+   *    **她这一轮选择不说话时写下的理由**（拒绝权的留痕，内部分析可召回） */
+  recordLifeEvent(input: { type: 'chat' | 'internal'; content: string; moodDelta?: string; referenceEventId?: string; wbEntryId?: string; origin?: 'regular' | 'followup' | 'decline' }): string {
     const now = new Date().toISOString();
     const id = `life-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
     this.lifeStore.addEvent({
@@ -631,12 +652,18 @@ export class MemoryManager {
         moodDelta: input.moodDelta,
         origin: input.origin,
       });
+      // ★ 2026-10-20（change: `wire-retention-bias-into-recall`）：**正负**（valence）单独一列。
+      //   重要度取的是强度（arousal），**丢掉正负**；而 `retention_bias`
+      //   （-1 只记坏的 / +1 只记好的）要的正是正负。没有它，旋钮只能空转。
+      //   ⚠️ 只对**新事件**生效：存量向量没有 polarity ⇒ 不调整（不追溯改排序）。
+      const polarity = moodDeltaToPolarity(input.moodDelta);
       this.embedService.embed(input.content)
         .then(vector => this.vectorStore!.insert(id, vector, input.content, {
           source: 'life_event',
           type: input.type,
           created_at: now,
           importance,
+          polarity,
         }))
         .catch((err: any) => logger.warn(`[Life] event embed failed: ${err.message}`));
     }
@@ -972,6 +999,7 @@ export class MemoryManager {
         ` → 过阈值 ${this.fmtCounts(merged.keptCounts)}` +
         ` → 选中 ${this.fmtCounts(merged.pickedCounts)}` +
         ` | 重要度加分×${merged.boosted}` +
+        ` | 极性调整×${merged.polarityAdjusted}` +
         ` | ${Date.now() - recallStart}ms`,
       );
     } catch (err: any) {
@@ -1014,10 +1042,11 @@ export class MemoryManager {
   private applyKnobsToRetrieved(
     retrieved: SearchResult[],
     knobs: MemoryConfig,
-  ): { results: SearchResult[]; boosted: number } {
+  ): { results: SearchResult[]; boosted: number; polarityAdjusted: number } {
     const now = Date.now();
     const halfLifeHours = 24 / Math.max(knobs.decay_rate, 0.05);
     let boosted = 0;
+    let polarityAdjusted = 0;
     const scored = retrieved.map(r => {
       let score = r.score;
       // recency 衰减：metadata.created_at/updated_at（事件/会话向量带；知识无 → 不衰减）
@@ -1035,9 +1064,23 @@ export class MemoryManager {
         score += 0.15;
         boosted++;
       }
+      // ★ 2026-10-20（change: `wire-retention-bias-into-recall`）：**retention_bias 接线**。
+      //
+      //   语义（spec §2.2）：`retention_bias` 正 = 更愿意想起**好的**，负 = 更愿意想起**坏的**。
+      //   只在**有 valence** 的记忆上生效（`metadata.polarity`，仅新生活事件带）；
+      //   判不出正负（0 / 缺失）⇒ **不动分**（不猜）。
+      //
+      //   系数 0.3 是**保守值**：默认 `retention_bias=0.2` ⇒ 正向记忆最多 +6%、
+      //   负向 -6%，不足以翻掉 `RELATIVE_KEEP=0.7` 的阈值判定，只微调同档内次序。
+      //   ⚠️ 这是**路内**调整：不允许拿它做跨来源加权（见 spec §7 的通用判据）。
+      const pol = r.metadata?.polarity;
+      if (typeof pol === 'number' && pol !== 0 && knobs.retention_bias !== 0) {
+        score = score * (1 + knobs.retention_bias * pol * RETENTION_BIAS_IN_RECALL);
+        polarityAdjusted++;
+      }
       return { ...r, score };
     });
-    return { results: scored.sort((a, b) => b.score - a.score), boosted };
+    return { results: scored.sort((a, b) => b.score - a.score), boosted, polarityAdjusted };
   }
 
   /**
@@ -1074,20 +1117,24 @@ export class MemoryManager {
     pickedCounts: Record<string, number>;
     /** `importance > 阈值 → +0.15` 的命中次数（观测用；接线前该值恒为 0） */
     boosted: number;
+    /** `retention_bias` 按 valence 调整过的条数（观测用；没 polarity 的老记忆不计） */
+    polarityAdjusted: number;
   } {
     const candidateCounts: Record<string, number> = {};
     const keptCounts: Record<string, number> = {};
     const pickedCounts: Record<string, number> = {};
     let boosted = 0;
+    let polarityAdjusted = 0;
 
     if (limit <= 0) {
-      return { picked: [], candidateCounts, keptCounts, pickedCounts, boosted };
+      return { picked: [], candidateCounts, keptCounts, pickedCounts, boosted, polarityAdjusted };
     }
 
     const prepared = groups.map(g => {
       candidateCounts[g.source] = g.items.length;
-      const { results: scored, boosted: b } = this.applyKnobsToRetrieved(g.items, knobs);
+      const { results: scored, boosted: b, polarityAdjusted: p } = this.applyKnobsToRetrieved(g.items, knobs);
       boosted += b;
+      polarityAdjusted += p;
       if (scored.length === 0) {
         keptCounts[g.source] = 0;
         return { source: g.source, items: [] as SearchResult[] };
@@ -1138,7 +1185,7 @@ export class MemoryManager {
       const src = String(r.metadata?.source ?? 'unknown');
       pickedCounts[src] = (pickedCounts[src] ?? 0) + 1;
     }
-    return { picked: final, candidateCounts, keptCounts, pickedCounts, boosted };
+    return { picked: final, candidateCounts, keptCounts, pickedCounts, boosted, polarityAdjusted };
   }
 
   /** 观测日志用的紧凑计数格式：`conv=2 chat=3 life=1` */
@@ -1262,6 +1309,35 @@ export class MemoryManager {
     }
     // 会话结束自动恢复隐私模式
     this.privacyMode = 'off';
+  }
+
+  /**
+   * ★ 2026-10-20（change: `put-dropped-turns-back`）：把**被上下文压缩丢弃的轮次**压成一段回忆。
+   *
+   * 与 `onSessionEnd` 的区别（**别混**）：
+   *   - `onSessionEnd` 是**长期记忆**（会话结束/超阈值结算，进 conversations 表）
+   *   - 本方法是**当前会话的上下文压缩**（结果插回 prompt 头部，不落库、不改状态）
+   *
+   * 输入输出都是纯数据（`turns` / `previousSummary` → 文本），调用方（`AgentHooks`）决定用途。
+   *
+   * ⚠️ **必须走 `profile.deepRewrite` 槽（纯文本）**：默认槽是 `profile.extract`
+   * （`response_format: json_object`），而本 prompt 里没有 "json" 字样 ⇒ 直接 API 400。
+   * 这是 2026-10-01 那次事故的同一个坑，别重犯。
+   */
+  async summarizeContextSlice(input: {
+    turns: Array<{ role: string; content: string }>;
+    previousSummary?: string;
+  }): Promise<string> {
+    const dialogue = input.turns
+      .map(t => `${t.role === 'user' ? '用户' : t.role === 'assistant' ? '昔涟' : t.role}: ${t.content}`)
+      .join('\n');
+    const system = input.previousSummary
+      ? CONTEXT_COMPACT_MERGE_SYSTEM_PROMPT
+      : CONTEXT_COMPACT_SYSTEM_PROMPT;
+    const user = input.previousSummary
+      ? `【已有摘要】\n${input.previousSummary}\n\n【更晚一些的对话】\n${dialogue}`
+      : `【较早的对话】\n${dialogue}`;
+    return this.llmService.complete(system, user, this.sampling?.profile?.deepRewrite);
   }
 
   /** ★ 8-09 定期归档（修"短对话永不归档"）：24h 内有消息的活跃 session → 摘要归档。
@@ -1860,6 +1936,27 @@ export class MemoryManager {
       logger.warn(`[ProjectTask] 结果记回失败（${input.taskId}）：${err?.message ?? err}`);
       return false;
     }
+  }
+
+  /** ★ 2026-10-20（change: guard-session-extract-endpoint；KI-18）：某会话的**事件条数**。
+   *  只读、纯数据（「Web 端接口兼容」硬约束）。
+   *
+   *  **为什么要暴露它**：`POST /api/sessions/:id/extract` 此前对 id 不设防，且会话不存在时
+   *  `extractProfile` 返回 `{factsExtracted:0, summaryGenerated:false}` —— 一个**成功形状的空转**，
+   *  Web 端分不清「这个会话很干净」和「这个会话根本不存在」。
+   *  判据刻意取「有没有事件」而不是「有没有产出新事实」：后者是结算的**结果**，不能当入口判据
+   *  （否则「干净但真实」的会话会被判成不存在）。 */
+  /** ★ 2026-10-20（change: tie-intimacy-to-speech）：**最后一条真人消息**的时间（ISO）。
+   *  只读、纯数据。亲密度档位用它算 idle（⚠️ 已排除 `skip_profile`/`synthetic` 机器注入，
+   *  详见 `EventStore.getLastUserMessageAt` 的三条排除）。
+   *  **禁止**改用 `ai_life_state.updated_at` / 任何 assistant 侧写入当判据 ——
+   *  那些每次推送都会刷新，算出来永远是"刚联系过"。 */
+  getLastUserMessageAt(): string | null {
+    return this.eventStore.getLastUserMessageAt();
+  }
+
+  countSessionEvents(sessionId: string): number {
+    return this.eventStore.countBySession(sessionId);
   }
 
   listSessions(limit: number = 20): Array<{ sessionId: string; messageCount: number; lastActive: string }> {

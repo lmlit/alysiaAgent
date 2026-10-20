@@ -86,3 +86,13 @@ export * from './interfaces/IVectorStore.js';
 export * from './interfaces/IEmbedService.js';
 export * from './interfaces/ILLMService.js';
 export { formatLocalTime, localDateKey, localDateKeyFromISO } from '../utils/time.js';
+// ★ 2026-10-20（change: `tidy-a-class-seams`）：提示词资产**对外可读** ——
+//   验证脚本必须 import，而不是各自复制一份（复制会漂移，且没人知道哪份是真的）。
+//   导出到 barrel 是必需的：server 只能经 `@alysia/core/memory` 拿它
+//   （core 的 package.json exports 不暴露深路径）。
+export {
+  SESSION_SUMMARY_SYSTEM_PROMPT,
+  PROFILE_EXTRACT_SYSTEM_PROMPT,
+  buildCorrectionPrompt,
+  CRON_DEEP_PROFILE_SYSTEM_PROMPT,
+} from '../prompts/memory.js';

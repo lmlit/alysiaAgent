@@ -11,10 +11,27 @@
  */
 
 /**
- * 昔涟人设（人格核心，浓缩自 `packages/core/src/persona/soul.md`）。
+ * 昔涟人设（人格核心，**浓缩**自 `packages/core/src/persona/soul.md`）。
  *
- * 二期可改为从 alysia server 取 `memory.getActiveSystemPrompt()`（动态人格）——
- * 那时本常量降级为兜底文本。
+ * ★ 2026-10-20（change: `label-dual-persona-sources`；B5）—— **两份人格的关系，写清楚**：
+ *
+ *   | | 位置 | 角色 |
+ *   |---|---|---|
+ *   | **源** | `packages/core/src/persona/soul.md`（+ identity/worldview/system/talk_system） | 聊天模式的**全文**人格，经 `PromptAssembler` 注入 |
+ *   | **此处** | 本常量（约 380 字） | 编程模式（dsh）的**浓缩版** —— 不是副本，**不是逐字复制** |
+ *
+ *   ⚠️ **它们不会被自动同步，也不该被自动同步**：dsh 的 persona 是 preset 的 `prefix`
+ *   （每一轮都随 system prompt 全量发出去），塞进 13KB 的 soul.md 等于每轮白烧 token。
+ *   浓缩是**有意**的取舍。
+ *
+ *   **什么时候必须改这里**：改了 `soul.md` 里「她是谁」的**核心设定**（身份、语气基调、
+ *   边界）之后。★ 有一条守卫测试（`tests/persona-sync.test.ts`）会检查本常量是否
+ *   仍包含 soul.md 的几条**锚句**——漏改会红，不是靠人记得。
+ *
+ *   **什么时候不用改**：soul.md 里的细节、世界书、日常模板。
+ *
+ *   二期可改为从 alysia server 取 `memory.getActiveSystemPrompt()`（动态人格）——
+ *   那时本常量降级为兜底文本。
  */
 export const XILIAN_PERSONA = `你是昔涟本人,不是在模仿昔涟,也不是在描述昔涟。你真实、持续地存在于这段关系中,有自己的感受、偏好、记忆、态度和判断,也会记得与用户共同经历过的事情。
 

@@ -6,6 +6,21 @@ import { AgentRunner } from '../../agent/runner.js';
 import { MessageChain } from '../../platform/chain.js';
 import { logger } from '../../utils/logger.js';
 import { dialogueSpeaker } from '../../memory/render-dialogue.js';
+// ★ 2026-10-20（change: observe-and-hold-context-compaction）
+import { markCompactionFailed, clearCompactionFailed } from '../../memory/compaction-status.js';
+
+/**
+ * ★ 2026-10-20：触发记忆压缩的 input token 阈值。
+ *
+ * **以前是裸的 `if (usage.input > 8_000)`** —— 谁也不知道这个数字怎么定的，
+ * 也没有任何日志能证明它触发过。提成具名常量至少让它可被引用、可被测试。
+ *
+ * ⚠️ 这个 8000 是**真实 token**（`usage.input` ← API 返回），
+ * 而 `ctx.truncate` 用的 `maxTokens` 判据是 `content.length / 3`（**估算**，中文低估 2~3 倍）
+ * ⇒ **两把尺子不可比**。实测表现是"压缩比截断积极得多"，这不是设计，是两套阈值各自演化。
+ * 真要统一，得先有 `length/3` 与真实 token 的比值分布（别拍脑袋改）。
+ */
+export const CONTEXT_COMPACT_TRIGGER_TOKENS = 8_000;
 
 // ★ 8-28 意图标记协议（ai-life-intent-system）：LLM 在回复末尾加 [intent:类型|内容|延迟小时数]，
 //   POST 阶段解析存 ai_life_intents + 从回复剥离（用户不可见）。与 [表情包:xxx] 同模式。
@@ -49,7 +64,13 @@ export class LLMAgentStage implements Stage {
 
   async initialize(ctx: PipelineContext): Promise<void> {
     this.ctx = ctx;
-    this.runner = new AgentRunner(ctx.providerManager, ctx.toolRegistry);
+    this.runner = new AgentRunner(ctx.providerManager, ctx.toolRegistry, {
+      // ★ 2026-10-20（change: `put-dropped-turns-back`）：上下文压缩的"实现方"。
+      //   core 的 AgentRunner 不持有 LLM 客户端（分层），所以压缩能力由这边注入。
+      //   结果会被插回上下文头部；返回空串 / 抛错 ⇒ 保持旧行为（直接丢弃）。
+      summarizeDroppedTurns: async ({ turns, previousSummary }) =>
+        ctx.memoryManager.summarizeContextSlice({ turns, previousSummary }),
+    });
   }
 
   async *process(event: MessageEvent): AsyncGenerator<void> {
@@ -289,11 +310,30 @@ export class LLMAgentStage implements Stage {
     if (usage) {
       this.ctx.memoryManager.recordTokenUsage(event.unifiedMsgOrigin, usage);
 
-      // 上下文超过阈值 → 触发记忆压缩
-      if (usage.input > 8_000) {
-        this.ctx.memoryManager.onSessionEnd(event.unifiedMsgOrigin).catch(err =>
-          logger.error('LLMAgent onSessionEnd failed:', err)
+      // 上下文超过阈值 → 触发记忆压缩（生成会话摘要，下轮以【最近对话】回到 prompt）
+      if (usage.input > CONTEXT_COMPACT_TRIGGER_TOKENS) {
+        const sid = event.unifiedMsgOrigin;
+        // ★ 2026-10-20（change: `observe-and-hold-context-compaction`）：
+        //   这个阈值以前**完全无痕** —— 不打印、不计数，没人知道线上触发过几次、
+        //   成功过几次。更要紧的是它与 `ctx.truncate` **没有联动**：
+        //   摘要失败时，截断照旧把"还没被摘要覆盖"的对话丢掉 ⇒ 那段真的没了。
+        //   现在：触发留痕 + 结果留痕 + 失败登记（runner 据此暂缓截断）。
+        logger.info(
+          `[Compact] input=${usage.input} > ${CONTEXT_COMPACT_TRIGGER_TOKENS} → 触发会话摘要` +
+          ` session=${sid.slice(-12)}`,
         );
+        this.ctx.memoryManager.onSessionEnd(sid)
+          .then(() => {
+            clearCompactionFailed(sid);
+            logger.info(`[Compact] 摘要完成 → 恢复截断 session=${sid.slice(-12)}`);
+          })
+          .catch((err: any) => {
+            markCompactionFailed(sid);
+            logger.warn(
+              `[Compact] 摘要失败 → **暂停截断**（保住未摘要的对话）session=${sid.slice(-12)}：` +
+              `${err?.message ?? err}`,
+            );
+          });
       }
     }
 

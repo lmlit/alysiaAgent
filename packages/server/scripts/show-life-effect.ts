@@ -59,6 +59,9 @@ async function main() {
       return ctx;
     })(),
     sessionId: 'life-show',
+    // ⚠️ ★ 2026-10-20（change: `tidy-a-class-seams`）：**故意只留首句**的诊断变体 ——
+    //   本脚本的目的是"把注入的上下文原样打出来看看"，提示词压到最短，
+    //   免得它自身的长约束盖过要观察的上下文。**不等于**生产 `LIFE_EVENT_PROMPT`。
     systemPrompt: '你是昔涟，此刻你正过着独属于自己的生活。',
     responseFormat: 'json',
     sampling: { ...DEFAULT_SAMPLING.life.generateEvent },

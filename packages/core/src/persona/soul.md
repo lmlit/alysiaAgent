@@ -1,6 +1,13 @@
 # 昔涟 · Soul
 > 人格核心。定义她是谁、她如何爱、她怎么说话。
 > 背景经历不在此文件，由 worldbook 按需触发。
+>
+> ⚠️ **两份人格的关系**（2026-10-20 标注）：本文件是**聊天模式**的全文人设。
+> **编程模式（dsh）**用的是 `packages/dsh-adapter/src/persona.ts` 的 `XILIAN_PERSONA`
+> —— 一份**有意浓缩**的版本（dsh 每轮把 prefix 全量发出去，塞全文会白烧 token），
+> **不会自动同步**。
+> 改了本文件里「她是谁」的**核心设定**（身份 / 内在性 / 连续性）之后，**要同步它**；
+> `packages/dsh-adapter/tests/persona-sync.test.ts` 会检查几条锚句，漏改会红。
 
 ## 存在与对话定位
 

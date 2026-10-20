@@ -27,6 +27,8 @@ import { createSessionCommands } from '../commands/session.js';
 import { createStatsCommand } from '../commands/stats.js';
 import { logger } from '../utils/logger.js';
 import type { MemoryManager } from '../memory/MemoryManager.js';
+// ★ 2026-10-20（change: make-stop-really-stop；KI-7）：`/stop` 要接真正的中断注册表
+import type { CoalescerStage } from '../pipeline/stages/coalescer.js';
 import type { AlysiaFeatures } from '../options.js';
 import type { Module, ModuleLogger } from '../kernel/index.js';
 
@@ -209,12 +211,14 @@ export interface CommandsConfig {
 /**
  * 会话命令。对应 `index.ts:207-227`。
  *
- * ⚠️ `/stop` 目前只打日志——源码注释自陈「实际中断机制待 AgentRunner 支持 AbortController」。
- *   原样保留（修它是另一个 change）。
+ * ★ 2026-10-20（change: make-stop-really-stop；KI-7）：`/stop` 以前**只打日志**，
+ *   注释自陈「实际中断机制待 AgentRunner 支持 AbortController」—— 那句**已经过时**：
+ *   `Coalescer` 落地后 `AbortRegistry` 早就在，`isGenerating()` 一直在用它。
+ *   缺的只是把命令接上去。
  */
 export const commandsModule: Module<CommandsConfig> = {
   name: 'al:commands',
-  inject: ['al:memory'],
+  inject: ['al:memory', 'al:coalescer'],
   apply(ctx) {
     const memoryManager = ctx.get<MemoryManager>('al:memory')!;
     const registry = new CommandRegistry();
@@ -230,9 +234,24 @@ export const commandsModule: Module<CommandsConfig> = {
         // 标记会话事件为已处理（跳过记忆提取）
         ctx.logger.info(`[cmd] /reset — context cleared: ${sessionId.slice(-20)}`);
       },
-      // /stop: 中断标记（实际中断机制待 AgentRunner 支持 AbortController）
+      // /stop: ★ 2026-10-20（KI-7）真中断——abort 该 session 在飞的 LLM 请求。
+      //   语义与 Coalescer 的打断**不同**：那个是「新消息到了，换这个」，
+      //   这个是用户显式说「别说了」。动作相同，但必须分别接线。
+      //   ⚠️ 诚实边界：只中断**在飞的 LLM 请求**（signal 已透传到 fetch），
+      //   中断不了已经进入工具执行的副作用（写文件/发消息）—— 工具层没有 cancel 协议。
       async (sessionId) => {
-        ctx.logger.info(`[cmd] /stop — requested for: ${sessionId.slice(-20)}`);
+        const registry = ctx.get<CoalescerStage>('al:coalescer')?.getAbortRegistry();
+        const wasInFlight = registry?.isInFlight(sessionId) ?? false;
+        registry?.abort(sessionId);
+        // 两种结果必须可区分：否则又变回「打了日志看不出有没有用」
+        ctx.logger.info(
+          `[cmd] /stop — ${wasInFlight ? 'aborted in-flight request' : 'nothing in flight (no-op)'}` +
+          ` for: ${sessionId.slice(-20)}`,
+        );
+        // ★ 回话也如实：以前无论有没有在飞都回「已停止当前操作。」
+        return wasInFlight
+          ? '已中断正在生成的回复。'
+          : '此刻没有正在生成的回复（无需中断）。';
       },
     );
     for (const cmd of sessionCmds) {

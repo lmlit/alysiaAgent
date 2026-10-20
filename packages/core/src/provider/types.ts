@@ -48,6 +48,16 @@ export interface ProviderRequest {
   /** ★ 8-10 打断：外部 AbortSignal（Coalescer 打断在飞请求用）。
    *  与内部 60s timeout 组合；signal 已 aborted 时请求立即中止且 fallback 不切 provider。 */
   signal?: AbortSignal;
+  /**
+   * ★ 2026-10-20（change: `let-memory-use-provider`）：**按请求覆盖超时**（毫秒）。
+   *
+   * 为什么需要：聊天链路是**交互式**（60s 够），记忆链路是**批处理**
+   * （`profile.extract` 4096 tokens 的结构化 JSON，已观测合法耗时 29.7s）——
+   * 统一成 60s 会把记忆链路的合法长调用判死。
+   *
+   * 缺省 `60000`（**行为不变**）；只有显式传入才改。
+   */
+  timeoutMs?: number;
 }
 
 import type { SamplingSlot } from './sampling.js';

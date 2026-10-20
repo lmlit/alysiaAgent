@@ -9,6 +9,11 @@ import { logger } from '../../utils/logger.js';
 import { parseLLMJson } from '../../utils/llm-json.js';
 // ★ add-memory-channel-field：事实条目的渠道派生（写入时落库）
 import { channelOfSession } from '../../utils/channel.js';
+// ★ 2026-10-20（change: collect-memory-prompts）：提示词资产已外置（逐字搬移，零改动）
+import {
+  PROFILE_EXTRACT_SYSTEM_PROMPT,
+  buildCorrectionPrompt,
+} from '../../prompts/memory.js';
 
 export interface CorrectionSignal {
   isCorrection: boolean;
@@ -77,24 +82,8 @@ export class ProfileExtractor {
 
     try {
       const response = await this.llm.complete(
-        '你是一个用户画像提取器。提取关于用户的事实，每条附置信度(0-1)和原文证据。' +
-        'directly_stated: 用户是否直接陈述了这个事实（true=用户亲口说的，如"我周末不上班"；' +
-        'false=你从对话中推断的，如"用户可能从事技术工作"）。不确定则不提取。' +
-        // ★ 8-12 时效性分类（profile-transient-expiry）：瞬时事件不固化进长期画像
-        'transient: 该事实是否为时效性信息（true=仅在某个时间点/短期内成立：某天吃了什么、' +
-        '当天状态、单次事件、梦境、近期近况；false=稳定属性：城市/职业/习惯/偏好/关系/身体状况/长期爱好）。' +
-        // ★ 8-28 分类（profile-facts-classification-confirm）：按语义判类别——
-        //   identity=身份属性（城市/职业/年龄/长期状态）；preference=偏好（口味/兴趣/习惯）；
-        //   status=当前状态（最近在做什么/近况）；relationship=与昔涟的关系/互动模式；general=其他稳定事实。
-        //   状态类（status）过期最快（14 天），身份类最慢（365 天）——判错倾向 identity/general 保守即可。
-        // ★ 8-28 修复（profile-extractor-category-fix）：LLM 实测输出 location/interest/hobby 等
-        //   自由词不遵循枚举 → 全回落 general。强化约束：category 必须且只能从这五个值中选择
-        'category: 必须且只能从这五个值中选择一个——"identity"(身份：城市/职业/年龄/长期状态)、"preference"(偏好：口味/兴趣/习惯/爱好)、"status"(当前状态：最近在做什么/近况)、"relationship"(与昔涟的关系/互动模式)、"general"(其他稳定事实)。' +
-        // ★ 8-28 角色视角（memory-character-perspective）：除用户事实外，同时提取对话中
-        //   反映的**昔涟自己的事**（她的感受/态度/变化/习惯/看法）——结构与用户事实相同。
-        //   示例："昔涟在对话中表现出对下雨的喜爱"、"昔涟最近在学做点心"。
-        //   character_facts 留空数组也可以（不是每段对话都有角色事实）。
-        '返回JSON: {"facts": [{"fact": "...", "confidence": 0.8, "evidence": "...", "directly_stated": true, "transient": false, "category": "preference"}], "character_facts": [{"fact": "...", "confidence": 0.6, "evidence": "...", "category": "preference"}]}',
+        // 提示词见 `prompts/memory.ts`（逐字搬移，注释与约束都在那边）
+        PROFILE_EXTRACT_SYSTEM_PROMPT,
         userMessages
       );
       // parseLLMJson 在 kind === 'json' 时 value 为 any——沿用原实现对该值的宽松处理
@@ -242,15 +231,8 @@ export class ProfileExtractor {
 
     try {
       const response = await this.llm.complete(
-        `你是一个对话理解器。判断用户消息是否在纠正自己之前说过的事实。
-
-当前已知的活跃事实:
-${activeFacts}
-
-如果用户在纠正，指出被纠正的事实关键词(必须能在上述列表中模糊匹配到)和新的事实内容。
-如果不是纠正，返回 isCorrection: false。
-
-返回JSON: {"isCorrection": true/false, "target": "被纠正的关键词", "newFact": "新的事实"}`,
+        // 提示词见 `prompts/memory.ts`（带一处插值，故是函数）
+        buildCorrectionPrompt(activeFacts),
         text
       );
 

@@ -27,6 +27,12 @@ async function main() {
   const life = new LifeService(core.memoryManager, {} as never, {
     ownerOpenid: 'verify-test-no-session',   // 占位：不真推给任何用户
     maxChatPushesPerDay: 0,                  // 上限 0 → chat 也降级不推送
+    // ⚠️ ★ 2026-10-20（change: `tidy-a-class-seams`）：下面的 systemPrompt 是
+    //   **故意简化**的诊断变体（只要 1-2 句 + 最小 JSON schema），
+    //   **不等于**生产提示词 `LIFE_EVENT_PROMPT`（`packages/server/src/prompts/life.ts`，
+    //   含 9 条生活真实感约束 + 事件/对话拆分）。
+    //   别把它"修成"生产副本 —— 这个脚本验的是「链路通不通/JSON 能不能解析」，
+    //   不是「文案质量」。要验后者请跑真实 tick。
     generateEvent: async (context: string) => {
       const resp = await core.providerManager.textChatWithFallback({
         prompt: context,

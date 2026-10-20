@@ -213,6 +213,37 @@ export class EventStore {
     return row.count;
   }
 
+  /**
+   * ★ 2026-10-20（change: `tie-intimacy-to-speech`）：**最后一条「真人」消息**的时间（ISO）。
+   *
+   * 用途：亲密度档位（`LifeService`）用它算「他已经多久没说话」。
+   *
+   * ⚠️ **三个必须的排除，少一个就退化成"永远刚联系过"**：
+   *   ① `role` 在 `payload` 的 JSON 里（不是列），缺省按 `sender_id` 有无推导 ——
+   *      与 `getMessagesBySession` 的判据**保持一致**，否则同一份数据两种读法；
+   *   ② **排除 `skip_profile` / `synthetic`**：dsh 的 runtime-context 快照与"群里 NPC"
+   *      都是 `role:'user'` 的**机器注入**（KI-20 同族），它们会刷新 idle；
+   *   ③ 只认 `type='message'`（生活事件 / 系统事件不是"他说话"）。
+   *
+   * 刻意**不过滤 `archived`**：归档只是让会话从列表消失，他当时说的话仍然是他说的话。
+   */
+  getLastUserMessageAt(): string | null {
+    const row = this.db.prepare(`
+      SELECT MAX(created_at) AS t FROM events
+      WHERE type = 'message'
+        AND (
+          json_extract(payload, '$.role') = 'user'
+          OR (
+            json_extract(payload, '$.role') IS NULL
+            AND json_extract(payload, '$.sender_id') IS NOT NULL
+          )
+        )
+        AND COALESCE(json_extract(payload, '$.skip_profile'), 0) = 0
+        AND COALESCE(json_extract(payload, '$.synthetic'), 0) = 0
+    `).get() as { t: string | null } | undefined;
+    return row?.t ?? null;
+  }
+
   /** 会话列表：按最近活跃排序，返回会话 ID + 消息数 + 最后活跃时间 */
   listSessions(limit: number = 20): Array<{ session_id: string; count: number; last_active: string }> {
     const rows = this.db.prepare(`

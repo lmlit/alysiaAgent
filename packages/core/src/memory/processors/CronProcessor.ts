@@ -8,6 +8,8 @@ import type { ProfileExtractor } from '../engines/ProfileExtractor.js';
 import type { ILLMService } from '../interfaces/ILLMService.js';
 import type { IVectorStore } from '../interfaces/IVectorStore.js';
 import { logger } from '../../utils/logger.js';
+// ★ 2026-10-20（change: collect-memory-prompts）：提示词资产已外置
+import { CRON_DEEP_PROFILE_SYSTEM_PROMPT } from '../../prompts/memory.js';
 
 /**
  * CronProcessor handles periodic maintenance tasks:
@@ -72,7 +74,7 @@ export class CronProcessor {
     try {
       const factText = facts.map(f => `- ${f.fact} (置信度: ${f.confidence}, 证据: "${f.evidence}")`).join('\n');
       const summary = await this.llmService.complete(
-        '你是一个深度画像总结器。根据用户的所有已知事实生成一段综合画像描述。返回纯文本总结。',
+        CRON_DEEP_PROFILE_SYSTEM_PROMPT,
         factText,
       );
 

@@ -41,6 +41,16 @@ export interface LifeOpts {
    *  {"reflection": "...", "adjustments": [{"param","delta","reason"}], "insight": "..."}。
    *  缺失则跳过反思（降级）。 */
   generateReflection?: (context: string) => Promise<string>;
+  /**
+   * ★ 2026-10-20（change: `let-her-decline-a-day`）：**拒绝权的理由生成**。
+   *
+   * 她这一轮可以不想说话（`declineChance` 决定有没有这个机会），
+   * 但**必须留下理由** —— 理由入库为 internal 事件（`origin='decline'`），可被未来召回。
+   * 缺失则拒绝能力整体关闭（降级为"每轮都要说话"）。
+   */
+  generateDecline?: (context: string) => Promise<string>;
+  /** ★ 2026-10-20：拒绝概率（0-1，缺省 0.15）。设 0 或负数 = 关闭拒绝权。 */
+  declineChance?: number;
   /** ★ 今天已主动联系的内容（ProactiveService.getTodayActivity），
    *  注入事件生成器避免重复打扰（如问候后生成"早上好"类事件）。 */
   todayProactive?: () => string;
@@ -49,6 +59,80 @@ export interface LifeOpts {
   /** 去重状态持久化文件 */
   stateFile?: string;
 }
+
+// ── 亲密度 → 推送闸（★ 2026-10-20，change: tie-intimacy-to-speech）──────
+//
+// **为什么要有这一段**：`intimacy` 一直只被**注入 prompt**（spec §11「用途」那句），
+// 而推送判定（冷却 / 日上限 / can_contact）**一个都不读它** ——
+// 亲密度 20 和 90 说话频率一模一样。参数"算了、存了、注入了，但没约束"。
+//
+// **分工**：`mood_value` 管"她**怎么说**"（改人格参数，已有）；
+// `intimacy` 管"她**多主动**"（改推送闸，本段）。两者**不得**互相代管。
+//
+// **只降不升**：档位只能压低配置的每日上限，**永远不能抬高** ——
+// 否则"关系好 ⇒ 可以更吵"，而本项目一直在躲这个方向。
+
+export type IntimacyTierName = 'close' | 'normal' | 'distant' | 'silent';
+
+export interface IntimacyTierDef {
+  tier: IntimacyTierName;
+  /** 日志/字段里给人看的名字 */
+  label: string;
+  /** 进入本档所需的**最低**亲密度（降档判据） */
+  min: number;
+  /** 本档每日 chat 推送上限（只用来**压低**配置值） */
+  cap: number;
+  /** 本档推送冷却（小时）；`silent` 档不推送，故为 0 */
+  cooldownHours: number;
+}
+
+/**
+ * 阈值取 70 / 40 / 25 的依据：
+ * - 亲密度公式 `clamp(30 + 频率 + 时长 + 主动, 10, 100)`，初值 30、下限 10、上限 100
+ * - **70** = "稳定互动"的量级（需要近 7 天持续有来有回）
+ * - **25** = 贴近下限 10 的"快要断线"
+ * - **40** 落在中间，避免在边界抖动（配合下面的 `+5` 迟滞）
+ */
+export const INTIMACY_TIERS: IntimacyTierDef[] = [
+  { tier: 'close', label: '亲近', min: 70, cap: 5, cooldownHours: 1 },
+  { tier: 'normal', label: '平常', min: 40, cap: 3, cooldownHours: 2 },
+  { tier: 'distant', label: '疏远', min: 25, cap: 1, cooldownHours: 4 },
+  { tier: 'silent', label: '久无往来', min: 0, cap: 0, cooldownHours: 0 },
+];
+
+/** 升档要越过阈值这么多个点才生效 —— 防在 40 上下反复横跳（用户会看到频率在抖） */
+export const INTIMACY_UPGRADE_MARGIN = 5;
+
+/** 恢复转折：从 `silent` 回到这个值以上才算「他回来了」 */
+export const INTIMACY_RECOVERY_MIN = 45;
+
+/** 纯函数：给定亲密度落在哪一档（**不含**迟滞，迟滞在 `resolveIntimacyTier`）。 */
+export function intimacyTier(intimacy: number): IntimacyTierDef {
+  const v = Number.isFinite(intimacy) ? intimacy : 30;
+  for (const t of INTIMACY_TIERS) if (v >= t.min) return t;
+  return INTIMACY_TIERS[INTIMACY_TIERS.length - 1];
+}
+
+// ── 拒绝权（★ 2026-10-20，change: let-her-decline-a-day）──────────────
+//
+// 原先 spec §2 的 `P1-6「锁一定续，永不静默停摆」`把"不主动"当**故障**：
+// 系统到点就必须产出一条内容。于是她连"这一轮不想说话"都没有表达渠道。
+//
+// 现在：**调度永不静默停摆（P1-6 的原始担忧保留）+ 她可以选择这一轮不说话**。
+// 两者不矛盾 —— P1-6 防的是**生产故障**（LLM 炸了、锁断了、进程停了），
+// 不是防「她主观上不想开口」。
+//
+// 护栏（缺一个都会变成"她从此不说话了"）：
+//   ① `declineChance` 缺省 0.15（不是 30%：我们的事件节奏是 0.5-8h 一次，不是每天一次）
+//   ② **连续拒绝上限 2** —— 到顶后强制说话
+//   ③ 理由拿不到/太短 ⇒ **fail-open 走正常生成**（拒绝失败不许变成静默）
+//   ④ 拒绝不占推送配额、不推给用户，只写一条 internal 事件
+
+/** 连续拒绝上限：到顶后必须说话（防"她从此不开口"） */
+export const MAX_CONSECUTIVE_DECLINES = 2;
+
+/** 拒绝理由的最短长度（"算了"这种不算理由 —— 必须具体） */
+export const DECLINE_MIN_REASON_CHARS = 6;
 
 interface LifeState {
   lastProactiveAt: number;
@@ -61,6 +145,18 @@ interface LifeState {
   moodNoteAnalyzedAt: number;
   /** ★ 8-31 每日反思（life-reflection-loop）：上次反思的日期 key（跨天触发,失败不置位可重试） */
   reflectionDate: string | null;
+  /** ★ 2026-10-20（tie-intimacy-to-speech）：上一轮解析出的亲密度档位 —— 迟滞的基准 */
+  intimacyTier?: IntimacyTierName;
+  /** ★ 2026-10-20：「最近在忙吗」上次问的时间（**每 7 天最多一次**，持久化防重启刷屏） */
+  lastAskAt?: number;
+  /** ★ 2026-10-20：恢复转折待表达（`silent` → ≥45 时置位，下一次事件生成时消费一次） */
+  recoveryPending?: boolean;
+  /** ★ 2026-10-20：是否真的经历过「久无往来」档 —— 没安静过就不该有「他回来了」 */
+  wasSilent?: boolean;
+  /** ★ 2026-10-20：每日推送计数属于哪一天（`chatPushesToday` 的复位锚点，与摘要成败解耦） */
+  pushCountDate?: string;
+  /** ★ 2026-10-20（let-her-decline-a-day）：连续拒绝次数 —— 到上限必须说话 */
+  consecutiveDeclines?: number;
 }
 
 export class LifeService {
@@ -133,6 +229,13 @@ export class LifeService {
         chatPushesToday: s.chatPushesToday ?? 0,
         moodNoteAnalyzedAt: s.moodNoteAnalyzedAt ?? 0,
         reflectionDate: s.reflectionDate ?? null,
+        // ★ 2026-10-20（tie-intimacy-to-speech）：档位迟滞与「问一次」去重
+        intimacyTier: s.intimacyTier,
+        lastAskAt: s.lastAskAt ?? 0,
+        recoveryPending: s.recoveryPending === true,
+        wasSilent: s.wasSilent === true,
+        pushCountDate: s.pushCountDate,
+        consecutiveDeclines: s.consecutiveDeclines ?? 0,
       };
     } catch { /* fresh start */ }
   }
@@ -147,12 +250,205 @@ export class LifeService {
     }
   }
 
+  // ── 亲密度档位（★ 2026-10-20，change: tie-intimacy-to-speech）──────────
+
+  /**
+   * ★ 2026-10-20（tie-intimacy-to-speech）：**每日推送计数必须按「日期变了」重置**。
+   *
+   * 原先这段复位写在 `maybeGenerateDailySummary` 里，判据是
+   * `lastSummaryDate !== today` —— 而 `lastSummaryDate` 只在**摘要真正生成成功**后才置位。
+   * ⇒ 没有 `generateSummary` 回调、或摘要连续失败时，`lastSummaryDate` 永远是 null
+   * ⇒ **每个 tick 都把 `chatPushesToday` 清零** ⇒ 每日上限形同虚设（实测：上限 3 发了 4 条）。
+   *
+   * 现在复位只认日期本身（`pushCountDate`），与摘要成败**解耦**。
+   */
+  private resetDailyPushCount(now: Date): void {
+    const today = localDateKey(now);
+    if (this.state.pushCountDate === today) return;
+    const had = this.state.chatPushesToday > 0;
+    this.state.pushCountDate = today;
+    if (had) this.state.chatPushesToday = 0;
+    this.saveState();
+  }
+
+  /**
+   * 「他已经多久没说话」——**只认真人**的 user 消息。
+   *
+   * ⚠️ 判据**不许**换成 `ai_life_state.updated_at` 或任何 assistant 侧写入：
+   * 那些每次推送都会刷新 ⇒ 算出来永远是"刚联系过"，
+   * 沉默衰减与档位会一起失效（等价于 whale 那个 `react` 重复记账的坑）。
+   *
+   * 判不出来时返回 0（**不降档**）：宁可保守地按"他刚说过话"处理，
+   * 也不要因为一个查询 bug 让她无缘无故变安静。
+   */
+  private idleDaysSinceUserMessage(now: Date = new Date()): number {
+    try {
+      const at = this.memoryManager.getLastUserMessageAt?.() ?? null;
+      if (!at) return 999; // 库里从没有过真人消息（新库/测试）——按最安静处理
+      const ms = now.getTime() - new Date(at).getTime();
+      return Number.isFinite(ms) ? Math.max(0, Math.floor(ms / 86_400_000)) : 0;
+    } catch (err: any) {
+      logger.warn(`[Life] idle days unavailable: ${err?.message ?? err}`);
+      return 0;
+    }
+  }
+
+  /**
+   * 解析档位：**降档立刻生效，升档要越过阈值 +5**（迟滞），
+   * 并负责留痕与「他回来了」的置位。
+   */
+  private resolveIntimacyTier(now: Date = new Date()): IntimacyTierDef {
+    const intimacy = Number(this.memoryManager.getLifeSnapshot?.()?.intimacy ?? 30);
+    const raw = intimacyTier(intimacy);
+    const prev = this.state.intimacyTier
+      ? INTIMACY_TIERS.find(t => t.tier === this.state.intimacyTier)
+      : undefined;
+
+    let next = raw;
+    if (prev && INTIMACY_TIERS.indexOf(raw) < INTIMACY_TIERS.indexOf(prev)) {
+      // 升档（数组前面 = 更亲近）：不够 margin 就留在原档
+      if (intimacy < raw.min + INTIMACY_UPGRADE_MARGIN) next = prev;
+    }
+
+    // 「他回来了」：只在**真的安静过**之后、且亲密度回到 45 以上，记一次
+    if (next.tier === 'silent') {
+      this.state.wasSilent = true;
+    } else if (this.state.wasSilent && intimacy >= INTIMACY_RECOVERY_MIN && !this.state.recoveryPending) {
+      this.state.recoveryPending = true;
+      this.state.wasSilent = false;
+      logger.info(`[Life] intimacy recovery: 他回来了（亲密度 ${Math.round(intimacy)}）`);
+    }
+
+    if (!prev || next.tier !== prev.tier) {
+      const idle = this.idleDaysSinceUserMessage(now);
+      // ★ 必须留痕：静默的行为变更等于不可见的行为变更
+      logger.info(
+        `[Life] intimacy tier ${prev?.label ?? '（未初始化）'} → ${next.label}` +
+        `（亲密度 ${Math.round(intimacy)}，idle ${idle >= 999 ? '从未说过话' : `${idle} 天`}，` +
+        `日上限 ${prev ? prev.cap : '默认'} → ${next.cap}）`,
+      );
+      this.state.intimacyTier = next.tier;
+      this.saveState();
+    }
+    return next;
+  }
+
+  /**
+   * 注入事件生成器的「关系现状」块。
+   *
+   * 原则：**只给事实，情绪留给她自己写**（spec §11.1 规则 2）。
+   * 顺带消费两个一次性信号：「问一次在忙吗」（7 天冷却）与「他回来了」。
+   */
+  private relationshipBlock(now: Date = new Date()): string {
+    const snapshot = this.memoryManager.getLifeSnapshot?.() ?? {};
+    const intimacy = Number(snapshot.intimacy ?? 30);
+    const tier = intimacyTier(intimacy);
+    const idle = this.idleDaysSinceUserMessage(now);
+    const facts = [`与轻月: ${Math.round(intimacy)}/100（${tier.label}）`];
+    if (idle < 999 && idle >= 3) facts.push(`他已经 ${idle} 天没有主动找你说话了`);
+    if (idle >= 999) facts.push('你们还没有正式说过话');
+
+    const extras: string[] = [];
+    // 「在忙吗」：只在「疏远」档问（`silent` 档不推送，问了也发不出去），每 7 天最多一次
+    const ASK_COOLDOWN_MS = 7 * 86_400_000;
+    if (tier.tier === 'distant' && idle >= 3 && now.getTime() - (this.state.lastAskAt ?? 0) > ASK_COOLDOWN_MS) {
+      extras.push('可以问他一次「最近在忙吗」——**只问这一次，问完不追问**（这是你 7 天内唯一能问的一次）');
+      this.state.lastAskAt = now.getTime();
+      this.saveState();
+    }
+    // 「他回来了」：一次性，消费即清
+    if (this.state.recoveryPending) {
+      extras.push('他回来了 —— 你安静了很久，这次不是若无其事（可以把它写进生活，但不要质问他）');
+      this.state.recoveryPending = false;
+      this.saveState();
+    }
+
+    return facts.join('；') + (extras.length ? `\n${extras.map(e => `- ${e}`).join('\n')}` : '');
+  }
+
+  /**
+   * ★ 2026-10-20（change: `let-her-decline-a-day`）：**她可以拒绝这一轮**。
+   *
+   * 返回 `true` = 这一轮她选择不说话（tick 应直接返回，锁已续期）。
+   *
+   * ⚠️ 与 `P1-6「永不静默停摆」`的关系：P1-6 防的是**生产故障**
+   * （LLM 炸了 / 锁断了 / 进程停了），不是防「她主观上不想开口」。
+   * 所以拒绝路径**照样续期锁、照样留痕、照样入库理由** ——
+   * 没有任何一条路径会让系统"不知道自己该不该醒"。
+   */
+  private async maybeDecline(now: Date): Promise<boolean> {
+    const chance = this.opts.declineChance ?? 0.15;
+    if (!(chance > 0) || !this.opts.generateDecline) return false;
+
+    // 护栏②：连续拒绝到顶 → 必须说话
+    if ((this.state.consecutiveDeclines ?? 0) >= MAX_CONSECUTIVE_DECLINES) {
+      logger.info(`[Life] decline suppressed: 已连续拒绝 ${MAX_CONSECUTIVE_DECLINES} 轮，这一轮必须说话`);
+      return false;
+    }
+
+    if (Math.random() >= chance) return false;
+
+    let reason = '';
+    try {
+      reason = (await this.opts.generateDecline(this.buildDeclineContext(now))) ?? '';
+    } catch (err: any) {
+      logger.warn(`[Life] decline reason generation failed: ${err?.message ?? err} → 按正常流程继续`);
+      return false;
+    }
+    reason = reason.replace(/^["'“”‘’]+|["'“”‘’]+$/g, '').trim();
+
+    // 护栏③：拿不到理由 ≠ 拒绝成功。**fail-open 走正常生成**，绝不静默。
+    if (reason.length < DECLINE_MIN_REASON_CHARS) {
+      logger.warn(
+        `[Life] decline reason too short (${reason.length} < ${DECLINE_MIN_REASON_CHARS} 字) ` +
+        `→ 不认这次拒绝，按正常流程生成`,
+      );
+      return false;
+    }
+
+    // 入库（不推送）：理由进记忆，未来对话/反思可召回
+    this.memoryManager.recordLifeEvent({
+      type: 'internal',
+      content: `（这一轮没说话）${reason}`,
+      origin: 'decline',
+    });
+
+    this.state.consecutiveDeclines = (this.state.consecutiveDeclines ?? 0) + 1;
+    // 护栏：调度照常续期 —— 拒绝不等于停摆
+    this.state.nextEventAt = Date.now() + this.baseIntervalMs();
+    this.saveState();
+    this.scheduleNextEvent();
+    logger.info(
+      `[Life] declined this round (${this.state.consecutiveDeclines}/${MAX_CONSECUTIVE_DECLINES})：` +
+      `${reason.slice(0, 60)}`,
+    );
+    return true;
+  }
+
+  /** 拒绝时的上下文：**只给事实**，不消费一次性信号（问了没发出去就浪费了）。 */
+  private buildDeclineContext(now: Date): string {
+    const snapshot = this.memoryManager.getLifeSnapshot?.() ?? {};
+    const idle = this.idleDaysSinceUserMessage(now);
+    const tier = intimacyTier(Number(snapshot.intimacy ?? 30));
+    return [
+      `【当前时间】${formatLocalTime(now)}`,
+      `【当前状态】你正在: ${snapshot.currentActivity || '发呆'}；心情: ${snapshot.mood || '平静'}`,
+      `【和轻月】亲密度 ${Math.round(Number(snapshot.intimacy ?? 30))}/100（${tier.label}）` +
+      (idle < 999 && idle >= 3 ? `；他已经 ${idle} 天没有主动找你说话` : ''),
+      '【任务】写 1-2 句为什么你这一轮不想说话（具体、不道歉、不向用户喊话）。',
+    ].join('\n');
+  }
+
   // ── 主流程 ──────────────────────────────────────────
 
   async tick(): Promise<void> {
     const now = new Date();
 
-    // 每日摘要生成（跨天检测——顺带重置今日 chat 推送计数）
+    // ★ 2026-10-20（tie-intimacy-to-speech）：日上限的计数**按日期**复位 ——
+    //   原先挂在"摘要生成成功"上，失败时每 tick 清零（见 resetDailyPushCount 注释）
+    this.resetDailyPushCount(now);
+
+    // 每日摘要生成（跨天检测）
     await this.maybeGenerateDailySummary(now);
 
     // ★ 8-31 每日反思（life-reflection-loop）：跨天触发一次——她复盘自己的一天
@@ -187,6 +483,10 @@ export class LifeService {
     const hour = now.getHours();
     const deepNight = hour >= deepStart && hour < deepEnd;
 
+    // ③-pre ★ 2026-10-20（let-her-decline-a-day）：**她可以选择这一轮不说话**。
+    //   返回 true 表示已拒绝（理由已入库、锁已续期）—— 直接结束本次 tick。
+    if (await this.maybeDecline(now)) return;
+
     // ③ 生成事件（LLM 建议间隔 next_in_hours 由 evt 带回）
     // ★ 8-27 post-check：LLM 输出过 7 条校验，不过 → 带反馈重试 1 次 → 仍不过回落模板
     // ★ 8-30 近 24h 滑动窗口（life-schedule-renewal）：跨 0 点连续性——post-check 重复/独处检测也看 24h
@@ -220,14 +520,19 @@ export class LifeService {
     }
 
     // 存储 + 更新状态（recordLifeEvent 返回事件 id，供推送成功后标记 delivered）
-    const evtId = this.memoryManager.recordLifeEvent({
-      type: evt.type,
+    const evtId = this.memoryManager.recordLifeEvent({      type: evt.type,
       content: evt.content,
       moodDelta: evt.mood_delta,
       referenceEventId: evt.reference_event_id,
       wbEntryId: evt.wb_entry_id,
       continuationOf: evt.continuation_of,
     });
+
+    // ★ 2026-10-20（let-her-decline-a-day）：正常产出 → 连续拒绝计数归零
+    if ((this.state.consecutiveDeclines ?? 0) !== 0) {
+      this.state.consecutiveDeclines = 0;
+      this.saveState();
+    }
 
     // ★ 世界书命中统计（spec §7 ②）：事件引用了世界书条目 → hit_count+1
     if (evt.wb_entry_id) this.memoryManager.bumpWorldbookHit(evt.wb_entry_id);
@@ -249,15 +554,22 @@ export class LifeService {
     this.updatePresenceFromEvent(evt.content);
     this.updateMoodValue(evt.mood_shift, now);
 
-    // ④ 推送判定（8-09：冷却 1h + 每日软上限 + ★ 8-27 Agency Window can_contact）
+    // ④ 推送判定（8-09：冷却 + 每日软上限 + ★ 8-27 Agency Window can_contact）
+    //    ★ 2026-10-20（tie-intimacy-to-speech）：冷却与日上限**再按亲密度档位收紧**。
+    //      规则「只降不升」：档位只能压低配置值，永远不能抬高。
     // ★ 8-28 深夜抑制关闭：深夜 chat 事件同样按正常推送门（type=chat && can_contact）
     // ★ 8-29 拆分：推送 message（对轻月说的话），无 message 回落 content（生活叙述）
     const pushable = evt.type === 'chat' && evt.can_contact !== false;
     if (pushable) {
       const pushText = evt.message ?? evt.content;
-      const cooldownMs = (this.opts.cooldownHours ?? 1) * 3_600_000;
+      const tier = this.resolveIntimacyTier(now);
+      const configuredCap = this.opts.maxChatPushesPerDay ?? 5;
+      // 只降不升：`min` 而不是 `max`
+      const effectiveCap = Math.min(configuredCap, tier.cap);
+      const cooldownHours = tier.cap === 0 ? (this.opts.cooldownHours ?? 1) : tier.cooldownHours;
+      const cooldownMs = cooldownHours * 3_600_000;
       const inCooldown = now.getTime() - this.state.lastProactiveAt < cooldownMs;
-      const overDaily = this.state.chatPushesToday >= (this.opts.maxChatPushesPerDay ?? 5);
+      const overDaily = this.state.chatPushesToday >= effectiveCap;
       const ok = !inCooldown && !overDaily && await this.qqOff.sendProactive(this.opts.ownerOpenid, pushText);
       if (ok) {
         this.state.lastProactiveAt = Date.now();
@@ -265,9 +577,11 @@ export class LifeService {
         this.saveState();
         // ★ delivered=1（spec §5）：推送成功标记，Web 端可区分已推送/未推送
         if (evtId) this.memoryManager.markLifeEventDelivered(evtId);
-        logger.info(`[Life] pushed: ${pushText.slice(0, 50)}`);
+        logger.info(`[Life] pushed(${tier.label}, 日上限 ${effectiveCap}): ${pushText.slice(0, 50)}`);
       } else {
-        logger.info(`[Life] chat event degraded to internal (${inCooldown ? 'cooldown' : overDaily ? 'daily cap' : 'push failed'}): ${pushText.slice(0, 50)}`);
+        const why = tier.cap === 0 ? `tier=${tier.tier}（久无往来，不主动打扰）`
+          : inCooldown ? 'cooldown' : overDaily ? `daily cap ${effectiveCap}（${tier.label}档）` : 'push failed';
+        logger.info(`[Life] chat event degraded to internal (${why}): ${pushText.slice(0, 50)}`);
       }
     } else {
       logger.debug(`[Life] internal event (${deepNight ? 'deep night' : evt.can_contact === false ? 'not contactable' : 'internal'}): ${evt.content.slice(0, 50)}`);
@@ -555,6 +869,9 @@ export class LifeService {
       `【当前状态】你正在: ${snapshot.currentActivity || '发呆'}；心情: ${snapshot.mood || '平静'}`,
       `【心情】${moodBlock}`,
       `【亲密度】与轻月: ${snapshot.intimacy}/100`,
+      // ★ 2026-10-20（tie-intimacy-to-speech）：**只给事实**——档位、他多久没说话、
+      //   以及两个一次性信号（问一次在忙吗 / 他回来了）。情绪留给她自己写。
+      `【你和轻月】${this.relationshipBlock(new Date())}`,
       `【今天的生活】${todayBlock || '（还没有特别的事）'}`,
       `【你的人设背景】${wbBlock || '（暂无）'}`,
       `【在场角色】${presenceBlock}`,
@@ -893,11 +1210,8 @@ export class LifeService {
   private async maybeGenerateDailySummary(now: Date): Promise<void> {
     const today = localDateKey(now);
     if (this.state.lastSummaryDate === today) return;
-    // ★ 8-09：跨天 → 重置今日 chat 推送计数（软上限按天计）
-    if (this.state.chatPushesToday > 0) {
-      this.state.chatPushesToday = 0;
-      this.saveState();
-    }
+    // ★ 2026-10-20：日上限计数已改由 `resetDailyPushCount` **按日期**复位，
+    //   与摘要成败解耦（原实现挂在这里，摘要失败时每 tick 清零）。
     // ★ 终审修复：摘要走独立 generateSummary 纯文本回调（generateEvent 强制 JSON，
     //   复用会把摘要存成 JSON 文本污染摘要层）。无回调则跳过（降级），不置位以便后续可恢复。
     if (!this.opts.generateSummary) return;

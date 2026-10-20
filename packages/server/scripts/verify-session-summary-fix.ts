@@ -22,15 +22,12 @@ const BASE = process.env.OPENAI_BASE_URL || 'https://api.deepseek.com/v1';
 const KEY = process.env.OPENAI_API_KEY || '';
 const MODEL = process.env.CHAT_MODEL || 'deepseek-chat';
 
-// 与 SessionEndProcessor 的 SUMMARY_SYSTEM_PROMPT 保持一致
-const PROMPT =
-  '你是一个会话总结器。请总结以下对话（[用户]/[昔涟] 标记发言者），提取关键主题和决定。' +
-  '同时用一句话总结**昔涟**在这段对话中的感受或变化（角色视角，如"昔涟聊到雨时语气变得柔软"、"昔涟对游戏话题显得兴致勃勃"；没有明显情绪变化就留空字符串）。' +
-  '另外挑出这段对话里**最值得长期记住的 1-3 处**（关系里程碑、承诺、重要偏好、情绪强烈的时刻），' +
-  '每处给一个**原文摘句**（10-40 字的连续原文片段，用于回定位）和 importance（0.7-0.95 的小数，越重要越高）。' +
-  '没有值得记的就返回空数组，不要硬凑。' +
-  '返回JSON格式: {"summary": "...", "participants": ["user", "assistant"], "topics": [...], "key_decisions": [...], "character_perspective": "...", ' +
-  '"important_moments": [{"quote": "原文摘句", "importance": 0.85}]}';
+// ★ 2026-10-20（change: `tidy-a-class-seams`）：**不再复制**生产提示词，直接 import。
+//   原来这里是逐字副本 + 注释「与 SessionEndProcessor 的 SUMMARY_SYSTEM_PROMPT 保持一致」——
+//   那种"保持一致"靠人守，主线一改就漂移，而这个脚本的用途恰恰是验证主线的摘要行为。
+import { SESSION_SUMMARY_SYSTEM_PROMPT } from '@alysia/core/memory';
+
+const PROMPT = SESSION_SUMMARY_SYSTEM_PROMPT;
 
 /** 一段贴近真实使用的长对话（长度接近线上被截断的那些会话） */
 const DIALOGUE = [

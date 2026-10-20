@@ -28,6 +28,52 @@ import { warnThrottled } from '../utils/write-trace.js';
  */
 const CHARACTER_FACTS_IN_PROMPT = 8;
 
+// ── 块的投放策略（★ 2026-10-20，change: `tabular-prompt-blocks`）─────────────
+//
+// ## 为什么要有这张表
+//
+// 在此之前，"哪一块被丢"是**隐式**的：谁先 `reserve` 谁先活，顺序写在函数体里。
+// 于是"人格绝不能被丢"这件事**没有任何一处写明** —— 它只是恰好排得早。
+// 直到 10-15 那次事故（31 条自省把预算吃满、`[关于我]` 整块被丢、她一条都读不到）
+// 才暴露：**顺序即优先级，而优先级没被记录过**。
+//
+// 现在两种策略显式化：
+//   - `required`：**无条件先占预算**（丢它不是"预算不够"，是 bug）
+//   - `optional`：`canFit` 通过才进；预算不足时**记名**（见 `assembleChat` 末尾的丢弃日志）
+//
+// ⚠️ 改这张表 = **行为变更**，不是重构。改完必须更新 characterization 快照。
+
+export type ChatBlockKey =
+  | 'selfNotice' | 'persona' | 'overlay' | 'basics' | 'preferences'
+  | 'facts' | 'characterFacts' | 'pendingConfirm' | 'recentConversations'
+  | 'life' | 'memories';
+
+/** 顺序 = 组装顺序；策略见上方说明。**顺序本身仍是行为**（决定谁先占预算）。 */
+export const CHAT_BLOCK_POLICY: Record<ChatBlockKey, 'required' | 'optional'> = {
+  selfNotice: 'required',
+  persona: 'required',
+  overlay: 'optional',
+  basics: 'optional',
+  preferences: 'optional',
+  facts: 'optional',
+  characterFacts: 'optional',
+  pendingConfirm: 'optional',
+  recentConversations: 'optional',
+  life: 'optional',
+  memories: 'optional',
+};
+
+export type CodeBlockKey = 'persona' | 'techProfile' | 'projectContext' | 'worldbook' | 'life' | 'memories';
+
+export const CODE_BLOCK_POLICY: Record<CodeBlockKey, 'required' | 'optional'> = {
+  persona: 'required',
+  techProfile: 'optional',
+  projectContext: 'optional',
+  worldbook: 'optional',
+  life: 'optional',
+  memories: 'optional',
+};
+
 export class PromptAssembler {
   constructor(
     private profileStore: ProfileStore,
@@ -37,6 +83,45 @@ export class PromptAssembler {
     private worldbookStore: WorldbookStore,
     private codeContextStore: CodeContextStore,
   ) {}
+
+  /**
+   * 投放一块提示词（★ 2026-10-20，change: `tabular-prompt-blocks`）。
+   *
+   * `required` → 无条件先占预算（丢它说明有 bug）；
+   * `optional` → `canFit` 通过才进，否则把 key 记进 `dropped`（末尾统一留痕）。
+   *
+   * ⚠️ 这个函数**不改变任何既有行为**：它只是把原来散在 11 处的
+   * `if (budget.canFit(x)) { budget.reserve(x); blocks.push(x) }` 收成一处，
+   * 并让"丢哪块"第一次变成可观测的事实。
+   */
+  private pushBlock(
+    policy: 'required' | 'optional',
+    key: string,
+    block: string,
+    budget: TokenBudget,
+    blocks: string[],
+    dropped: string[],
+  ): void {
+    if (policy === 'required') {
+      budget.reserve(block);
+      blocks.push(block);
+      return;
+    }
+    if (budget.canFit(block)) {
+      budget.reserve(block);
+      blocks.push(block);
+      return;
+    }
+    dropped.push(key);
+  }
+
+  private pushChatBlock(key: ChatBlockKey, block: string, budget: TokenBudget, blocks: string[], dropped: string[]): void {
+    this.pushBlock(CHAT_BLOCK_POLICY[key], key, block, budget, blocks, dropped);
+  }
+
+  private pushCodeBlock(key: CodeBlockKey, block: string, budget: TokenBudget, blocks: string[], dropped: string[]): void {
+    this.pushBlock(CODE_BLOCK_POLICY[key], key, block, budget, blocks, dropped);
+  }
 
   async assemble(mode: 'chat' | 'code', extraRetrieved: SearchResult[] = [], worldbookTriggers: WorldbookEntry[] = [], lifeInjection: string = '', sessionId?: string): Promise<string> {
     if (mode === 'chat') {
@@ -54,6 +139,8 @@ export class PromptAssembler {
     const budget = new TokenBudget(3200);
 
     const blocks: string[] = [];
+    /** ★ tabular-prompt-blocks：本轮因预算不足被丢掉的块（末尾留痕） */
+    const dropped: string[] = [];
 
     // ★ 2026-10-19（change: `watch-for-stuck-work`）：**她自己注意到的事**。
     //   放在最靠前：它决定"此刻该不该说点什么"，比背景知识更即时。
@@ -61,8 +148,7 @@ export class PromptAssembler {
     const selfNotices = getSelfNotices();
     const selfNoticeBlock = renderSelfNoticeBlock(selfNotices);
     if (selfNoticeBlock) {
-      budget.reserve(selfNoticeBlock);
-      blocks.push(selfNoticeBlock);
+      this.pushChatBlock('selfNotice', selfNoticeBlock, budget, blocks, dropped);
       // 可观测：她这一轮到底看没看到（否则"注入了"与"没注入"同形）
       // INFO 级：这一行是"她到底看没看到"的唯一证据（DEBUG 不进日志文件）
       logger.info(`[Prompt] 她这一轮看到了 ${selfNotices.length} 条自己注意到的事`);
@@ -89,13 +175,9 @@ export class PromptAssembler {
 ${toneText}
 ${styleText}
 ${rangeText}`;
-    budget.reserve(personaBlock);
-    blocks.push(personaBlock);
+    this.pushChatBlock('persona', personaBlock, budget, blocks, dropped);
     if (overlayBlock) {
-      if (budget.canFit(overlayBlock)) {
-        budget.reserve(overlayBlock);
-        blocks.push(overlayBlock);
-      }
+      this.pushChatBlock('overlay', overlayBlock, budget, blocks, dropped);
     }
 
     // User profile — handles both JSON (manual input) and plain text (LLM summary from Cron)
@@ -103,20 +185,14 @@ ${rangeText}`;
       const basicsText = this.parseOrPlain(profile.basics);
       if (basicsText) {
         const basicsBlock = `[关于你]\n${basicsText}`;
-        if (budget.canFit(basicsBlock)) {
-          budget.reserve(basicsBlock);
-          blocks.push(basicsBlock);
-        }
+        this.pushChatBlock('basics', basicsBlock, budget, blocks, dropped);
       }
     }
     if (profile.preferences && profile.preferences !== '{}') {
       const prefsText = this.parseOrPlain(profile.preferences);
       if (prefsText) {
         const prefsBlock = `[你的偏好]\n${prefsText}`;
-        if (budget.canFit(prefsBlock)) {
-          budget.reserve(prefsBlock);
-          blocks.push(prefsBlock);
-        }
+        this.pushChatBlock('preferences', prefsBlock, budget, blocks, dropped);
       }
     }
 
@@ -149,10 +225,7 @@ ${rangeText}`;
         .join('\n');
       if (factsText) {
         const factsBlock = `[关于你的事实]\n${factsText}`;
-        if (budget.canFit(factsBlock)) {
-          budget.reserve(factsBlock);
-          blocks.push(factsBlock);
-        }
+        this.pushChatBlock('facts', factsBlock, budget, blocks, dropped);
       }
     }
 
@@ -174,10 +247,9 @@ ${rangeText}`;
           .map(f => `- ${f.fact}${this.formatFactTime(f.valid_from, f.updated_at)}`)
           .join('\n');
         const myBlock = `[关于我]\n${myText}`;
-        if (budget.canFit(myBlock)) {
-          budget.reserve(myBlock);
-          blocks.push(myBlock);
-        }
+        // ⚠️ 本块历史上**整块被丢过**（31 条自省吃满预算）——策略表里它是 optional，
+        //    但丢弃现在一定会被末尾的日志记名；若线上频繁出现，说明该缩块而不是加预算。
+        this.pushChatBlock('characterFacts', myBlock, budget, blocks, dropped);
       }
     } catch (err: any) {
       // ★ KI-5：这里原本是裸 catch。`getActiveCharacterFacts()` 读失败会被静默，
@@ -200,10 +272,7 @@ ${rangeText}`;
           return `- ${f.fact}${dateNote}`;
         }).join('\n');
         const pendingBlock = `[待确认的事实]\n这些关于轻月的事你可能记错了——想确认的话可以在合适的时机自然地问（一次最多问一条），\n问清后用 confirm_profile_fact 工具记录回答（确认 → 续期；否认 → 忘掉）：\n${pendingLines}`;
-        if (budget.canFit(pendingBlock)) {
-          budget.reserve(pendingBlock);
-          blocks.push(pendingBlock);
-        }
+        this.pushChatBlock('pendingConfirm', pendingBlock, budget, blocks, dropped);
       }
     } catch (err: any) {
       // ★ KI-5 点名的那一处：`listPendingConfirmFacts()` 内部会先跑
@@ -218,33 +287,28 @@ ${rangeText}`;
     // Recent conversations
     if (recentConvs.length > 0) {
       const recentBlock = `[最近对话]\n${recentConvs.map(c => `- ${c.summary}`).join('\n')}`;
-      if (budget.canFit(recentBlock)) {
-        budget.reserve(recentBlock);
-        blocks.push(recentBlock);
-      }
+      this.pushChatBlock('recentConversations', recentBlock, budget, blocks, dropped);
     }
 
     // AI 近期生活（主动生活系统）— 由调用方通过 getLifeEventInjection() 预组装（今天事件 + 近 7 天摘要）
     if (lifeInjection) {
-      if (budget.canFit(lifeInjection)) {
-        budget.reserve(lifeInjection);
-        blocks.push(lifeInjection);
-      } else {
-        logger.debug('[Life] life block skipped (budget)');
-      }
+      this.pushChatBlock('life', lifeInjection, budget, blocks, dropped);
     }
 
     // Retrieved memories
     if (retrieved.length > 0) {
       const memBlock = `[相关记忆]\n${retrieved.map(r => `- ${r.text}`).join('\n')}`;
-      if (budget.canFit(memBlock)) {
-        budget.reserve(memBlock);
-        blocks.push(memBlock);
-      }
+      this.pushChatBlock('memories', memBlock, budget, blocks, dropped);
     }
 
     // Worldbook 已改为 Agent 工具 lookup_worldbook，不再注入 Prompt
     // Agent 在需要背景知识时会主动调用工具查询
+
+    // ★ tabular-prompt-blocks：预算不足丢掉的块**必须留痕** ——
+    //   否则"她今天没读到自己的自省"与"她读到了"在日志里同形（10-15 那次事故=22 天无人发现）。
+    if (dropped.length > 0) {
+      logger.info(`[Prompt] 预算不足，本轮丢弃 ${dropped.length} 块：${dropped.join(', ')}`);
+    }
 
     return blocks.join('\n\n');
   }
@@ -256,13 +320,14 @@ ${rangeText}`;
     const budget = new TokenBudget(2450);
 
     const blocks: string[] = [];
+    /** ★ tabular-prompt-blocks：本轮因预算不足被丢掉的块（末尾留痕） */
+    const dropped: string[] = [];
 
     // Compressed persona — only key tone dimensions for code mode (always included)
     const tone = safeParseJSON<Record<string, number>>(persona.tone, {});
     const personaBlock = `[角色设定]
 ${persona.name} 编程助手模式。语气: ${tone.formality < 0 ? '随意' : '正式'}，直接程度: ${tone.directness > 0 ? '直接' : '委婉'}`;
-    budget.reserve(personaBlock);
-    blocks.push(personaBlock);
+    this.pushCodeBlock('persona', personaBlock, budget, blocks, dropped);
 
     // Filtered profile — technical fields only.
     // Handles both JSON (structured) and plain text (LLM summary from Cron deep rewrite).
@@ -277,20 +342,14 @@ ${persona.name} 编程助手模式。语气: ${tone.formality < 0 ? '随意' : '
       if (prefs.comment_style) techProfile.push(`注释: ${prefs.comment_style}`);
       if (techProfile.length > 0) {
         const techBlock = `[编程用户画像]\n${techProfile.join('\n')}`;
-        if (budget.canFit(techBlock)) {
-          budget.reserve(techBlock);
-          blocks.push(techBlock);
-        }
+        this.pushCodeBlock('techProfile', techBlock, budget, blocks, dropped);
       }
     } catch {
       // basics is not JSON (LLM summary) — include a short snippet as context
       if (profile.basics && profile.basics !== '{}') {
         const snippet = profile.basics.slice(0, 200);
         const techBlock = `[编程用户画像]\n${snippet}`;
-        if (budget.canFit(techBlock)) {
-          budget.reserve(techBlock);
-          blocks.push(techBlock);
-        }
+        this.pushCodeBlock('techProfile', techBlock, budget, blocks, dropped);
       }
     }
 
@@ -302,39 +361,30 @@ ${persona.name} 编程助手模式。语气: ${tone.formality < 0 ? '随意' : '
 - 技术栈: ${JSON.stringify(tech)}
 - 架构: ${codeCtx.architecture_notes}
 - 最近: ${codeCtx.recent_changes}`;
-      if (budget.canFit(ctxBlock)) {
-        budget.reserve(ctxBlock);
-        blocks.push(ctxBlock);
-      }
+      this.pushCodeBlock('projectContext', ctxBlock, budget, blocks, dropped);
     }
 
     // Worldbook triggers (code scope only) — 排除表情包条目（image 类型走 send_sticker 工具）
     const codeTriggers = triggers.filter(w => (w.scope === 'code' || w.scope === 'both') && w.content_type !== 'image');
     if (codeTriggers.length > 0) {
       const wbBlock = `[情境提示]\n${codeTriggers.map(w => w.content).join('\n')}`;
-      if (budget.canFit(wbBlock)) {
-        budget.reserve(wbBlock);
-        blocks.push(wbBlock);
-      }
+      this.pushCodeBlock('worldbook', wbBlock, budget, blocks, dropped);
     }
 
     // AI 近期生活（主动生活系统）— AI 把生活带进编程模式（今天事件 + 近 7 天摘要）
     if (lifeInjection) {
-      if (budget.canFit(lifeInjection)) {
-        budget.reserve(lifeInjection);
-        blocks.push(lifeInjection);
-      } else {
-        logger.debug('[Life] life block skipped (budget)');
-      }
+      this.pushCodeBlock('life', lifeInjection, budget, blocks, dropped);
     }
 
     // Retrieved knowledge
     if (retrieved.length > 0) {
       const knowBlock = `[相关知识]\n${retrieved.map(r => `- ${r.text}`).join('\n')}`;
-      if (budget.canFit(knowBlock)) {
-        budget.reserve(knowBlock);
-        blocks.push(knowBlock);
-      }
+      this.pushCodeBlock('memories', knowBlock, budget, blocks, dropped);
+    }
+
+    // ★ tabular-prompt-blocks：丢弃留痕（与 chat 同款）
+    if (dropped.length > 0) {
+      logger.info(`[Prompt] 预算不足（code），本轮丢弃 ${dropped.length} 块：${dropped.join(', ')}`);
     }
 
     return blocks.join('\n\n');

@@ -19,6 +19,7 @@ import {
   LIFE_INTENT_PROMPT,
   LIFE_MOOD_NOTE_PROMPT,
   LIFE_REFLECTION_PROMPT,
+  LIFE_DECLINE_PROMPT,
 } from '../prompts/life.js';
 import type { ProactiveService } from '../proactive.js';
 import type { AlysiaCore } from '@alysia/core';
@@ -102,6 +103,19 @@ export const lifeModule: Module = {
           systemPrompt: LIFE_SUMMARY_PROMPT,
           // ★ 8-10 采样槽：DEFAULT(0.3 低温/忠) + config.sampling.life.generateSummary 覆盖
           sampling: { ...DEFAULT_SAMPLING.life.generateSummary, ...(config.sampling?.life?.generateSummary ?? {}) },
+        });
+        return resp.role === 'assistant' ? resp.completionText : '';
+      },
+
+      // ★ 2026-10-20（change: let-her-decline-a-day）：拒绝权的理由生成。
+      //   她这一轮可以选择不说话，但必须留下理由（入库 internal，可被召回）。
+      //   采样用**低温/忠**（同摘要槽）：这是记录事实，不是创作。
+      generateDecline: async (context: string) => {
+        const resp = await core.providerManager.textChatWithFallback({
+          prompt: context,
+          sessionId: 'life-decline',
+          systemPrompt: LIFE_DECLINE_PROMPT,
+          sampling: { ...DEFAULT_SAMPLING.life.generateSummary },
         });
         return resp.role === 'assistant' ? resp.completionText : '';
       },

@@ -13,8 +13,9 @@ export interface LifeEvent {
   referenceEventId?: string;
   wbEntryId?: string;
   delivered: number;
-  /** ★ 8-27 事件来源：'regular'(常规) | 'followup'(对话余波，不推送只记录) */
-  origin?: 'regular' | 'followup';
+  /** ★ 8-27 事件来源：'regular'(常规) | 'followup'(对话余波，不推送只记录)
+   *  ★ 2026-10-20（let-her-decline-a-day）：'decline' = **她这一轮选择不说话时写下的理由** */
+  origin?: 'regular' | 'followup' | 'decline';
 }
 
 export interface LifeState {
@@ -82,7 +83,7 @@ export class LifeStore {
     traceZeroRows('LifeStore.updateState', r.changes);
   }
 
-  addEvent(e: { id: string; createdAt: string; type: 'chat' | 'internal'; content: string; moodDelta?: string; referenceEventId?: string; wbEntryId?: string; delivered?: number; origin?: 'regular' | 'followup' }): void {
+  addEvent(e: { id: string; createdAt: string; type: 'chat' | 'internal'; content: string; moodDelta?: string; referenceEventId?: string; wbEntryId?: string; delivered?: number; origin?: 'regular' | 'followup' | 'decline' }): void {
     this.db.prepare(`
       INSERT OR REPLACE INTO ai_life_events (id, created_at, type, content, mood_delta, reference_event_id, wb_entry_id, delivered, origin)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)

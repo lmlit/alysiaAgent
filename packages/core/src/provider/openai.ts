@@ -68,6 +68,10 @@ export class OpenAIProvider {
     //   DNS 系统超时（线上实测 566s）而非 60s。race 保证准时返回 timed out；
     //   底层挂起的 fetch 最终失败用 .catch(() => {}) 吞掉（防 unhandledRejection）。
     let timeoutTimer: NodeJS.Timeout | undefined;
+    // ★ 2026-10-20（change: `let-memory-use-provider`）：超时可**按请求**覆盖。
+    //   记忆链路是批处理（长结构化输出），需要 120s；聊天链路保持 60s。
+    //   缺省仍是 60s ⇒ 不传 `timeoutMs` 的调用方行为**完全不变**。
+    const timeoutMs = req.timeoutMs ?? 60_000;
     const timeoutPromise = new Promise<never>((_, reject) => {
       timeoutTimer = setTimeout(
         () => {
@@ -76,9 +80,9 @@ export class OpenAIProvider {
           //   ⚠️ 两者分工不同，别互相替代：abort 到不了 DNS/连接建立阶段（见上），
           //      所以「准时」只能靠 race；而「回收」只能靠 abort。
           controller.abort();
-          reject(Object.assign(new Error('LLM request timed out (60s)'), { name: 'AbortError' as const }));
+          reject(Object.assign(new Error(`LLM request timed out (${Math.round(timeoutMs / 1000)}s)`), { name: 'AbortError' as const }));
         },
-        60_000,
+        timeoutMs,
       );
     });
 

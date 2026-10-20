@@ -18,6 +18,8 @@ import type { PersonaAdapter } from '../engines/PersonaAdapter.js';
 import type { ILLMService } from '../interfaces/ILLMService.js';
 import type { IEmbedService } from '../interfaces/IEmbedService.js';
 import type { IVectorStore } from '../interfaces/IVectorStore.js';
+// ★ 2026-10-20（change: collect-memory-prompts）：提示词资产已外置
+import { SESSION_SUMMARY_SYSTEM_PROMPT } from '../../prompts/memory.js';
 
 /**
  * ★ 9-26 fix-session-event-window-truncation：`process()` 的处理结果。
@@ -51,17 +53,11 @@ interface SummaryData {
   important_moments: Array<{ quote: string; importance: number }>;
 }
 
-/** ★ 8-28 角色视角（memory-character-perspective）：摘要同时总结昔涟的感受/变化
- *  ★ 9-25 importance：**复用这一次调用**顺带打分——不额外增加 LLM 成本。
- *    要求返回原文摘句而不是编号：LLM 拿不到事件 id，只能靠文本匹配回填。 */
-const SUMMARY_SYSTEM_PROMPT =
-  '你是一个会话总结器。请总结以下对话（[用户]/[昔涟] 标记发言者），提取关键主题和决定。' +
-  '同时用一句话总结**昔涟**在这段对话中的感受或变化（角色视角，如"昔涟聊到雨时语气变得柔软"、"昔涟对游戏话题显得兴致勃勃"；没有明显情绪变化就留空字符串）。' +
-  '另外挑出这段对话里**最值得长期记住的 1-3 处**（关系里程碑、承诺、重要偏好、情绪强烈的时刻），' +
-  '每处给一个**原文摘句**（10-40 字的连续原文片段，用于回定位）和 importance（0.7-0.95 的小数，越重要越高）。' +
-  '没有值得记的就返回空数组，不要硬凑。' +
-  '返回JSON格式: {"summary": "...", "participants": ["user", "assistant"], "topics": [...], "key_decisions": [...], "character_perspective": "...", ' +
-  '"important_moments": [{"quote": "原文摘句", "importance": 0.85}]}';
+/**
+ * 会话摘要的提示词已外置（★ 2026-10-20，change: `collect-memory-prompts`）。
+ * 原文逐字搬到 `packages/core/src/prompts/memory.ts`（做过归一化比对，零改动），
+ * 这里直接使用导入的 `SESSION_SUMMARY_SYSTEM_PROMPT` —— 不再保留同义常量。
+ */
 
 /**
  * SessionEndProcessor handles end-of-session aggregation:
@@ -344,7 +340,7 @@ export class SessionEndProcessor {
 
   /** 单次摘要调用（重试逻辑在 generateSummary 里） */
   private async generateSummaryOnce(dialogue: string[]): Promise<SummaryData> {
-    const response = await this.llmService.complete(SUMMARY_SYSTEM_PROMPT, dialogue.join('\n'));
+    const response = await this.llmService.complete(SESSION_SUMMARY_SYSTEM_PROMPT, dialogue.join('\n'));
     const r = parseLLMJson(response);
 
     if (r.kind === 'empty') {
