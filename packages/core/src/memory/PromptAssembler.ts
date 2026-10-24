@@ -188,8 +188,43 @@ ${rangeText}`;
     if (profile.basics && profile.basics !== '{}') {
       const basicsText = this.parseOrPlain(profile.basics);
       if (basicsText) {
-        const basicsBlock = `[关于你]\n${basicsText}`;
-        this.pushChatBlock('basics', basicsBlock, budget, blocks, dropped);
+        // ★ 2026-10-21（change: `unify-memory-eligibility`，契约 C3）：
+        //   `basics` 是**派生结果**（一次 LLM 总结），事实被纠正/过期后它就**可能过时**。
+        //   过时了还照原样注入，等于"你纠正掉的旧说法换个出口继续生效"（E2 的同一个病）。
+        //
+        //   三档处置（**顺序即优先级**）：
+        //     ① 新鲜 → 正常注入 `[关于你]`
+        //     ② 过时，但**当前还有事实** → **整块不注入**：事实块会以"当前认知"的身份
+        //        说同一件事，而 stale 的旧总结只会和新事实打架（"他在长沙" vs "他在深圳"）
+        //     ③ 过时，且**当前一条事实都没有** → 降级注入 `[关于你（较早的印象，可能已过时）]`：
+        //        没有事实块兜底时仍要给一点底色，但必须标明它旧
+        let stale = false;
+        try {
+          stale = this.profileStore.getBasicsMeta().stale;
+        } catch {
+          // 读谱系失败不该拖垮 prompt：按"可能过时"处理（宁可保守，不要假装新鲜）
+          stale = true;
+        }
+        let currentFactCount = 0;
+        try {
+          currentFactCount = this.profileStore.getCurrentFacts().length;
+        } catch {
+          currentFactCount = 0;
+        }
+
+        if (!stale) {
+          this.pushChatBlock('basics', `[关于你]\n${basicsText}`, budget, blocks, dropped);
+        } else if (currentFactCount === 0) {
+          this.pushChatBlock(
+            'basics',
+            `[关于你（较早的印象，可能已过时）]\n${basicsText}`,
+            budget, blocks, dropped,
+          );
+        } else {
+          logger.debug(
+            `[PromptAssembler] basics 已过时且当前有 ${currentFactCount} 条事实 ⇒ 跳过该块（由事实块承载当前认知）`,
+          );
+        }
       }
     }
     if (profile.preferences && profile.preferences !== '{}') {

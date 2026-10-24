@@ -46,6 +46,7 @@
 | 条目 | 一句话 | 卡在 | 权威出处 |
 |---|---|---|---|
 | KI-10 | 内核缺「只排序、不依赖服务」的表达（`after?`） | ⏸ 结论是「现在只有 1 处，不值得加」，**记着待观察** | [KNOWN-ISSUES #KI-10](KNOWN-ISSUES.md#L392) |
+| **记忆资格四份判据**<br>（E1–E7） | 摘要合成过滤只修一条路径 / 过期事实经 `basics` 复活 / 纠正候选含失效事实 / 她自己的话调了她的人格 / 事实提取失败被"已处理"吞掉 / 结算成功是 `void` / `basics` 无谱系 | 🤖 **T1–T6 已实现，待归档**（代码在分支 `feat/unify-memory-eligibility`，未提交） | [unify-memory-eligibility](../openspec/changes/unify-memory-eligibility/proposal.md) |
 | **KI-27** | `processed` 位掩码**只写不读**：唯一读它的 `getUnprocessed` 只有 `compactOldEvents` 自己调用 ⇒ compaction 不是"放弃学习"，只是清积压。处置二选一：**赋语义**（各处理器按位判重）/ **删一半**（删位掩码与 getUnprocessed） | 🧑 待定方向 | [KNOWN-ISSUES #KI-27](KNOWN-ISSUES.md) |
 | ~~KI-3~~ ✅ | **2026-10-20 已修**（`unify-memory-llm-client`，与 KI-9 同根因）：抽出唯一实现 `MemoryLlmClient`，`OpenAILLMService` 降级为适配器；契约测试锁住「同一 slot ⇒ request body 逐字相同」。★ 顺带纠正了本条前提——KI-21 之后两者**已不一致**（生产有超时/观测，测试那个没有） | — | [KNOWN-ISSUES #KI-3](KNOWN-ISSUES.md#L86) |
 | ~~KI-7~~ ✅ | **2026-10-20 已修**（`make-stop-really-stop`）：`/stop` 接 `AbortRegistry.abort()`；★ 顺带修了「无论有没有在飞都回『已停止』」的假回话 | — | [KNOWN-ISSUES #KI-7](KNOWN-ISSUES.md#L375) |

@@ -226,8 +226,13 @@ export const commandsModule: Module<CommandsConfig> = {
     const sessionCmds = createSessionCommands(
       // /new: 保存当前会话记忆后重置上下文
       async (sessionId) => {
-        await memoryManager.onSessionEnd(sessionId);
-        ctx.logger.info(`[cmd] /new — session saved: ${sessionId.slice(-20)}`);
+        // ★ 2026-10-21（change: `unify-memory-eligibility`，C4/E6）：按真实结果回执，
+        //   不再一律说 "session saved"（摘要失败时它是在撒谎）。
+        const r = await memoryManager.onSessionEnd(sessionId);
+        ctx.logger.info(
+          `[cmd] /new — session ${r.summary === 'ok' ? 'saved' : `NOT saved（${r.reason ?? r.summary}）`}` +
+          ` / facts=${r.facts} / vector=${r.vector}: ${sessionId.slice(-20)}`,
+        );
       },
       // /reset: 清空上下文，不保存记忆
       async (sessionId) => {

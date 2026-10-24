@@ -81,6 +81,25 @@ export { SessionEndProcessor } from './processors/SessionEndProcessor.js';
 export { CronProcessor } from './processors/CronProcessor.js';
 export { PromptAssembler } from './PromptAssembler.js';
 export { filterPII } from './PIIFilter.js';
+// ★ 2026-10-21（change: `unify-memory-eligibility`，契约 C1）：记忆资格的**唯一出处**。
+//   导出到 barrel 是必需的：server / dsh-adapter 侧判定"这条内容能不能学"时
+//   只能经 `@alysia/core/memory` 拿它（core 的 exports 不暴露深路径），
+//   否则又会各写一份 `if` —— 那正是本 change 要消灭的东西。
+export {
+  isEligible,
+  originOf,
+  filterEligible,
+  isMachineOrigin,
+  describeSkip,
+  ELIGIBILITY,
+  MEMORY_USES,
+  EVENT_ORIGINS,
+  USE_LABEL,
+  type MemoryUse,
+  type EventOrigin,
+  type EligibilityVerdict,
+  type OriginVerdict,
+} from './eligibility.js';
 export * from './types.js';
 export * from './interfaces/IVectorStore.js';
 export * from './interfaces/IEmbedService.js';

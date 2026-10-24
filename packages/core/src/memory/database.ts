@@ -386,6 +386,35 @@ export function initializeDatabase(db: Database.Database): void {
   addColumnIfMissing(db, 'conversations', 'summary_status',
     `ALTER TABLE conversations ADD COLUMN summary_status TEXT DEFAULT 'ok'`);
 
+  // ★ 2026-10-21（change: `unify-memory-eligibility`，契约 C4 / E5）：
+  //   `conversations.facts_status` —— **本窗口的事实提取**状态，与 `summary_status` **并列**。
+  //
+  //   为什么要单独一列：摘要是"这段聊了什么"，事实提取是"关于你我知道了什么"，
+  //   两者是**独立的两个任务**。修 E5 之前，事实提取失败只会留一行 error 日志，
+  //   而摘要行是 'ok' ⇒ 锚点前进 ⇒ 那批事实**永久不可重提**，且无人可见。
+  //
+  //   ⚠️ 默认值 **'pending'**，不是 'ok' —— 这正是 KI-17 的教训：
+  //      默认 'ok' 会让"任何漏传"变成静默成功。老库存量行会是 'pending'，
+  //      语义是"这一列之前不存在、没记过账"，与"记过账但没提取到"不同。
+  addColumnIfMissing(db, 'conversations', 'facts_status',
+    `ALTER TABLE conversations ADD COLUMN facts_status TEXT DEFAULT 'pending'`);
+  // 重试次数：D3 拍板"每窗口最多自动重试 1 次"，用尽后留在 failed 且可见。
+  addColumnIfMissing(db, 'conversations', 'facts_attempts',
+    `ALTER TABLE conversations ADD COLUMN facts_attempts INTEGER NOT NULL DEFAULT 0`);
+
+  // ★ 2026-10-21（change: `unify-memory-eligibility`，契约 C3 / E7）：
+  //   `basics` 是**派生结果**（由当前事实经一次 LLM 重写而来），必须能回答两个问题：
+  //     ① 它是由**哪些事实**生成的（`basics_source.factKeys`）—— 否则无从判断是否过时
+  //     ② 它现在**还可信吗**（`basics_stale`）—— 事实被纠正/过期后，旧 `basics`
+  //        仍会以 `[关于你]` 的形式进 prompt，等于旧说法换了个出口继续生效
+  //
+  //   ⚠️ 默认 `'{}'` / `0`：老库存量行 = "没有谱系、也没被标过时"，
+  //      与"有谱系且仍新鲜"不同 —— 前者由下一次重写补上。
+  addColumnIfMissing(db, 'user_profile', 'basics_source',
+    `ALTER TABLE user_profile ADD COLUMN basics_source TEXT DEFAULT '{}'`);
+  addColumnIfMissing(db, 'user_profile', 'basics_stale',
+    `ALTER TABLE user_profile ADD COLUMN basics_stale INTEGER NOT NULL DEFAULT 0`);
+
   // ★ 2026-10-16（change: `add-memory-channel-field`）：**记忆渠道**显式字段。
   //   背景：后续要让她**从 QQ 侧调用 dsh 编程工具** ⇒ QQ 日常对话与 dsh 编程会话
   //   在同一套库里并存，且将来要**特殊处理**（差异化召回/注入）。

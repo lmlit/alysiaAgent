@@ -104,7 +104,22 @@ export interface Conversation {
    *  为什么要有这个字段：2026-09-04 ~ 09-25 摘要 100% 失败，
    *  但失败被"存一个占位符字符串"伪装成了成功，22 天无人发现。 */
   summary_status?: 'ok' | 'failed';
+  /**
+   * ★ 2026-10-21（change: `unify-memory-eligibility`，契约 C4）：**事实提取**状态。
+   *
+   * 与 `summary_status` 并列、**互不冒充**：摘要成功不等于事实提取成功。
+   * - `'ok'`：跑过提取且没出错（**可能 0 条**——"看了，确实没有新事实"）
+   * - `'failed'`：跑过提取但失败（LLM 报错/空响应/形状不对）⇒ 可被补处理
+   * - `'skipped'`：本窗口没有可提取的用户发言（一次 LLM 都没调）
+   * - `'pending'`：还没跑（新行默认值；老库存量行也停在这里）
+   */
+  facts_status?: FactsStatus;
+  /** ★ C4：事实提取的**自动重试**次数（D3：每窗口最多 1 次，用尽后留在 failed 可见） */
+  facts_attempts?: number;
 }
+
+/** ★ 2026-10-21（C4）：事实提取的四种状态（见 `Conversation.facts_status`） */
+export type FactsStatus = 'ok' | 'failed' | 'skipped' | 'pending';
 
 export interface KnowledgeDoc {
   id: string;
@@ -191,8 +206,15 @@ export interface ProfileFact {
   evidence: string;    // 原文引用
   source_event: string;
   updated_at: string;
-  /** 来源类型: user=用户主动声明(最高可信), behavior=行为推断, inferred=LLM推断(最低可信) */
-  source: 'user' | 'behavior' | 'inferred';
+  /**
+   * 来源类型: user=用户主动声明(最高可信), behavior=行为推断, inferred=LLM推断(最低可信),
+   * ★ 2026-10-21（change: `unify-memory-eligibility`，D2）：reflection=**她自己反思产出的自述**。
+   *
+   * 为什么要单独一个值：`reflection` 只能进【关于我】（自我叙事），**不能作为人格证据**（D2）。
+   * 混进 `inferred` 就分不出"从对话里推断的"和"她自己想出来的"——
+   * 而后者一旦被当成证据，就是"她认为的你"由"她说过的你"自己长出来（自证闭环）。
+   */
+  source: 'user' | 'behavior' | 'inferred' | 'reflection';
   /** 生效时间 (ISO) */
   valid_from: string;
   /** 失效时间 (ISO)，null=永不过期 */

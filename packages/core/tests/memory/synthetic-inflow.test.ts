@@ -286,7 +286,7 @@ describe('★★ 合成注入不进摘要（第三条泄漏路径）', () => {
 
     const r = await processor.process('sess-sum-2');
 
-    expect(r.summarized).toBe(false);
+    expect(r.summary).toBe('skipped');
     expect(r.reason).toBe('no-dialogue');
     expect(complete, '只有合成注入时不该白调一次 LLM').not.toHaveBeenCalled();
   });

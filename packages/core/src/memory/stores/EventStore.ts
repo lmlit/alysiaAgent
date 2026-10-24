@@ -226,6 +226,14 @@ export class EventStore {
    *   ③ 只认 `type='message'`（生活事件 / 系统事件不是"他说话"）。
    *
    * 刻意**不过滤 `archived`**：归档只是让会话从列表消失，他当时说的话仍然是他说的话。
+   *
+   * ★ 2026-10-21（change: `unify-memory-eligibility`，契约 C1）：下面这段 SQL 里的
+   *   「role=user + skip_profile=0 + synthetic=0」是**判据的第二份抄写**（判据本体在
+   *   `memory/eligibility.ts`）。**刻意保留在 SQL 里**的理由只有一条：这条查询是
+   *   亲密度/idle 的热路径，逐行回 JS 判来源不划算。
+   *   ⚠️ 因此它是**已知的重复点**：改 `eligibility.ts` 的矩阵时要同步看这里，
+   *      且 `scripts/check-memory-eligibility.cjs` 不扫描 stores（扫描范围只到
+   *      processors/engines）——这份对账靠这条注释，不靠机器。
    */
   getLastUserMessageAt(): string | null {
     const row = this.db.prepare(`

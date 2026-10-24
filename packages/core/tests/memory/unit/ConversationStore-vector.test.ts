@@ -157,7 +157,7 @@ describe('SessionEndProcessor — vectorOutcome 四态（KI-15）', () => {
   }) {
     return new SessionEndProcessor(
       { getBySession: () => [ev], markProcessed: () => {}, updateImportance: () => {} } as any,
-      { insert: async () => opts.insertReturns, updateSummaryResult: async () => 'stored' } as any,
+      { insert: async () => opts.insertReturns, updateSummaryResult: async () => 'stored', updateFactsStatus: () => ({ rows: 1 }), incrementFactsAttempts: () => {} } as any,
       { addFacts: () => {}, addCharacterFacts: () => {} } as any,
       {} as any, {} as any,
       { extract: async () => ({ facts: [], characterFacts: [] }) } as any,
@@ -170,33 +170,33 @@ describe('SessionEndProcessor — vectorOutcome 四态（KI-15）', () => {
 
   it('★ 无向量库 → no-store（摘要成功也要如实说「向量没写」）', async () => {
     await expect(proc({ vectorStore: null }).process('s1'))
-      .resolves.toMatchObject({ summarized: true, vectorOutcome: 'no-store' });
+      .resolves.toMatchObject({ summary: 'ok', vector: 'no-store' });
   });
 
   it('★ 有库且写入成功 → stored', async () => {
     await expect(proc({ vectorStore: okStore(), insertReturns: 'stored' }).process('s1'))
-      .resolves.toMatchObject({ summarized: true, vectorOutcome: 'stored' });
+      .resolves.toMatchObject({ summary: 'ok', vector: 'stored' });
   });
 
   it('★ 写入失败 → failed', async () => {
     vi.spyOn(logger, 'warn').mockImplementation(() => {});
     await expect(proc({ vectorStore: okStore(), insertReturns: 'failed' }).process('s1'))
-      .resolves.toMatchObject({ summarized: true, vectorOutcome: 'failed' });
+      .resolves.toMatchObject({ summary: 'ok', vector: 'failed' });
   });
 
   it('★ 嵌入失败 → failed（不写向量，但摘要照样落）', async () => {
     vi.spyOn(logger, 'warn').mockImplementation(() => {});
     await expect(proc({ vectorStore: okStore(), embedThrows: true }).process('s1'))
-      .resolves.toMatchObject({ summarized: true, vectorOutcome: 'failed' });
+      .resolves.toMatchObject({ summary: 'ok', vector: 'failed' });
   });
 
   it('★ store 没按契约返回 → 按 failed 记（宁可报坏，不让向量状态悄悄变空）', async () => {
     await expect(proc({ vectorStore: okStore(), insertReturns: undefined }).process('s1'))
-      .resolves.toMatchObject({ vectorOutcome: 'failed' });
+      .resolves.toMatchObject({ vector: 'failed' });
   });
 
   it('摘要失败 → 本就不该 embed，记 no-vector（不是 failed）', async () => {
     await expect(proc({ vectorStore: okStore(), insertReturns: 'no-vector', llm: '这不是 JSON' }).process('s1'))
-      .resolves.toMatchObject({ summarized: false, reason: 'summary-failed', vectorOutcome: 'no-vector' });
+      .resolves.toMatchObject({ summary: 'failed', reason: 'summary-failed', vector: 'no-vector' });
   });
 });

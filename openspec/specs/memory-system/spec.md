@@ -1537,6 +1537,101 @@ query → Worldbook 匹配 → embed API → LanceDB 向量检索
 | 2026-06-28 | 初始设计，确认所有 7 节内容 |
 | 2026-06-28 | 修正：编程模式改为注入精简画像（仅技术相关字段） |
 | 2026-07-29 | v2 画像系统: ProfileFact 加 source/valid_from/valid_until/status 四字段; 冲突解决改为 supersede+审计链; 召回加状态过滤和置信度排序; 新增纠正快路径 (RealtimeProcessor); 新增隐私模式 (full/readonly/off); 新增记忆人格旋钮 (memory_config) 与 PersonaAdapter 联动 |
+| 2026-10-21 | **记忆资格与派生规则**（change: `unify-memory-eligibility`）：新增 §10 —— 来源×用途矩阵（`eligibility.ts` 单一出处）、`historical`/`current` 两档读取、`basics` 谱系与 stale、三段分账 + `facts_status` + 事实补偿（每窗口 1 次） |
+
+---
+
+## 10. 记忆资格与派生规则（2026-10-21，change: `unify-memory-eligibility`）
+
+> 这一节回答三个问题，且**只在这里回答**：
+> ① 这条内容**允许**用于哪个用途？ ② 这条认知现在**还算数**吗？ ③ 派生结果（`basics` / 向量）**从哪来、过没过时**？
+>
+> 立它的原因是一次代码审查：同一个问题此前被**四份代码各答一次**
+> （`EventStore` 的 SQL / `RealtimeProcessor` / `ProfileExtractor` / `SessionEndProcessor`），
+> 写法互不相同 ⇒ 合成注入在正常摘要里被滤掉、在补处理里又被收进去；
+> 她自己的话进了人格扫描；被纠正的旧说法经 `basics` 回到 prompt。
+
+### 10.1 资格矩阵（唯一出处：`memory/eligibility.ts`）
+
+| 来源 | `profile-facts` | `persona-evidence` | `correction` | `summary` | `embed` | `worldbook` |
+|---|:--:|:--:|:--:|:--:|:--:|:--:|
+| `user` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `assistant` | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ |
+| `self-life` | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ |
+| `engine` | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| `agent-delegated` | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| `synthetic` | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| `npc` | ❌ | ❌ | ❌ | ✅ | ❌ | ✅ |
+| `tool` | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ |
+| `unknown` | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ |
+
+**契约 1（来源判定顺序即优先级，`originOf()`）**：非 `message` → `tool`；`synthetic`/`dsh_origin` → 机器来源；
+`role:'engine'` → `engine`；`skip_profile` → `npc`；`role:'user'`（或老数据 `sender_id`）→ `user`；
+`perspective:'self'` → `self-life`；`role:'assistant'` → `assistant`；其余 → `unknown`。
+⚠️ 机器标记**优先于 role**：合成注入恰好以 `role:'user'` 入库（KI-20 的成因）。
+
+**契约 2（禁止自带判据）**：处理器内不许出现 `payload.synthetic` / `payload.skip_profile` 的判定，
+一律调 `isEligible()` / `filterEligible()`。机器拦住：`scripts/check-memory-eligibility.cjs`（接 pre-commit）。
+已知的 SQL 侧重复点：`EventStore.getLastUserMessageAt`（热路径，注释对账）。
+
+**契约 3（跳过必须可解释）**：`isEligible()` 返回 `{ ok, reason }`；`reason` 进日志（限频）。
+只为**机器来源**出声（`isMachineOrigin`），群聊 NPC 不出声（噪声教训）。
+
+**契约 4（两条摘要路径条件逐字相同）**：正常摘要与补处理共用 `SessionEndProcessor.dialogueOf()`。
+
+**契约 5（她的话不是关于用户的证据）**：`assistant` 可进摘要/向量（要能回忆"聊过什么"），
+但**不调人格、不做纠正**。依据：她会因为自己说的话改变自己。
+
+**契约 6（D2 不自证）**：反思产出的自我认知标 `source='reflection'`，只进【关于我】，
+**不参与人格参数**。依据：`她说的话 → 自我认知 → 人格 → 她说的话` 是闭环，越自主越偏。
+
+### 10.2 有效性与派生谱系
+
+**契约 1（两档读取，不许混用）**：
+`historical`（事件 / 会话摘要 / 向量：不可改写，可作证据引用，**不得**当"当前成立"直接陈述）
+vs `current`（`facts` / `character_facts` / `basics` / 人格证据 / 纠正候选：只读 `active && 未过期`）。
+
+**契约 2（`current` 只有一个出口）**：`ProfileStore.getCurrentFacts()` / `getCurrentCharacterFacts()`。
+`getAllFacts()` **降级为审计专用**，`processors/`、`engines/` 内禁止调用（脚本拦）。
+依据：`deepProfile` 曾用全量事实重写 `basics` ⇒ 纠正掉的旧说法换形式回到 prompt。
+
+**契约 3（`basics` 必须有谱系）**：写入时记 `user_profile.basics_source = { factKeys, factCount, generatedAt }`，
+`factKeys` 是**当次实际喂给 LLM 的**事实键。
+
+**契约 4（失效只标 stale，不同步重建）**：`supersede` / `expireFact` / `expireStaleFacts` /
+`confirmFact(false)` / `replaceFacts` ⇒ `basics_stale=1`。注入侧三档：
+① 新鲜 → `[关于你]`；② 过时**且有当前事实 → 整块不注入**（由事实块承载当前认知）；
+③ 过时且无当前事实 → `[关于你（较早的印象，可能已过时）]`。
+重建入口：`CronProcessor.rebuildBasics()`（cron 每轮）/ `MemoryManager.rebuildBasics()`（手动）。
+当前态为空时**拒绝改写**（不把已知印象洗成空白），只标 stale。
+
+**契约 5（向量是派生）**：`metadata.derived_from`（`'event'` / `'summary'`）。
+向量只回答"哪段内容相关"，不回答"这条事实是否仍成立"。
+
+**契约 6（历史摘要不因事实失效而改写）**：要改的是读取出口，不是重写历史。
+
+### 10.3 三段分账与补偿
+
+**契约 1**：`SessionEndResult = { summary, facts, vector, reason? }`，三段互不冒充。
+
+**契约 2**：`conversations.facts_status ∈ { ok, failed, skipped, pending }`，**默认 `'pending'`**（不是 `'ok'`）：
+`'ok'` 且计数 0 = "看了，确实没有新事实"；`'skipped'` = 没有可提取的用户发言；`'failed'` = 可补。
+`facts_attempts` 记自动重试次数。
+
+**契约 3**：事实提取失败**不得被"已处理"吞掉** —— `ProfileExtractor.extract()` 返回
+`{ facts, characterFacts, attempted, error? }`，失败落 `facts_status='failed'`，
+由 `retryFailedFactExtraction()` 补（只补事实，不重摘摘要、不重写向量）。
+
+**契约 4（D3）**：每窗口自动重试**最多 1 次**，用尽后留 `failed` 且可见。
+
+**契约 5**：调用方不得把"跑完了"打印成"成功了" —— `onSessionEnd()` 返回三段结果，
+CLI `/clear`、`/new`、上下文压缩钩子、Web `extractProfile` 都已按真实结果回执。
+
+### 10.4 错误处理补充
+
+- `current` 读到空 ≠ 用户是新朋友（`deepProfile` 此时不改写 `basics`，只标 stale）
+- 跳过用 `[Eligibility]` 口径、失败用既有 `[SessionEnd]`/`[Cron]` tag，都走 `warnThrottled`
+- 迁移只加列，**新列默认值不得表达"成功"**
 
 ---
 

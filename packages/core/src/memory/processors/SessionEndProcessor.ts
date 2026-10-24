@@ -20,6 +20,33 @@ import type { IEmbedService } from '../interfaces/IEmbedService.js';
 import type { IVectorStore } from '../interfaces/IVectorStore.js';
 // ★ 2026-10-20（change: collect-memory-prompts）：提示词资产已外置
 import { SESSION_SUMMARY_SYSTEM_PROMPT } from '../../prompts/memory.js';
+// ★ 2026-10-21（change: `unify-memory-eligibility`，C1/E1）：摘要资格的**唯一**判据
+import { filterEligible } from '../eligibility.js';
+
+/**
+ * ★ 2026-10-21（change: `unify-memory-eligibility`，E1）：**摘要对话的唯一渲染器**。
+ *
+ * 为什么必须是一个函数而不是两段代码：
+ *   修 E1 之前，`processInner` 里有一段 `.filter(e => !e.payload?.synthetic)`，
+ *   而 `retryFailedSummary` 里是**另抄一遍**、**没有那个 filter**。
+ *   后果：同一段窗口，第一次摘滤掉合成注入、补处理时又把它收进去。
+ *   这不是"两个 bug"，是**同一件事写了两遍** —— 所以修法是删掉一份，不是再补一个 filter。
+ *
+ * 判据来源：`eligibility.ts`（`summary` 用途）。
+ * ⚠️ `npc`（群聊非 owner）进摘要是**既有行为**，此处不动；
+ *    改它属于另一个决定（见 `filter-synthetic-context-inflow` 的行内注释）。
+ */
+function dialogueOf(events: readonly MemoryEvent[]): string[] {
+  return filterEligible(events, 'summary')
+    .map(e => {
+      const p = e.payload;
+      if (!p?.content) return '';
+      // 兼容两种 payload：新消息有 role 字段；旧消息可凭 sender_id 判断用户消息
+      const isUser = p.role === 'user' || !!p.sender_id;
+      return `[${isUser ? '用户' : '昔涟'}] ${p.content}`;
+    })
+    .filter(Boolean) as string[];
+}
 
 /**
  * ★ 9-26 fix-session-event-window-truncation：`process()` 的处理结果。
@@ -29,18 +56,28 @@ import { SESSION_SUMMARY_SYSTEM_PROMPT } from '../../prompts/memory.js';
  * （线上表现为 `archived 1/1` 而库里 0 条新摘要，持续 18 小时无人发现）。
  */
 export interface SessionEndResult {
-  /** 是否产生了可用的摘要（写入了 status='ok' 的行） */
-  summarized: boolean;
-  /** 未产生摘要的原因 */
-  reason?: 'no-events' | 'no-messages' | 'no-dialogue' | 'summary-failed' | 'in-flight';
+  /**
+   * ★ 2026-10-21（change: `unify-memory-eligibility`，契约 C4）：结果拆成**三段并列**。
+   *
+   * 拆的理由是 E5/E6 那条体验："她当时聊得很正常，但真正该记住的东西并没有留下来。"
+   * 摘要、事实提取、向量是**三个独立任务**，做成一个布尔值就必然互相冒充：
+   *   - 旧 `summarized` 只说明摘要行写成了，事实提取失败它照样是 `true`
+   *   - 调用方拿到 `void`（`onSessionEnd`）时连这个也拿不到，只能打印"记忆已归档"
+   *
+   * 约定：**三段各自的状态只描述自己**，任何一段失败都不许被另一段的成功掩盖。
+   */
+  summary: 'ok' | 'failed' | 'skipped';
+  /** ★ C4：事实提取（`ok` 可能 0 条；`skipped` = 没有可提取的用户发言；`failed` = 可补） */
+  facts: 'ok' | 'failed' | 'skipped';
   /**
    * ★ KI-15：**向量的**落库结果，与摘要分开。
    *
-   * 为什么必须分开：`summarized` 只说明摘要行写成了。向量是另一条独立链路，
-   * 它失败时行仍是 `summary_status='ok'`，调用方若只数 `summarized`，
-   * 就会把「摘要在、向量全没」报成「全绿」——那正是 2026-09-27 回填事故的形态。
+   * 为什么必须分开：摘要行写成了不代表向量写成了。向量失败时行仍是 `summary_status='ok'`，
+   * 调用方若只数摘要，就会把「摘要在、向量全没」报成「全绿」——那正是 2026-09-27 回填事故的形态。
    */
-  vectorOutcome?: VectorWriteOutcome;
+  vector: VectorWriteOutcome;
+  /** 未产生摘要（或没跑）的原因；`summary === 'ok'` 时不出现 */
+  reason?: 'no-events' | 'no-messages' | 'no-dialogue' | 'summary-failed' | 'in-flight';
 }
 
 /** LLM 摘要的结构化输出（成功路径） */
@@ -126,7 +163,7 @@ export class SessionEndProcessor {
         `[SessionEnd] 会话 ${sessionId.slice(-24)} 已有摘要在跑 —— 本次**跳过**` +
           `（避免同一批事件被摘两遍；重试路径不受影响）`,
       );
-      return { summarized: false, reason: 'in-flight' };
+      return { summary: 'skipped', facts: 'skipped', vector: 'no-vector', reason: 'in-flight' };
     }
     this.inFlight.add(sessionId);
     try {
@@ -139,10 +176,10 @@ export class SessionEndProcessor {
   private async processInner(sessionId: string, since?: Date): Promise<SessionEndResult> {
     // 1. 取该会话的（窗口内）最近事件
     const events = this.getSessionEvents(sessionId, since);
-    if (events.length === 0) return { summarized: false, reason: 'no-events' };
+    if (events.length === 0) return { summary: 'skipped', facts: 'skipped', vector: 'no-vector', reason: 'no-events' };
 
     const messageEvents = events.filter(e => e.type === 'message');
-    if (messageEvents.length === 0) return { summarized: false, reason: 'no-messages' };
+    if (messageEvents.length === 0) return { summary: 'skipped', facts: 'skipped', vector: 'no-vector', reason: 'no-messages' };
 
     // ★ 8-09 摘要含 assistant：带角色标记的完整对话（回写后 AI 发言也进摘要）
     //
@@ -150,24 +187,18 @@ export class SessionEndProcessor {
     //   第三条泄漏路径：摘要会被召回、并回灌进她下一轮的上下文 ——
     //   把 runtime context 快照摘要进去，等于让它**换个形式**继续留在记忆里，
     //   还会挤掉本该属于真实对话的摘要预算。
-    //   ⚠️ 只过滤 `synthetic`，**不**过滤 `skip_profile`：群聊 NPC 消息进摘要是
-    //      既有行为，本 change 不动它（换 `skip_profile` 过滤会静默改变群聊摘要）。
-    const dialogue = messageEvents
-      .filter(e => !e.payload?.synthetic)
-      .map(e => {
-        const p = e.payload;
-        if (!p?.content) return '';
-        // 兼容两种 payload：新消息有 role 字段；旧消息可凭 sender_id 判断用户消息
-        const isUser = p.role === 'user' || !!p.sender_id;
-        return `[${isUser ? '用户' : '昔涟'}] ${p.content}`;
-      })
-      .filter(Boolean) as string[];
+    //   ⚠️ 只过滤「机器来源」，**不**过滤群聊 NPC：NPC 消息进摘要是既有行为，
+    //      本 change 不动它（换过滤口径会静默改变群聊摘要）。
+    //
+    // ★ 2026-10-21（`unify-memory-eligibility`，E1）：渲染与过滤**收进 `dialogueOf()`**，
+    //   与 `retryFailedSummary` 共用同一份 —— 两条摘要路径的条件不许再分叉。
+    const dialogue = dialogueOf(messageEvents);
 
     // 没有任何可摘要的文本（消息无 content）→ 跳过。这**不是**失败，
     // 不该落一条 failed 行（否则会制造噪声，掩盖真正的失败）。
     if (dialogue.length === 0) {
       logger.info(`[SessionEnd] 无可用对话文本，跳过: ${sessionId.slice(-24)}`);
-      return { summarized: false, reason: 'no-dialogue' };
+      return { summary: 'skipped', facts: 'skipped', vector: 'no-vector', reason: 'no-dialogue' };
     }
 
     // 2. Generate conversation summary via LLM
@@ -279,6 +310,11 @@ export class SessionEndProcessor {
     // 4. Extract profile facts from session events (v2: 使用 addFacts 自动处理冲突)
     //    ★ 8-28 角色视角（memory-character-perspective）：同一次提取双输出——用户事实 +
     //    角色事实（昔涟自己的事）分库写入
+    //
+    //    ★ 2026-10-21（change: `unify-memory-eligibility`，契约 C4 / E5）：**如实记账**。
+    //      这是一次独立的任务，成败必须落到 `facts_status` 上 ——
+    //      否则"摘要成功"会替它作证，而锚点已经前进，这批事实再也没有机会被提取。
+    let factsOutcome: 'ok' | 'failed' | 'skipped' = 'skipped';
     if (messageEvents.length > 0) {
       const extracted = await this.profileExtractor.extract(messageEvents);
       if (extracted.facts.length > 0) {
@@ -287,7 +323,12 @@ export class SessionEndProcessor {
       if (extracted.characterFacts.length > 0) {
         this.profileStore.addCharacterFacts(extracted.characterFacts);
       }
+      if (extracted.error) factsOutcome = 'failed';
+      else if (extracted.attempted) factsOutcome = 'ok';   // ok **可能 0 条**：看了，确实没有新事实
+      else factsOutcome = 'skipped';
     }
+    // 行是摘要落库时就插好的（那时还不知道提取结果），所以这里补记 —— 'pending' 因此是真实状态
+    this.conversationStore.updateFactsStatus(conv.id, factsOutcome);
 
     // 5. Confirm persona adjustments (check for pending adaptations)
     await this.confirmPersona(events);
@@ -298,8 +339,8 @@ export class SessionEndProcessor {
     }
 
     return ok
-      ? { summarized: true, vectorOutcome }
-      : { summarized: false, reason: 'summary-failed', vectorOutcome };
+      ? { summary: 'ok', facts: factsOutcome, vector: vectorOutcome }
+      : { summary: 'failed', facts: factsOutcome, vector: vectorOutcome, reason: 'summary-failed' };
   }
 
   /** ★ 9-26：`since`/`until` 透传到 SQL（窗口过滤下推，不受"最旧 1000 条"截断影响） */
@@ -380,14 +421,9 @@ export class SessionEndProcessor {
     // `until` 用于**历史回填**：窗口是 [since, until]（cron 补处理传 undefined = 到现在）
     const events = this.getSessionEvents(conv.session_id, since, until);
     const messageEvents = events.filter(e => e.type === 'message');
-    const dialogue = messageEvents
-      .map(e => {
-        const p = e.payload;
-        if (!p?.content) return '';
-        const isUser = p.role === 'user' || !!p.sender_id;
-        return `[${isUser ? '用户' : '昔涟'}] ${p.content}`;
-      })
-      .filter(Boolean) as string[];
+    // ★ 2026-10-21（`unify-memory-eligibility`，E1）：**与正常摘要共用 `dialogueOf()`**。
+    //   这里原本是另抄一遍、而且**漏了机器来源过滤** —— 于是"第一次滤掉、补处理又收进去"。
+    const dialogue = dialogueOf(messageEvents);
     if (dialogue.length === 0) return false;
 
     let data: SummaryData;
@@ -434,6 +470,61 @@ export class SessionEndProcessor {
     }
     // ★ KI-15：摘要补成功 ≠ 向量补成功，分开报（后者失败时上面已 warn，这里报总账）
     logger.info(`[SessionEnd] 补处理成功: ${conv.id.slice(0, 30)}（向量 ${updated.vector}）`);
+    return true;
+  }
+
+  /**
+   * ★ 2026-10-21（change: `unify-memory-eligibility`，契约 C4 / E5）：补处理一条**事实提取失败**的窗口。
+   *
+   * 与 `retryFailedSummary` 的分工（**别混**）：
+   *   - 那个补的是**摘要**（summary 为空的行）
+   *   - 这个补的是**事实**（摘要可能早就成功了，只是那一批事实没提取出来）
+   *   所以这里**不重摘摘要、不重写向量** —— 只重新跑提取，再按结果改 `facts_status`。
+   *
+   * 窗口口径与摘要补处理一致（`[since, until]`），因为两者的窗口边界同源：
+   * 都是"两条摘要之间那一段"。取错窗口会重复提取到别的窗口的消息。
+   *
+   * @returns 是否真的补上了（false 时调用方决定要不要再试 —— D3 规定每窗口最多 1 次）
+   */
+  async retryFailedFacts(conv: Conversation, since: Date, until?: Date): Promise<boolean> {
+    const events = this.getSessionEvents(conv.session_id, since, until);
+    const messageEvents = events.filter(e => e.type === 'message');
+    if (messageEvents.length === 0) {
+      // 窗口里一条消息都没有 ⇒ 补不了。这**不是**成功，别把状态改成 ok。
+      logger.warn(`[SessionEnd] 事实补处理：窗口内没有事件 ${conv.id.slice(0, 30)}`);
+      return false;
+    }
+
+    const extracted = await this.profileExtractor.extract(messageEvents);
+    if (extracted.error) {
+      // D3：次数用尽后留在 failed 且**可见**（不再重试），而不是无限重试 + 日志全绿
+      this.conversationStore.incrementFactsAttempts(conv.id);
+      logger.warn(
+        `[SessionEnd] 事实补处理仍失败 ${conv.id.slice(0, 30)}（第 ${(conv.facts_attempts ?? 0) + 1} 次）: ${extracted.error}`,
+      );
+      return false;
+    }
+    if (!extracted.attempted) {
+      // 这个窗口确实没有可提取的用户发言（比如全是合成注入/NPC）——
+      // 如实记 'skipped'，别留一个永远补不动的 failed。
+      this.conversationStore.updateFactsStatus(conv.id, 'skipped');
+      logger.info(`[SessionEnd] 事实补处理：窗口内没有可提取的用户发言，记 skipped ${conv.id.slice(0, 30)}`);
+      return false;
+    }
+
+    if (extracted.facts.length > 0) this.profileStore.addFacts(extracted.facts);
+    if (extracted.characterFacts.length > 0) this.profileStore.addCharacterFacts(extracted.characterFacts);
+
+    const r = this.conversationStore.updateFactsStatus(conv.id, 'ok');
+    if (r.rows === 0) {
+      // ★ KI-17 的同款判据：0 行更新 = 目标行不存在 ⇒ **不是成功**
+      logger.warn(`[SessionEnd] 事实补处理**失败**：目标行不存在（0 行更新） ${conv.id.slice(0, 30)}`);
+      return false;
+    }
+    logger.info(
+      `[SessionEnd] 事实补处理成功: ${conv.id.slice(0, 30)}` +
+      `（用户事实 +${extracted.facts.length}，角色事实 +${extracted.characterFacts.length}）`,
+    );
     return true;
   }
 

@@ -80,4 +80,26 @@ if [ -n "$HITS" ]; then
   exit 1
 fi
 
+# ── ③ 记忆资格判据不许复制（★ 2026-10-21，change: unify-memory-eligibility，契约 C1）──
+# 只在**动了记忆处理层**时才跑：那正是判据会被顺手抄一份的地方。
+# 判据的唯一出处是 packages/core/src/memory/eligibility.ts；
+# 抄一份的后果不是"多几行代码"，而是"能不能学"取决于你恰好走哪条路径
+# （E1：合成注入在正常摘要里被滤掉、在补处理里又被收进去）。
+STAGED_MEM="$(git diff --cached --name-only -- 'packages/core/src/memory/*' || true)"
+if [ -n "$STAGED_MEM" ]; then
+  NODE_BIN="$(command -v node 2>/dev/null || true)"
+  if [ -n "$NODE_BIN" ]; then
+    # 纯 fs/path 的 CJS 检查器，不依赖 Node 24 的 better-sqlite3 ABI
+    if ! "$NODE_BIN" "$REPO/scripts/check-memory-eligibility.cjs" >&2; then
+      echo "" >&2
+      echo "✗ pre-commit 拦截：处理层里出现了**自带**的记忆资格判定。" >&2
+      echo "  改法：调 eligibility.ts 的 isEligible() / filterEligible()，不要自己读 payload 标记。" >&2
+      echo "" >&2
+      exit 1
+    fi
+  else
+    echo "⚠️ 未找到 node，跳过记忆资格检查（scripts/check-memory-eligibility.cjs）" >&2
+  fi
+fi
+
 exit 0

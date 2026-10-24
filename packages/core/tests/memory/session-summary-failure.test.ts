@@ -35,7 +35,7 @@ function makeHarness(llm: { response?: string; throws?: Error }) {
       markProcessed: (id: string) => processed.push(id),
       updateImportance: () => {},
     } as any,
-    { insert: async (conv: any, vec?: number[]) => inserted.push({ conv, vec }) } as any,
+    { insert: async (conv: any, vec?: number[]) => inserted.push({ conv, vec }), updateFactsStatus: () => ({ rows: 1 }), incrementFactsAttempts: () => {} } as any,
     { addFacts: () => {}, addCharacterFacts: () => {} } as any,
     {} as any,
     {} as any,
@@ -103,9 +103,9 @@ describe('失败路径 — 绝不写占位符', () => {
   it('LLM 抛异常（如 API 报错）→ 同样记 failed，不炸掉整个会话归档', async () => {
     const h = makeHarness({ throws: new Error('LLM API error 429: rate limit') });
     // ★ 9-26：不再返回 void —— 失败要能被调用方识别（reason 与"无内容"区分开）
-    // ★ 2026-10-16 KI-15：结果另带 `vectorOutcome`，故只匹配本用例关心的字段
+    // ★ 2026-10-16 KI-15 / ★ 2026-10-21 C4：结果拆成三段，故只匹配本用例关心的字段
     await expect(h.p.process('s1')).resolves.toMatchObject({
-      summarized: false,
+      summary: 'failed',
       reason: 'summary-failed',
     });
     expect(h.inserted).toHaveLength(1);
@@ -171,7 +171,7 @@ describe('★ 补处理：0 行更新不算成功（KI-17）', () => {
         markProcessed: () => {},
         updateImportance: () => {},
       } as any,
-      { insert: async () => {}, updateSummaryResult: async () => updateResult } as any,
+      { insert: async () => {}, updateSummaryResult: async () => updateResult, updateFactsStatus: () => ({ rows: 1 }), incrementFactsAttempts: () => {} } as any,
       { addFacts: () => {}, addCharacterFacts: () => {} } as any,
       {} as any,
       {} as any,

@@ -21,8 +21,15 @@
  * | `code/rich` | 编程模式的块顺序与 2450 预算口径 |
  *
  * 时间字段全部写死（`valid_from` / `updated_at` 用常量），否则快照会随运行时间漂移。
+ *
+ * ★ 2026-10-21 补（change: `unify-memory-eligibility` 顺手修，与本变更无关）：
+ *   上面那句只做了"输入写死"，**没做"时钟写死"** —— 而事实块渲染的是「(N天前)」，
+ *   N 是相对**当前时钟**算的。于是这份快照**每过一天就红一次**
+ *   （2026-10-21 实测：期望 `19天前`、实际 `20天前`）。
+ *   ⇒ 快照测试必须自带时钟。否则"基线变红"本身失去信号：
+ *     分不清是回归，还是日历又翻了一页。
  */
-import { describe, it, beforeEach, afterEach } from 'vitest';
+import { describe, it, beforeEach, afterEach, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { PromptAssembler } from '../../../src/memory/PromptAssembler';
 import { initializeDatabase } from '../../../src/memory/database';
@@ -64,6 +71,9 @@ describe('PromptAssembler —— 行为特征快照（重构安全网）', () =>
   let worldbookStore: WorldbookStore;
 
   beforeEach(() => {
+    // ★ 2026-10-21：**时钟也写死**（快照冻结在 2026-10-20，故 `FIXED_TIME` 显示为 19 天前）。
+    //   不冻结时钟的话，这份快照每天都会因为一个自然日而失败。
+    vi.useFakeTimers({ now: new Date('2026-10-20T08:00:00.000Z') });
     db = new Database(':memory:');
     initializeDatabase(db);
     profileStore = new ProfileStore(db);
@@ -79,7 +89,10 @@ describe('PromptAssembler —— 行为特征快照（重构安全网）', () =>
     assembler = new PromptAssembler(profileStore, personaStore, convStore, knowledgeStore, worldbookStore, codeContextStore);
   });
 
-  afterEach(() => db.close());
+  afterEach(() => {
+    db.close();
+    vi.useRealTimers();
+  });
 
   it('chat/empty：空库时哪些块完全不出现', async () => {
     const prompt = await assembler.assemble('chat');

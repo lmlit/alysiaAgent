@@ -49,6 +49,7 @@ import { readWorldviewBlock } from '../persona/loader.js';
 import { CONTEXT_COMPACT_SYSTEM_PROMPT, CONTEXT_COMPACT_MERGE_SYSTEM_PROMPT } from '../prompts/context.js';
 import { RealtimeProcessor } from './processors/RealtimeProcessor.js';
 import { SessionEndProcessor } from './processors/SessionEndProcessor.js';
+import type { SessionEndResult } from './processors/SessionEndProcessor.js';
 import { CronProcessor } from './processors/CronProcessor.js';
 import { PromptAssembler } from './PromptAssembler.js';
 import { filterPII } from './PIIFilter.js';
@@ -324,8 +325,9 @@ export class MemoryManager {
    * 调用方：RealtimeProcessor 或 Pipeline 中检测到纠正信号。
    */
   async applyCorrectionFastPath(text: string): Promise<boolean> {
-    const allFacts = this.profileStore.getAllFacts();
-    const signal = await this.profileExtractor.detectCorrectionSignal(text, allFacts);
+    // ★ 2026-10-21（C2/E3）：候选池只放**当前态**事实（同 RealtimeProcessor 的纠正快路径）。
+    const currentFacts = this.profileStore.getCurrentFacts();
+    const signal = await this.profileExtractor.detectCorrectionSignal(text, currentFacts);
 
     if (!signal.isCorrection || !signal.target) return false;
 
@@ -1332,18 +1334,31 @@ export class MemoryManager {
     return anchor;
   }
 
-  async onSessionEnd(sessionId: string): Promise<void> {
+  /**
+   * ★ 2026-10-21（change: `unify-memory-eligibility`，契约 C4 / E6）：**返回三段结果**，不再返回 `void`。
+   *
+   * 为什么必须改：返回 `void` 时调用方只看得到"函数跑完了"，看不到"记成了没有"。
+   * 线上形态就是 `chat.ts` 的 `/clear`：摘要失败也照印「记忆已归档」。
+   * 现在调用方可以按 `summary / facts / vector` 三段**分别**如实回执。
+   */
+  async onSessionEnd(sessionId: string): Promise<SessionEndResult> {
     logger.info(`[Memory] onSessionEnd: ${sessionId.slice(-30)} (summary + profile)`);
     const start = Date.now();
+    let result: SessionEndResult;
     try {
-      await this.sessionEndProcessor.process(sessionId, this.summaryAnchor(sessionId));
-      logger.info(`[Memory] onSessionEnd done (${Date.now() - start}ms)`);
+      result = await this.sessionEndProcessor.process(sessionId, this.summaryAnchor(sessionId));
+      logger.info(
+        `[Memory] onSessionEnd done (${Date.now() - start}ms):` +
+        ` summary=${result.summary} facts=${result.facts} vector=${result.vector}` +
+        (result.reason ? `（${result.reason}）` : ''),
+      );
     } catch (err: any) {
       logger.error(`[Memory] onSessionEnd failed: ${err.message}`);
       throw err;
     }
     // 会话结束自动恢复隐私模式
     this.privacyMode = 'off';
+    return result;
   }
 
   /**
@@ -1387,6 +1402,12 @@ export class MemoryManager {
       const retried = await this.retryFailedSummaries();
       if (retried > 0) logger.info(`[Memory] 补处理成功 ${retried} 条失败摘要`);
 
+      // ★ 2026-10-21（change: `unify-memory-eligibility`，C4/E5）：**事实**也要补。
+      //   摘要补处理的对称物：摘要可能早就成功了，只是那批事实没提取出来
+      //   （D3：每窗口最多自动重试 1 次，用尽后留在 failed 且可见）。
+      const factsRetried = await this.retryFailedFactExtraction();
+      if (factsRetried > 0) logger.info(`[Memory] 补处理成功 ${factsRetried} 个窗口的事实提取`);
+
       const since = new Date(Date.now() - 24 * 3600 * 1000);
       const active = this.eventStore.getActiveSessions(since);
       // ★ 9-26 fix-session-event-window-truncation：按 process() 的**真实结果**计数。
@@ -1399,15 +1420,18 @@ export class MemoryManager {
       const vectorCounts: Record<VectorWriteOutcome, number> = {
         stored: 0, 'no-store': 0, 'no-vector': 0, failed: 0,
       };
+      // ★ C4：事实提取的次数单独数 —— 摘要成功不该替它报平安
+      let factsFailed = 0;
       for (const sid of active) {
         try {
           // ★ 2026-10-11 fix-session-end-window：锚点改走共用 helper
           //   （行为不变：无历史摘要仍回退 24h 前）。
           const anchor = this.summaryAnchor(sid);
           const r = await this.sessionEndProcessor.process(sid, anchor);
-          if (r.summarized) {
+          if (r.facts === 'failed') factsFailed++;
+          if (r.summary === 'ok') {
             archived++;
-            if (r.vectorOutcome) vectorCounts[r.vectorOutcome]++;
+            vectorCounts[r.vector]++;
           } else if (r.reason === 'summary-failed') failed++;
           else {
             skipped++;
@@ -1417,16 +1441,20 @@ export class MemoryManager {
           logger.error(`[Memory] archive failed for ${sid.slice(-24)}: ${err.message}`);
         }
       }
-      if (archived > 0 || skipped > 0 || failed > 0) {
+      if (archived > 0 || skipped > 0 || failed > 0 || factsFailed > 0) {
         // 只有「全部 stored」才不加尾巴 —— 任何降级都要在这行里看得见
         const allStored = vectorCounts.stored === archived;
         const vectorNote = allStored
           ? ''
           : `（向量：成功 ${vectorCounts.stored} / 无库 ${vectorCounts['no-store']} / 失败 ${vectorCounts.failed}）`;
+        const factsNote = factsFailed > 0
+          ? `（⚠️ 事实提取失败 ${factsFailed}：已标 facts_status=failed，cron 会补一次）`
+          : '';
         logger.info(
           `[Memory] archived ${archived}/${active.length} sessions` +
           (skipped > 0 ? `（跳过 ${skipped}：无新内容）` : '') +
           (failed > 0 ? `（失败 ${failed}）` : '') +
+          factsNote +
           vectorNote,
         );
       }
@@ -1468,11 +1496,67 @@ export class MemoryManager {
     return ok;
   }
 
+  /**
+   * ★ 2026-10-21（change: `unify-memory-eligibility`，契约 C4 / E5）：补处理**事实提取**失败的窗口。
+   *
+   * 与 `retryFailedSummaries()` 的分工：那个补摘要（`summary_status='failed'`），
+   * 这个补事实（`facts_status='failed'`）。两者窗口口径一致，都不互斥。
+   *
+   * 为什么必须有它：摘要成功 ⇒ 锚点前进 ⇒ `getBySession` 再也捞不到那个窗口
+   * ⇒ **那批事实永久丢失**，而且只在日志里留过一行 error。这是 E5 的核心。
+   *
+   * ⚠️ D3（用户 2026-10-21 拍板）：**每窗口最多自动重试 1 次**。
+   *    用尽后留在 `failed` 且可见，由人决定要不要再补 —— 而不是无限重试 + 日志全绿。
+   *
+   * @returns 补成功的窗口数
+   */
+  async retryFailedFactExtraction(limit = 5): Promise<number> {
+    const failed = this.conversationStore.listFailedFacts(limit);
+    if (failed.length === 0) return 0;
+
+    let ok = 0;
+    for (const f of failed) {
+      if ((f.facts_attempts ?? 0) >= 1) {
+        // 次数用尽：**保持 failed 可见**，不再重试（D3）
+        logger.info(`[Memory] 事实提取不再重试（已用尽自动重试次数）${f.id.slice(0, 30)}`);
+        continue;
+      }
+      try {
+        const prevEnd = f.ended_at
+          ? this.conversationStore.getPreviousEndedAt(f.session_id, f.ended_at)
+          : null;
+        const since = prevEnd
+          ? new Date(prevEnd)
+          : new Date((f.ended_at ? new Date(f.ended_at).getTime() : Date.now()) - 24 * 3600 * 1000);
+        // until = 该窗口自己的右边界（用数据边界，与 `SessionEndProcessor` 的 endedAt 同源）
+        const until = f.ended_at ? new Date(f.ended_at) : undefined;
+        if (await this.sessionEndProcessor.retryFailedFacts(f, since, until)) ok++;
+      } catch (err: any) {
+        logger.warn(`[Memory] 事实补处理异常 ${f.id.slice(0, 30)}: ${err?.message ?? err}`);
+      }
+    }
+    return ok;
+  }
+
   /** ★ 8-28 情绪惯性漂移（memory-character-perspective）：生活事件累积 mood_value 驱动
    *  人格自然漂移（连续开心 → playfulness、连续低落 → empathy），走 apply 5 道护栏。
    *  由 LifeService.updateMoodValue 极性跨阈值时调用。 */
   adjustPersonaFromMood(moodValue: number): boolean {
     return this.personaAdapter.adjustFromMood(moodValue);
+  }
+
+  /**
+   * ★ 2026-10-21（change: `unify-memory-eligibility`，契约 C3 / E7）：**重建 `basics`**（纯数据返回）。
+   *
+   * 这是"派生结果可重建"的执行入口：
+   *   - cron 每轮会重建（`CronProcessor.process()`）
+   *   - 事实状态变化只会把 `basics` 标 stale（不同步重建，因为要调 LLM）
+   *   - 人（或 Web 端的"重建画像"按钮）可以在想立刻刷新时调这个
+   *
+   * @returns `{ ok, usedFacts, stale }` —— `ok=false` 时 `basics` **没有被改写**（原样保留）
+   */
+  async rebuildBasics(): Promise<{ ok: boolean; usedFacts: number; stale: boolean }> {
+    return this.cronProcessor.rebuildBasics();
   }
 
   /**
@@ -1542,7 +1626,11 @@ export class MemoryManager {
         evidence: `每日反思 ${now.slice(0, 10)}`,
         source_event: `reflection-${now.slice(0, 10)}`,
         updated_at: now,
-        source: 'inferred',
+        // ★ 2026-10-21（change: `unify-memory-eligibility`，D2）：**标成 reflection**，不是 inferred。
+        //   D2 的判据：她自己产出的内容可以形塑**表达**（【关于我】的自我叙事），
+        //   不可以形塑**权威**（人格参数/用户画像）。用独立取值把这条钉进数据，
+        //   否则将来任何"读 character_facts 当证据"的代码都分不出这两类。
+        source: 'reflection',
         valid_from: now,
         valid_until: null,
         status: 'active',
@@ -1562,24 +1650,34 @@ export class MemoryManager {
 
   /** ★ 手动触发画像提取（Web 端"提取画像"按钮）。
    *  对指定会话执行 SessionEnd 处理：对话摘要 + LLM 事实提取 + 合并入画像。
-   *  返回本次提取到的 facts 数量。 */
-  async extractProfile(sessionId: string): Promise<{ factsExtracted: number; summaryGenerated: boolean }> {
+   *
+   *  ★ 2026-10-21（change: `unify-memory-eligibility`，C4）：返回值多了 `factsStatus` ——
+   *  摘要与事实是两件事，"提取画像"按钮必须能分别报。`factsExtracted: 0` 有两种含义
+   *  （"看了确实没有" / "提取失败"），只给数字分不清，所以带上状态。 */
+  async extractProfile(sessionId: string): Promise<{
+    factsExtracted: number;
+    summaryGenerated: boolean;
+    factsStatus: 'ok' | 'failed' | 'skipped';
+  }> {
     const before = JSON.parse(this.profileStore.get().facts).length;
     const start = Date.now();
     // ★ 2026-10-11 fix-session-end-window：这里原先也不传 `since`，与 onSessionEnd 同病——
     //   一次「提取画像」会把全历史最近 1000 条事件重摘一遍。
-    await this.sessionEndProcessor.process(sessionId, this.summaryAnchor(sessionId));
+    const result = await this.sessionEndProcessor.process(sessionId, this.summaryAnchor(sessionId));
     const after = JSON.parse(this.profileStore.get().facts).length;
     const factsExtracted = Math.max(0, after - before);
     // ★ 9-25 fix-session-summary-silent-failure：**不再恒返回 true**——
     //   摘要失败时该字段一直是 true，Web 端"提取画像"按钮无论成败都报成功。
-    //   现在读回刚落库的那条，如实反映。
-    const latest = this.conversationStore.getLatestBySession(sessionId);
-    const summaryGenerated = !!latest && latest.summary_status !== 'failed' && latest.summary.length > 0;
-    logger.info(`[Memory] extractProfile: ${factsExtracted} new facts, summary ${summaryGenerated ? 'ok' : 'FAILED'} (${Date.now() - start}ms)`);
+    //   现在以处理器返回的三段结果为准（读回行也有被并发改写的风险）。
+    const summaryGenerated = result.summary === 'ok';
+    logger.info(
+      `[Memory] extractProfile: ${factsExtracted} new facts, summary ${result.summary}, facts ${result.facts} ` +
+      `(${Date.now() - start}ms)`,
+    );
     return {
       factsExtracted,
       summaryGenerated,
+      factsStatus: result.facts,
     };
   }
 

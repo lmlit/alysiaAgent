@@ -1,6 +1,6 @@
 // src/memory/stores/ConversationStore.ts
 import type Database from 'better-sqlite3';
-import type { Conversation, SearchResult } from '../types.js';
+import type { Conversation, FactsStatus, SearchResult } from '../types.js';
 import type { IVectorStore } from '../interfaces/IVectorStore.js';
 import { traceZeroRows } from '../../utils/write-trace.js';
 import { logger } from '../../utils/logger.js';
@@ -46,12 +46,17 @@ export class ConversationStore {
   async insert(conv: Conversation, vector?: number[]): Promise<VectorWriteOutcome> {
     // ★ 8-28 character_perspective 列（memory-character-perspective）
     // ★ 9-25 summary_status 列（fix-session-summary-silent-failure）：'ok' | 'failed'
+    // ★ 2026-10-21 facts_status / facts_attempts 列（unify-memory-eligibility，C4）
     this.db.prepare(`
-      INSERT INTO conversations (id, session_id, summary, participants, topics, key_decisions, message_count, started_at, ended_at, embedding_id, character_perspective, summary_status, channel)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO conversations (id, session_id, summary, participants, topics, key_decisions, message_count, started_at, ended_at, embedding_id, character_perspective, summary_status, channel, facts_status, facts_attempts)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(conv.id, conv.session_id, conv.summary, conv.participants, conv.topics, conv.key_decisions, conv.message_count, conv.started_at, conv.ended_at, conv.embedding_id, conv.character_perspective ?? '', conv.summary_status ?? 'failed',
       // ★ add-memory-channel-field：渠道写入时落库（不传则由 session_id 派生，派生不出记 'unknown'）
-      conv.channel ?? channelOfSession(conv.session_id));
+      conv.channel ?? channelOfSession(conv.session_id),
+      // ★ C4：**默认 'pending'**（不是 'ok'）。事实提取在摘要落库之后才跑，
+      //   "还没跑"必须是可见的状态，不能默认记成成功。
+      conv.facts_status ?? 'pending',
+      conv.facts_attempts ?? 0);
 
     if (!vector) return 'no-vector';
     if (!this.vectorStore) return 'no-store';
@@ -143,6 +148,37 @@ export class ConversationStore {
     return row?.ended_at ?? null;
   }
 
+  /**
+   * ★ 2026-10-21（change: `unify-memory-eligibility`，契约 C4 / E5）：
+   * 捞出**事实提取失败**的窗口，供 cron 补处理（与 `getFailed()` 对称）。
+   *
+   * 为什么要它：摘要成功 ⇒ 锚点前进 ⇒ `getBySession` 再也捞不到那个窗口，
+   * 而事实提取的失败当时只留下**一行 error 日志** ⇒ 那批事实永久丢失且无人可见。
+   * 有了这一列，失败是**库里的一行状态**，不是日记里的一句话。
+   */
+  listFailedFacts(limit = 10): Conversation[] {
+    const rows = this.db.prepare(
+      `SELECT * FROM conversations WHERE facts_status = 'failed' ORDER BY ended_at ASC LIMIT ?`
+    ).all(limit) as Record<string, unknown>[];
+    return rows.map(r => this.rowToConv(r));
+  }
+
+  /** ★ C4：如实记录本窗口的事实提取状态（`ok` / `failed` / `skipped`） */
+  updateFactsStatus(id: string, status: FactsStatus): { rows: number } {
+    const r = this.db.prepare(`UPDATE conversations SET facts_status = ? WHERE id = ?`).run(status, id);
+    traceZeroRows('ConversationStore.updateFactsStatus', r.changes);
+    if (r.changes === 0) {
+      logger.warn(`[ConversationStore] 事实状态命中 0 行（目标摘要行不存在）：${id.slice(0, 30)} → ${status}`);
+    }
+    return { rows: r.changes };
+  }
+
+  /** ★ C4（D3）：自动重试计数。用尽后由调用方留在 `failed` 且不再重试。 */
+  incrementFactsAttempts(id: string): void {
+    const r = this.db.prepare(`UPDATE conversations SET facts_attempts = facts_attempts + 1 WHERE id = ?`).run(id);
+    traceZeroRows('ConversationStore.incrementFactsAttempts', r.changes);
+  }
+
   getById(id: string): Conversation | null {
     const row = this.db.prepare('SELECT * FROM conversations WHERE id = ?').get(id) as Record<string, unknown> | undefined;
     if (!row) return null;
@@ -223,6 +259,9 @@ export class ConversationStore {
       ended_at: row.ended_at as string | null,
       embedding_id: row.embedding_id as string | null,
       summary_status: (row.summary_status as 'ok' | 'failed') ?? 'failed',
+      // ★ C4：缺列/老行 → 'pending'（"没记过账"，不是"成功"）
+      facts_status: (row.facts_status as FactsStatus) ?? 'pending',
+      facts_attempts: (row.facts_attempts as number) ?? 0,
     };
   }
 }

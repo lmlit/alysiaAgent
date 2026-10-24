@@ -14,6 +14,24 @@ import {
   PROFILE_EXTRACT_SYSTEM_PROMPT,
   buildCorrectionPrompt,
 } from '../../prompts/memory.js';
+// ★ 2026-10-21（change: `unify-memory-eligibility`，C1）：来源筛选的唯一判据
+import { filterEligible } from '../eligibility.js';
+
+/**
+ * ★ 2026-10-21（change: `unify-memory-eligibility`，契约 C4 / E5）：提取结果必须**可分三种**。
+ *
+ * 旧返回值只有两个数组 ⇒ 调用方**分不清**「看了，确实没有新事实」与「提取失败」：
+ * 两者都是空数组，后者只留一行 error 日志，而摘要行是 `'ok'` ⇒ 锚点前进 ⇒
+ * 那批事实**永久不可重提**。这就是 E5 的机制。
+ */
+export interface ExtractResult {
+  facts: ProfileFact[];
+  characterFacts: ProfileFact[];
+  /** 有没有真的调用过 LLM（false = 本窗口没有可提取的用户发言，**不是失败**） */
+  attempted: boolean;
+  /** 失败原因（有值 ⇒ `facts_status='failed'`，可被 `retryFailedFactExtraction` 补） */
+  error?: string;
+}
 
 export interface CorrectionSignal {
   isCorrection: boolean;
@@ -61,24 +79,27 @@ export class ProfileExtractor {
   // ===== Fact 提取 (慢路径，SessionEnd 使用) =====
 
   /** ★ 8-28 双输出（memory-character-perspective）：用户事实 + 角色事实（昔涟自己的事） */
-  async extract(events: MemoryEvent[]): Promise<{ facts: ProfileFact[]; characterFacts: ProfileFact[] }> {
+  async extract(events: MemoryEvent[]): Promise<ExtractResult> {
     // ★ 9-25 wire-importance-signal：importance 接线后，启用原注释所写的过滤意图。
     //   原来是 `const significantEvents = events;` —— 当时 importance 恒 0，过滤等于全杀。
     //
     //   安全下限：过滤后剩不足 MIN_SIGNIFICANT 条就**回退用全部**。
     //   宁可多提一点噪音，也不能因重要度稀疏就让画像停止生长。
-    const byImportance = events.filter(e => (e.importance ?? 0) >= IMPORTANCE_FLOOR);
-    const significantEvents = byImportance.length >= MIN_SIGNIFICANT ? byImportance : events;
+    //
+    // ★ 2026-10-21（change: `unify-memory-eligibility`，C1）：**来源筛选改走唯一判据**。
+    //   原来这里自带三段手写 filter（`type==='message'` + `role==='user'||sender_id`
+    //   + `skip_profile!==true`），而它**不看 `synthetic`** —— 与
+    //   `SessionEndProcessor`、`RealtimeProcessor`、`EventStore` 三处的写法互不相同（E1/E4 同族）。
+    //   现在只有一句：谁能进画像事实，由 `eligibility.ts` 的矩阵说了算。
+    const factsEligible = filterEligible(events, 'profile-facts');
+    const byImportance = factsEligible.filter(e => (e.importance ?? 0) >= IMPORTANCE_FLOOR);
+    const significantEvents = byImportance.length >= MIN_SIGNIFICANT ? byImportance : factsEligible;
     const userMessages = significantEvents
-      .filter(e => e.type === 'message')
-      // 兼容两种 payload：新消息有 role 字段；旧消息凭 sender_id 判断
-      .filter(e => (e.payload?.role === 'user' || !!e.payload?.sender_id))
-      // 排除群聊 NPC 消息（非 owner 标记 skip_profile）
-      .filter(e => e.payload?.skip_profile !== true)
       .map(e => `[user]: ${e.payload?.content}`)
       .join('\n');
 
-    if (!userMessages.trim()) return { facts: [], characterFacts: [] };
+    // ★ C4：**没调过 LLM** 与**调了但失败**必须分开（旧实现两者都返回空数组）
+    if (!userMessages.trim()) return { facts: [], characterFacts: [], attempted: false };
 
     try {
       const response = await this.llm.complete(
@@ -133,19 +154,20 @@ export class ProfileExtractor {
         source: 'inferred' as const,
         source_event: events[0]?.id || `unknown-c${i}`,
       }));
-      return { facts: userFacts, characterFacts };
+      return { facts: userFacts, characterFacts, attempted: true };
     } catch (err: any) {
       // ★ 2026-10-01 fix-profile-extract-empty-response：
       //   原来是**裸 `catch {}`**（这个文件此前连 logger 都没 import）——
       //   失败与「正常但没提取到」长得一模一样，画像因此静默停摆且无人察觉。
       //   同一模式在本项目已酿成 3 次事故（HANDOFF：成功日志掩盖了没做的事）。
       //
-      //   ⚠️ 这里**故意仍返回空**（调用方契约是「提取不到就是空数组」），
-      //   但**留痕**——一次提取失败 = 这一批事件的事实永久丢失，必须能在日志里看见。
+      // ★ 2026-10-21（C4/E5）：光有日志**不够** —— 日志没人聚合，而窗口会随锚点前进消失。
+      //   现在把失败**返回给调用方**，由它落 `facts_status='failed'`（库里的一行状态），
+      //   这样这批事实还有机会被补处理。日志保留（它是"当下就看得见"的那一层）。
       logger.error(
-        `[ProfileExtractor] 提取失败，本批 ${events.length} 条事件的事实丢失: ${err?.message ?? err}`,
+        `[ProfileExtractor] 提取失败，本批 ${events.length} 条事件的事实未入库（窗口已标 failed，可补）: ${err?.message ?? err}`,
       );
-      return { facts: [], characterFacts: [] };
+      return { facts: [], characterFacts: [], attempted: true, error: String(err?.message ?? err) };
     }
   }
 

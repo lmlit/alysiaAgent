@@ -2,6 +2,8 @@
 import type Database from 'better-sqlite3';
 import type { UserProfile, ProfileFact } from '../types.js';
 import { FACT_TTL_BY_CATEGORY, FACT_CONFIRM_WINDOW_MS } from '../types.js';
+// ★ 2026-10-21（C3）：basics 谱系/stale 的留痕
+import { logger } from '../../utils/logger.js';
 
 const NOW = () => new Date().toISOString();
 
@@ -63,6 +65,70 @@ export class ProfileStore {
       .run(basics, NOW());
   }
 
+  // ===== ★ 2026-10-21（change: `unify-memory-eligibility`，契约 C3）：basics 的谱系 =====
+
+  /**
+   * 重写 `basics` 并**记下谱系**：这次总结用到了哪些事实、什么时候生成的。
+   *
+   * 为什么要记：`basics` 是**派生**（一次 LLM 总结），不是真相。没有谱系就回答不了
+   * "这条旧说法是从哪来的、还成不成立"（E7）。
+   *
+   * @param factKeys **当次实际喂给 LLM 的**事实键（`factKeyOf`），不是全量
+   */
+  updateBasicsWithSource(basics: string, factKeys: string[]): void {
+    this.ensureRow();
+    const source = JSON.stringify({
+      factKeys,
+      factCount: factKeys.length,
+      generatedAt: NOW(),
+    });
+    this.db.prepare(
+      'UPDATE user_profile SET basics = ?, basics_source = ?, basics_stale = 0, updated_at = ? WHERE id = 1'
+    ).run(basics, source, NOW());
+  }
+
+  /** 读 `basics` 的谱系与新鲜度（只读，纯数据） */
+  getBasicsMeta(): {
+    stale: boolean;
+    factCount: number;
+    generatedAt: string | null;
+    factKeys: string[];
+  } {
+    this.ensureRow();
+    const row = this.db.prepare(
+      'SELECT basics_source, basics_stale FROM user_profile WHERE id = 1'
+    ).get() as { basics_source?: string; basics_stale?: number } | undefined;
+
+    let parsed: { factKeys?: unknown; factCount?: unknown; generatedAt?: unknown } = {};
+    try {
+      parsed = JSON.parse(row?.basics_source || '{}');
+    } catch {
+      // 坏 JSON：如实当作"没有谱系"，并把 stale 视为 true（宁可说过时，不要假装新鲜）
+      logger.warn('[ProfileStore] basics_source 不是合法 JSON —— 谱系视为缺失');
+      return { stale: true, factCount: 0, generatedAt: null, factKeys: [] };
+    }
+    const factKeys = Array.isArray(parsed.factKeys) ? (parsed.factKeys as string[]) : [];
+    return {
+      stale: (row?.basics_stale ?? 0) !== 0,
+      factCount: typeof parsed.factCount === 'number' ? parsed.factCount : factKeys.length,
+      generatedAt: typeof parsed.generatedAt === 'string' ? parsed.generatedAt : null,
+      factKeys,
+    };
+  }
+
+  /**
+   * 把 `basics` 标记为"可能已过时"（**不同步重建** —— 重建要调 LLM，不能挂在写入路径上）。
+   *
+   * 触发点：任何事实变成"不再成立"（superseded / expired）。
+   */
+  markBasicsStale(): void {
+    this.ensureRow();
+    const r = this.db.prepare('UPDATE user_profile SET basics_stale = 1 WHERE id = 1 AND basics_stale = 0').run();
+    if (r.changes > 0) {
+      logger.info('[ProfileStore] 事实状态变化 → basics 标记 stale（下次重写或按需重建）');
+    }
+  }
+
   updatePreferences(prefs: string): void {
     this.ensureRow();
     this.db.prepare('UPDATE user_profile SET preferences = ?, updated_at = ? WHERE id = 1')
@@ -71,7 +137,20 @@ export class ProfileStore {
 
   // ===== Facts v2: 带有效期、来源、状态的 CRUD =====
 
-  /** 返回所有 facts（含已过期/替代的，用于审计），向后兼容旧接口 */
+  /**
+   * 返回**全部** facts（含已过期/被替代的）。
+   *
+   * ★ 2026-10-21（change: `unify-memory-eligibility`，契约 C2）：**仅限审计/调试**。
+   *
+   * 本方法的名字在很长一段时间里被当成"读事实"的通用入口，于是出现了两类错：
+   *   - `CronProcessor.deepProfile` 拿它重写 `basics` ⇒ 被纠正的旧说法**换个形式**回到 prompt（E2）
+   *   - 纠正候选池拿它当候选 ⇒ 模型可能去"纠正"一条早就不成立的旧说法（E3）
+   *
+   * 现在的纪律：
+   *   ① **业务读取一律用 `getCurrentFacts()`**（= active 且未过期）
+   *   ② 本方法只给审计、数据修复脚本、测试用
+   *   ③ `scripts/check-memory-eligibility.cjs --strict` 会拦住 processors/engines 里的调用
+   */
   getAllFacts(): ProfileFact[] {
     this.ensureRow();
     const row = this.db.prepare('SELECT facts FROM user_profile WHERE id = 1').get() as { facts: string };
@@ -79,18 +158,28 @@ export class ProfileStore {
     return raw.map(migrateFact);
   }
 
-  /** @deprecated 使用 getAllFacts() 或 getActiveFacts() */
+  /** @deprecated 使用 getAllFacts()（审计）或 getCurrentFacts()（业务） */
   getFacts(): ProfileFact[] {
     return this.getAllFacts();
   }
 
-  /** 只返回 status='active' 且未过期的 facts */
-  getActiveFacts(): ProfileFact[] {
+  /**
+   * ★ 2026-10-21（契约 C2）：**当前认知**的唯一读取出口 —— `status='active'` 且未过期。
+   *
+   * 这是"现在仍然成立的认知"，与 `getAllFacts()`（历史 + 证据链）严格分开：
+   * 前者可以**直接陈述**（进画像/进 prompt/当纠正候选），后者只能被**引用为历史**。
+   */
+  getCurrentFacts(): ProfileFact[] {
     const all = this.getAllFacts();
     const now = NOW();
     return all
       .filter(f => f.status === 'active')
       .filter(f => f.valid_until === null || f.valid_until > now);
+  }
+
+  /** @deprecated 用 `getCurrentFacts()`（同语义，旧名保留兼容）。 */
+  getActiveFacts(): ProfileFact[] {
+    return this.getCurrentFacts();
   }
 
   /** 插入新 fact，带冲突检测 */
@@ -116,6 +205,8 @@ export class ProfileStore {
         valid_until: NOW(),
         updated_at: NOW(),
       };
+      // ★ C3：有一条事实不再成立 ⇒ 由它派生的 `basics` 可能过时
+      this.markBasicsStale();
     }
 
     // 插入新条
@@ -161,6 +252,8 @@ export class ProfileStore {
           valid_until: NOW(),
           updated_at: NOW(),
         };
+        // ★ C3：同上 —— 事实状态变化要传播到派生结果
+        this.markBasicsStale();
       }
 
       const migrated = migrateFact(fact);
@@ -204,6 +297,9 @@ export class ProfileStore {
 
     if (!found) return false;
 
+    // ★ C3：supersede 是"旧说法被推翻"，`basics` 立刻可能过时
+    this.markBasicsStale();
+
     all.push({
       ...migrateFact(newFact),
       source: newFact.source || 'user',
@@ -228,6 +324,8 @@ export class ProfileStore {
         valid_until: NOW(),
         updated_at: NOW(),
       };
+      // ★ C3：过期也是"不再成立"
+      this.markBasicsStale();
       this.writeFacts(all);
     }
   }
@@ -236,6 +334,9 @@ export class ProfileStore {
     this.ensureRow();
     this.db.prepare('UPDATE user_profile SET facts = ?, updated_at = ? WHERE id = 1')
       .run(JSON.stringify(facts), NOW());
+    // ★ C3：整表替换（恢复备份 / 批量过期）同样会让派生结果过时 ——
+    //   不标这一下，就会出现"事实全没了、basics 还当新鲜"的组合。
+    this.markBasicsStale();
   }
 
   /** @deprecated 使用 addFacts() 代替 */
@@ -256,12 +357,22 @@ export class ProfileStore {
     return raw.map(migrateFact);
   }
 
-  getActiveCharacterFacts(): ProfileFact[] {
+  /**
+   * ★ 2026-10-21（契约 C2）：角色事实的**当前态**出口（与 `getCurrentFacts` 同构）。
+   *
+   * 角色事实与她"当前对自己的认知"同档：可以直接进【关于我】，但**不参与人格参数**（D2）。
+   */
+  getCurrentCharacterFacts(): ProfileFact[] {
     const all = this.getAllCharacterFacts();
     const now = NOW();
     return all
       .filter(f => f.status === 'active')
       .filter(f => f.valid_until === null || f.valid_until > now);
+  }
+
+  /** @deprecated 用 `getCurrentCharacterFacts()`（同语义，旧名保留兼容）。 */
+  getActiveCharacterFacts(): ProfileFact[] {
+    return this.getCurrentCharacterFacts();
   }
 
   /** 批量插入角色事实（同 addFacts 冲突检测：normalizeKey + 子串包含） */
@@ -327,7 +438,11 @@ export class ProfileStore {
         n++;
       }
     }
-    if (n > 0) this.writeFacts(all);
+    if (n > 0) {
+      // ★ C3：过期清理同样让派生结果过时
+      this.markBasicsStale();
+      this.writeFacts(all);
+    }
     return n;
   }
 
@@ -345,6 +460,8 @@ export class ProfileStore {
       f.status = 'superseded';
       f.valid_until = NOW();
       f.updated_at = NOW();
+      // ★ C3：用户确认"这条不再成立" ⇒ basics 可能过时
+      this.markBasicsStale();
     }
     this.writeFacts(all);
     return true;

@@ -122,24 +122,57 @@ export class CronProcessor {
   }
 
   private async deepProfile(): Promise<void> {
-    const profile = this.profileStore.get();
-    const facts = JSON.parse(profile.facts) as Array<{ fact: string; confidence: number; evidence: string }>;
-    if (facts.length === 0) return;
+    await this.rebuildBasics();
+  }
+
+  /**
+   * ★ 2026-10-21（change: `unify-memory-eligibility`，契约 C3 / E2）：**`basics` 的唯一重建入口**。
+   *
+   * 调用方：cron 每轮（本类的 `process()`）、`MemoryManager.rebuildBasics()`（Web 端按钮）、
+   * 以及将来"stale 时按需重建"的任何地方 —— **不要再各写一段总结逻辑**。
+   *
+   * 三条纪律：
+   *   ① 原料只取**当前态事实**（`getCurrentFacts`）—— 老实现读原始 JSON，
+   *      于是被纠正的旧说法会以 `[关于你]` 的形式回来（E2）
+   *   ② 当前态为空 ⇒ **不重写**（拿空输入重写会把已知印象洗成空白），但**标 stale**：
+   *      此刻 `basics` 确实可能过时，prompt 侧据此降级标注，而不是假装新鲜
+   *   ③ 写 `basics` 时**同时写谱系**（用了哪些事实键）——否则回答不了"这条旧说法从哪来"（E7）
+   */
+  async rebuildBasics(): Promise<{ ok: boolean; usedFacts: number; stale: boolean }> {
+    const current = this.profileStore.getCurrentFacts();
+    if (current.length === 0) {
+      this.profileStore.markBasicsStale();
+      logger.warn(
+        '[Cron] 当前事实为 0（全部 expired/superseded）⇒ **跳过**深度画像重写：' +
+        'basics 保持原样并标记 stale（避免把已知印象洗成空白）',
+      );
+      return { ok: false, usedFacts: 0, stale: true };
+    }
 
     try {
-      const factText = facts.map(f => `- ${f.fact} (置信度: ${f.confidence}, 证据: "${f.evidence}")`).join('\n');
+      const factText = current
+        .map(f => `- ${f.fact} (置信度: ${f.confidence}, 证据: "${f.evidence}")`)
+        .join('\n');
       const summary = await this.llmService.complete(
         CRON_DEEP_PROFILE_SYSTEM_PROMPT,
         factText,
       );
 
-      this.profileStore.updateBasics(summary);
+      // ★ C3：谱系用**当次真正喂进去的**事实键（不是全量、也不是重读一次当前态）
+      this.profileStore.updateBasicsWithSource(
+        summary,
+        current.map(f => this.profileStore.factKeyOf(f.fact)),
+      );
+      logger.info(`[Cron] basics 已重写（依据 ${current.length} 条当前事实）`);
+      return { ok: true, usedFacts: current.length, stale: false };
     } catch (err: any) {
       // ★ 2026-10-01 fix-profile-extract-empty-response：原来是**裸 `catch {}`**。
       //   失败与「没事实可总结」长得一样，`basics` 长期为 `{}` 无人察觉
       //   （同 ProfileExtractor，本项目的第 4 次「静默吞错」）。
       //   `basics` 是 PromptAssembler 的 `[关于你]` 段来源，空 = 她对用户一无所知。
-      logger.error(`[CronProcessor] 深度画像重写失败，basics 未更新: ${err?.message ?? err}`);
+      this.profileStore.markBasicsStale();
+      logger.error(`[CronProcessor] 深度画像重写失败，basics 未更新（已标 stale）: ${err?.message ?? err}`);
+      return { ok: false, usedFacts: 0, stale: true };
     }
   }
 

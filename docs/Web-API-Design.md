@@ -128,13 +128,23 @@ listSessions(limit: number = 20): Array<{
 extractProfile(sessionId: string): Promise<{
   factsExtracted: number;    // 本次新增 facts 数
   summaryGenerated: boolean; // 是否生成了对话摘要
+  // ★ 2026-10-21（change: unify-memory-eligibility，契约 C4）：
+  //   摘要与事实是两个独立任务，必须分别可判 ——
+  //   `factsExtracted: 0` 有两种含义（"看了确实没有" / "提取失败"），只给数字分不清。
+  factsStatus: 'ok' | 'failed' | 'skipped';
 }>
 ```
 
 **响应示例**:
 ```json
-{ "factsExtracted": 2, "summaryGenerated": true }
+{ "factsExtracted": 2, "summaryGenerated": true, "factsStatus": "ok" }
 ```
+
+**失败示例**（摘要成功但事实提取失败 —— 2026-10-21 之前这种情况**完全看不出来**）：
+```json
+{ "factsExtracted": 0, "summaryGenerated": true, "factsStatus": "failed" }
+```
+失败窗口会落 `conversations.facts_status='failed'`，由 cron `retryFailedFactExtraction()` 自动补 1 次（D3）。
 
 **Web 用途**: 画像页"手动提取"按钮。点击后对指定会话执行 LLM 提取：
 - 对话摘要 → conversations 表

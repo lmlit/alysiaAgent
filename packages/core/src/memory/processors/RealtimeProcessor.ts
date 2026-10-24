@@ -12,6 +12,8 @@ import type { PersonaAdapter } from '../engines/PersonaAdapter.js';
 import type { ProfileExtractor } from '../engines/ProfileExtractor.js';
 import type { IEmbedService } from '../interfaces/IEmbedService.js';
 import type { IVectorStore } from '../interfaces/IVectorStore.js';
+// ★ 2026-10-21（change: `unify-memory-eligibility`，C1）：资格判据唯一出处
+import { isEligible, isMachineOrigin, describeSkip } from '../eligibility.js';
 
 /**
  * ★ KI-15：向量库缺失时**已跳过**的嵌入条数（模块级 = 进程内累计）。
@@ -44,42 +46,40 @@ export class RealtimeProcessor {
   async process(event: MemoryEvent): Promise<void> {
     const text = typeof event.payload.content === 'string' ? event.payload.content : '';
 
-    // 群聊 NPC 模式：非 owner 的消息跳过画像提取（Persona + Profile），
-    // 仅保留流水账 (EventLog) 和 Worldbook 匹配。
-    const skipProfile = event.payload.skip_profile === true;
-
-    // 1. Worldbook match from event content (所有人消息都匹配)
+    // 1. Worldbook match（**所有来源**都匹配：它是纯读取，不改写任何学习状态）
     if (text) {
       const mode = event.source === 'code' ? 'code' : 'chat';
       await this.worldbookMatcher.match(text, mode);
       // Trigger recording is handled internally by WorldbookMatcher.match()
     }
 
-    if (skipProfile) {
-      // NPC 消息：只匹配 Worldbook，不提取画像、不做嵌入
-      //
-      // ★ 2026-10-16（change: `filter-synthetic-context-inflow`，KI-20）：**合成注入
-      //   （dsh 的 runtime context 快照）走的是同一个闸**，但**必须留痕** ——
-      //   否则「滤掉了」与「本来就没采到」长得一样，而那正是这条回流闭环
-      //   能悄悄跑很久的原因。
-      //   ⚠️ 只对 `synthetic` 打日志：群聊 NPC 的 skip_profile 量很大，
-      //      一起打会把日志淹掉（本项目已因 96.6% QQ 噪声吃过一次亏）。
-      if (event.payload.synthetic) {
-        warnThrottled(
-          'realtime-synthetic',
-          // ★ 2026-10-17（change: `isolate-delegated-task-memory`）：措辞改为**原因中立**。
-          //   原先写死成「合成注入」，而 `synthetic` 现在也承载「委托任务会话」这一来源
-          //   （机器发起、不是用户发言）—— 对那种事件说「合成注入」会把排查带偏。
-          `跳过学习：非用户发言（${String(event.payload.synthetic)}）` +
-            ` —— 不进画像/人格/嵌入`,
-        );
+    // 2. ★ 2026-10-21（change: `unify-memory-eligibility`，C1/E4）：
+    //    资格**一次问清、分开判**，不再自带 `if`。
+    //
+    //    这里改正的两件事：
+    //    ① 原实现只看 `skip_profile`（= 群聊 NPC 的标记），**不看 `role`** ——
+    //       于是她自己的回复（`role:'assistant'`）也会进人格扫描与纠正快路径：
+    //       她说一句带"不要"的话，就调整了她自己的人格（E4）。人格该由"你怎么对她"驱动。
+    //    ② 判据散在四个处理器里写法各异（proposal §1），合成注入在摘要两条路径上结局不同（E1）。
+    const facts = isEligible(event, 'profile-facts');
+    const persona = isEligible(event, 'persona-evidence');
+    const correction = isEligible(event, 'correction');
+    const embed = isEligible(event, 'embed');
+
+    // 四种用途全不允许 ⇒ 只留流水账（事件本身仍在事件表里，见 KI-20 的 R4）
+    if (!facts.ok && !persona.ok && !correction.ok && !embed.ok) {
+      // ⚠️ 只对**机器来源**出声（合成注入 / 委托会话 / 执行回执）：
+      //    群聊 NPC 的 skip_profile 量非常大，一起打会把真正要看的记录淹掉
+      //    （本项目已因 96.6% QQ 噪声吃过一次亏）。
+      if (isMachineOrigin(facts.origin)) {
+        warnThrottled('realtime-synthetic', describeSkip(facts));
       }
       this.eventStore.markProcessed(event.id, PROCESSED_KNOWLEDGE);
       return;
     }
 
-    // 2. Persona scan from event content
-    if (text) {
+    // 3. Persona scan（**只有用户本人发言**算反馈 —— D1）
+    if (text && persona.ok) {
       const adjustment = await this.personaAdapter.processSignal(event);
       if (adjustment) {
         // ★ add-memory-channel-field：把**事件所属渠道**传下去，让 hint 如实记来源
@@ -87,11 +87,14 @@ export class RealtimeProcessor {
       }
     }
 
-    // 3. 纠正快路径 (v2): 检测用户纠正信号 → 立即更新 Profile
-    if (text) {
+    // 4. 纠正快路径 (v2)：检测用户纠正信号 → 立即更新 Profile
+    //    ⚠️ 同样只认用户发言：她用一句"不对"不该去改写他事实（E4 的另一半）
+    if (text && correction.ok) {
       try {
-        const allFacts = this.profileStore.getAllFacts();
-        const signal = await this.profileExtractor.detectCorrectionSignal(text, allFacts);
+        // ★ 2026-10-21（C2/E3）：候选池只要**当前态** —— 喂全量会让模型去"纠正"
+        //   一条早已 superseded 的旧说法（`getAllFacts` 是审计专用，见 ProfileStore 文档）。
+        const currentFacts = this.profileStore.getCurrentFacts();
+        const signal = await this.profileExtractor.detectCorrectionSignal(text, currentFacts);
         if (signal.isCorrection && signal.target) {
           this.profileStore.supersede(signal.target, {
             fact: signal.newFact || signal.target,
@@ -111,39 +114,45 @@ export class RealtimeProcessor {
       }
     }
 
-    // 4. Embed generation (async)
-    if (text && this.vectorStore) {
-      try {
-        const vector = await this.embedService.embed(text);
-        await this.vectorStore.insert(event.id, vector, text, {
-          source: event.source,
-          type: event.type,
-          session_id: event.session_id,
-          created_at: event.created_at,
-          // ★ 9-25 wire-importance-signal：之前漏了这个字段 ——
-          //   事件表里就算有 importance 也传不进向量 metadata，
-          //   而 `applyKnobsToRetrieved` 读的正是 `r.metadata.importance`。
-          //   （原先 `events.importance` 恒 0，所以没人发现这条链路是断的。）
-          importance: event.importance ?? 0,
-        });
-      } catch (err: any) {
-        // Embedding failure is non-fatal — continue processing
-        logger.warn(`[Realtime] embed failed (${event.id.slice(0, 24)}): ${err.message}`);
-      }
-    } else if (text) {
-      // ★ KI-15：向量库为 null 时**不再静默跳过**。
-      //   逐事件 warn 会刷屏（每条消息都走这里），所以首次必报 + 每 100 条补报累计 ——
-      //   「启动那一行 warn 不够」指的就是这种「跳过了多少条」说不清的状态。
-      skippedNoVectorStore++;
-      if (skippedNoVectorStore === 1 || skippedNoVectorStore % 100 === 0) {
-        logger.warn(
-          `[Realtime] 没有向量库：已跳过 ${skippedNoVectorStore} 条事件的嵌入（这些事件只进文本检索）`,
-        );
+    // 5. Embed generation (async) —— 她说过的话**可以**被检索（要能回忆"聊过什么"），
+    //    但机器注入（synthetic / 委托会话）不行：那正是 2026-09-27 那次污染的形态。
+    if (text && embed.ok) {
+      if (this.vectorStore) {
+        try {
+          const vector = await this.embedService.embed(text);
+          await this.vectorStore.insert(event.id, vector, text, {
+            source: event.source,
+            type: event.type,
+            session_id: event.session_id,
+            created_at: event.created_at,
+            // ★ 9-25 wire-importance-signal：之前漏了这个字段 ——
+            //   事件表里就算有 importance 也传不进向量 metadata，
+            //   而 `applyKnobsToRetrieved` 读的正是 `r.metadata.importance`。
+            importance: event.importance ?? 0,
+            // ★ 2026-10-21（C3）：向量是**派生**，标出来源，将来才解释得清它凭什么被召回
+            derived_from: 'event',
+          });
+        } catch (err: any) {
+          // Embedding failure is non-fatal — continue processing
+          logger.warn(`[Realtime] embed failed (${event.id.slice(0, 24)}): ${err.message}`);
+        }
+      } else {
+        // ★ KI-15：向量库为 null 时**不再静默跳过**。
+        //   逐事件 warn 会刷屏（每条消息都走这里），所以首次必报 + 每 100 条补报累计。
+        skippedNoVectorStore++;
+        if (skippedNoVectorStore === 1 || skippedNoVectorStore % 100 === 0) {
+          logger.warn(
+            `[Realtime] 没有向量库：已跳过 ${skippedNoVectorStore} 条事件的嵌入（这些事件只进文本检索）`,
+          );
+        }
       }
     }
 
-    // 5. Mark event as processed (profile | persona | knowledge)
-    const flags = PROCESSED_PROFILE | PROCESSED_PERSONA | PROCESSED_KNOWLEDGE;
+    // 6. Mark event as processed —— ★ 位掩码**如实反映做过什么**（KI-27 的方向）：
+    //    没做画像就不置画像位，否则"未处理"这个概念会继续说谎。
+    let flags = PROCESSED_KNOWLEDGE;
+    if (facts.ok) flags |= PROCESSED_PROFILE;
+    if (persona.ok) flags |= PROCESSED_PERSONA;
     this.eventStore.markProcessed(event.id, flags);
   }
 }

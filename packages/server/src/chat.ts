@@ -93,10 +93,20 @@ async function main() {
       break;
     }
     if (input === '/clear') {
-      await core.memoryManager.onSessionEnd(sessionId);
+      // ★ 2026-10-21（change: `unify-memory-eligibility`，C4/E6）：**如实回执**。
+      //   原来是 `await onSessionEnd(); console.log('记忆已归档')` ——
+      //   而摘要失败是返回值不是异常，于是失败也照印"已归档"（她安静地少记了一段）。
+      const r = await core.memoryManager.onSessionEnd(sessionId);
       sessionId = `local-chat-${Date.now()}`;
       core.registerPlatform(`cli::private:${sessionId}`, core.scheduler);
-      console.log('  [记忆已归档，开始新对话]');
+      if (r.summary === 'ok') {
+        console.log(`  [记忆已归档｜摘要 ok / 事实 ${r.facts} / 向量 ${r.vector}]`);
+      } else {
+        console.log(
+          `  [⚠️ 记忆未归档：摘要 ${r.summary}${r.reason ? `（${r.reason}）` : ''}` +
+          ` / 事实 ${r.facts} / 向量 ${r.vector} —— 该窗口已标记，可由 cron 补处理]`,
+        );
+      }
       rl.prompt();
       continue;
     }

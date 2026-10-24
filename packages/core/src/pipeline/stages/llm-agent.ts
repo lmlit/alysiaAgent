@@ -323,9 +323,21 @@ export class LLMAgentStage implements Stage {
           ` session=${sid.slice(-12)}`,
         );
         this.ctx.memoryManager.onSessionEnd(sid)
-          .then(() => {
-            clearCompactionFailed(sid);
-            logger.info(`[Compact] 摘要完成 → 恢复截断 session=${sid.slice(-12)}`);
+          .then((r) => {
+            // ★ 2026-10-21（change: `unify-memory-eligibility`，C4/E6）：
+            //   原来这里**.then 就等于"摘要完成"** —— 而摘要失败是**返回值**不是异常，
+            //   于是失败也会恢复截断：那段没被摘要覆盖的对话照样被丢掉。
+            //   现在按真实结果分支：只有 `summary === 'ok'` 才算摘到。
+            if (r.summary === 'ok') {
+              clearCompactionFailed(sid);
+              logger.info(`[Compact] 摘要完成 → 恢复截断 session=${sid.slice(-12)}`);
+            } else {
+              markCompactionFailed(sid);
+              logger.warn(
+                `[Compact] 摘要**未生成**（${r.reason ?? r.summary}）→ **暂停截断**（保住未摘要的对话）` +
+                ` session=${sid.slice(-12)}`,
+              );
+            }
           })
           .catch((err: any) => {
             markCompactionFailed(sid);
