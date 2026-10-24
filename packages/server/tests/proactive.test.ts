@@ -210,6 +210,32 @@ describe('ProactiveService — 问候上下文注入 (contextSnippet)', () => {
     expect(() => (svc as any).contextSnippet()).not.toThrow();
     expect((svc as any).contextSnippet()).toBe('');
   });
+
+  // ★ 2026-10-24（change: `converge-context-facts`）：问候与生活事件现在吃**同一份事实**。
+  //   改之前问候只有光秃秃的 `62/100`，看不出"已经冷了几天"——同一事实两套渲染。
+  describe('与生活事件同一份事实（2026-10-24 收敛）', () => {
+    it('★ 亲密度带**档位**与 idle —— 问候里也能看出冷了几天', () => {
+      const { svc } = makeService(undefined, {
+        getLifeSnapshot: vi.fn().mockReturnValue({ intimacy: 62 }),
+        getLastUserMessageAt: vi.fn().mockReturnValue(
+          new Date(Date.now() - 6 * 86_400_000).toISOString(),
+        ),
+      });
+      const snippet = (svc as any).contextSnippet();
+      expect(snippet).toContain('亲密度：62/100（平常');
+      expect(snippet, 'idle ≥3 天必须出现在问候素材里').toContain('他已经 6 天没有主动找你');
+    });
+
+    it('刚说过话（idle<3）→ 不出现 idle 那句，只给档位', () => {
+      const { svc } = makeService(undefined, {
+        getLifeSnapshot: vi.fn().mockReturnValue({ intimacy: 75 }),
+        getLastUserMessageAt: vi.fn().mockReturnValue(new Date().toISOString()),
+      });
+      const snippet = (svc as any).contextSnippet();
+      expect(snippet).toContain('亲密度：75/100（亲近）');
+      expect(snippet).not.toContain('没有主动找你');
+    });
+  });
 });
 
 describe('ProactiveService — 主动关怀 LLM 个性化 (8-08)', () => {

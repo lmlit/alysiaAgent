@@ -10,6 +10,16 @@ import { dirname } from 'path';
 import { logger, parseLLMJson } from '@alysia/core';
 import { formatLocalTime, localDateKey, localDateKeyFromISO } from '@alysia/core/memory';
 import type { PushChannel } from './push.js';
+// ★ 2026-10-24（converge-context-facts）：事实层（档位/idle/心情/今天的事）的唯一出处
+import {
+  collectContextFacts,
+  idleDaysSince,
+  intimacyTier,
+  INTIMACY_TIERS,
+  INTIMACY_UPGRADE_MARGIN,
+  INTIMACY_RECOVERY_MIN,
+} from './context-facts.js';
+import type { ContextFacts, IntimacyTierDef, IntimacyTierName } from './context-facts.js';
 
 export interface LifeOpts {
   ownerOpenid: string;
@@ -89,46 +99,10 @@ export interface LifeOpts {
 // **只降不升**：档位只能压低配置的每日上限，**永远不能抬高** ——
 // 否则"关系好 ⇒ 可以更吵"，而本项目一直在躲这个方向。
 
-export type IntimacyTierName = 'close' | 'normal' | 'distant' | 'silent';
-
-export interface IntimacyTierDef {
-  tier: IntimacyTierName;
-  /** 日志/字段里给人看的名字 */
-  label: string;
-  /** 进入本档所需的**最低**亲密度（降档判据） */
-  min: number;
-  /** 本档每日 chat 推送上限（只用来**压低**配置值） */
-  cap: number;
-  /** 本档推送冷却（小时）；`silent` 档不推送，故为 0 */
-  cooldownHours: number;
-}
-
-/**
- * 阈值取 70 / 40 / 25 的依据：
- * - 亲密度公式 `clamp(30 + 频率 + 时长 + 主动, 10, 100)`，初值 30、下限 10、上限 100
- * - **70** = "稳定互动"的量级（需要近 7 天持续有来有回）
- * - **25** = 贴近下限 10 的"快要断线"
- * - **40** 落在中间，避免在边界抖动（配合下面的 `+5` 迟滞）
- */
-export const INTIMACY_TIERS: IntimacyTierDef[] = [
-  { tier: 'close', label: '亲近', min: 70, cap: 5, cooldownHours: 1 },
-  { tier: 'normal', label: '平常', min: 40, cap: 3, cooldownHours: 2 },
-  { tier: 'distant', label: '疏远', min: 25, cap: 1, cooldownHours: 4 },
-  { tier: 'silent', label: '久无往来', min: 0, cap: 0, cooldownHours: 0 },
-];
-
-/** 升档要越过阈值这么多个点才生效 —— 防在 40 上下反复横跳（用户会看到频率在抖） */
-export const INTIMACY_UPGRADE_MARGIN = 5;
-
-/** 恢复转折：从 `silent` 回到这个值以上才算「他回来了」 */
-export const INTIMACY_RECOVERY_MIN = 45;
-
-/** 纯函数：给定亲密度落在哪一档（**不含**迟滞，迟滞在 `resolveIntimacyTier`）。 */
-export function intimacyTier(intimacy: number): IntimacyTierDef {
-  const v = Number.isFinite(intimacy) ? intimacy : 30;
-  for (const t of INTIMACY_TIERS) if (v >= t.min) return t;
-  return INTIMACY_TIERS[INTIMACY_TIERS.length - 1];
-}
+// ★ 2026-10-24（change: `converge-context-facts`）：档位定义搬到 `context-facts.ts`
+//   —— 事实层是唯一出处；这里**只做再导出**，保持既有 import 路径不变。
+export type { IntimacyTierName, IntimacyTierDef };
+export { INTIMACY_TIERS, INTIMACY_UPGRADE_MARGIN, INTIMACY_RECOVERY_MIN, intimacyTier };
 
 // ── 拒绝权（★ 2026-10-20，change: let-her-decline-a-day）──────────────
 //
@@ -341,10 +315,9 @@ export class LifeService {
       logger.warn(`[Life] idle days unavailable: ${err?.message ?? err}`);
       return 0;
     }
-    if (!at) return null;
-    const ms = now.getTime() - new Date(at).getTime();
-    if (!Number.isFinite(ms)) return 0;
-    return Math.max(0, Math.floor(ms / 86_400_000));
+    // ★ 2026-10-24：算法本身在事实层（`idleDaysSince`），这里只负责"取时间 + 兜异常的语义"，
+    //   不再各写一遍 —— 这正是当初窗口版/全表版并存、导致衰减永不触发的产地。
+    return idleDaysSince(at, now);
   }
 
   /**
@@ -405,18 +378,22 @@ export class LifeService {
    * 顺带消费两个一次性信号：「问一次在忙吗」（7 天冷却）与「他回来了」。
    */
   private relationshipBlock(now: Date = new Date()): string {
-    const snapshot = this.memoryManager.getLifeSnapshot?.() ?? {};
-    const intimacy = Number(snapshot.intimacy ?? 30);
-    const tier = intimacyTier(intimacy);
-    const idle = this.idleDaysSinceUserMessage(now);
-    const facts = [`与轻月: ${Math.round(intimacy)}/100（${tier.label}）`];
-    if (idle < 999 && idle >= 3) facts.push(`他已经 ${idle} 天没有主动找你说话了`);
-    if (idle >= 999) facts.push('你们还没有正式说过话');
+    // ★ 2026-10-24（converge-context-facts）：关系现状**全部取自事实层**，本方法只负责排版。
+    //   `todayEventLimit: 0` —— 这个块不需要"今天的日常"，别为它多查一次库。
+    const f = collectContextFacts(this.memoryManager, now, { todayEventLimit: 0 });
+    if (f.problems.length) {
+      logger.debug(`[Life] relationshipBlock 读源问题：${f.problems.join(' | ')}`);
+    }
+    // ⚠️ `999` 只用于**展示/询问判据**（"从未说过话"），不再参与任何衰减运算（那是旧 bug 的形态）
+    const idleDisplay = f.idleDays ?? 999;
+    const facts = [`与轻月: ${Math.round(f.intimacy)}/100（${f.tier.label}）`];
+    if (idleDisplay < 999 && idleDisplay >= 3) facts.push(`他已经 ${idleDisplay} 天没有主动找你说话了`);
+    if (idleDisplay >= 999) facts.push('你们还没有正式说过话');
 
     const extras: string[] = [];
     // 「在忙吗」：只在「疏远」档问（`silent` 档不推送，问了也发不出去），每 7 天最多一次
     const ASK_COOLDOWN_MS = 7 * 86_400_000;
-    if (tier.tier === 'distant' && idle >= 3 && now.getTime() - (this.state.lastAskAt ?? 0) > ASK_COOLDOWN_MS) {
+    if (f.tier.tier === 'distant' && idleDisplay >= 3 && now.getTime() - (this.state.lastAskAt ?? 0) > ASK_COOLDOWN_MS) {
       extras.push('可以问他一次「最近在忙吗」——**只问这一次，问完不追问**（这是你 7 天内唯一能问的一次）');
       this.state.lastAskAt = now.getTime();
       this.saveState();

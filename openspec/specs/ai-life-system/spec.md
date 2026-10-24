@@ -493,6 +493,28 @@ intimacy = clamp(30 + 频率分 + 时长分 + 主动分, 10, 100)，经 confirma
    （档位 + 他已多少天没说话 + 两个一次性信号）。**情绪留给她自己写**。
 2. **档位闸**（硬，管「她多主动」）：见 §11.1。
 
+#### 11.0.1 事实层单一出处（2026-10-24，change: `converge-context-facts`）
+
+「此刻的她与这段关系」的计算**只有一处**：`packages/server/src/context-facts.ts` 的
+`collectContextFacts()`（纯计算、只读收窄接口 `FactsSource`、**不产出任何面向用户的句子**、
+读源异常进 `problems[]` 而**不吞**）。
+
+消费者与差异：
+
+| 消费者 | 用途 | 允许的差异 |
+|---|---|---|
+| `LifeService.relationshipBlock()` | 生活事件 prompt 的【你和轻月】 | 只排版 |
+| `LifeService.resolveIntimacyTier()` / `updateIntimacy()` | 推送闸 / 亲密度衰减 | 只取数字 |
+| `ProactiveService.contextSnippet()` | 问候素材 | 只排版（**2026-10-24 起补上档位与 idle**） |
+
+★ 三条**禁止**（都是踩过的）：
+1. 另写一份「多久没说话」—— 尤其**不许**在带窗口的查询里反查（窗口会钉死上限）；
+2. 另写一份档位判定 —— `intimacyTier()` 只有一处；
+3. 把**措辞**放进事实层 —— 措辞归体裁，否则下次换说法要改两层。
+
+★ `ContextFacts.snapshotPresent` 的意义：区分「她在这儿、亲密度 30」与「读不到快照、回落 30」。
+没有它，问候无法判断"这一项算不算素材"（空库会冒出一句"亲密度 30"）。
+
 #### 11.1 亲密度 → 推送闸的契约（2026-10-20，change: `tie-intimacy-to-speech`）
 
 **契约 1：档位与上限是硬表，写死在代码里（不做成配置项）。**

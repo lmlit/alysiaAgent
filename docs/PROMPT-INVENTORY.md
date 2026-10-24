@@ -104,8 +104,8 @@
 
 | 事实 | 实现 A | 实现 B | 差异带来的后果 |
 |---|---|---|---|
-| **亲密度** | `life.ts:379` `relationshipBlock()`：「与轻月: 41/100（**疏远**）」+ idle | `proactive.ts:347`：「我和用户的亲密度：41/100」 | B **没有档位、没有 idle** —— 问候里看不出"冷了几天" |
-| **用户近况** | 组装层 `facts` 块：去重（`norm`/`normContains`）+ 时间标注（今天/3天前） | `getUserActivitySummary()`：`getActiveFacts()` 按 confidence 取 5 条 join | B **绕过去重与时间标注** |
+| **亲密度** | `context-facts.ts` `collectContextFacts()`：**唯一出处**（含档位） | `life.relationshipBlock()` / `proactive.contextSnippet()`：**只排版** | ✅ **已收敛**（change: `converge-context-facts`，2026-10-24）。此前问候只有裸数字 `62/100`，看不出"冷了几天" |
+| **用户近况** | 组装层 `facts` 块：去重（`norm`/`normContains`）+ 时间标注（今天/3天前） | `getUserActivitySummary()`：`getActiveFacts()` 按 confidence 取 5 条 join | ⚠️ **仍分歧**：B 绕过去重与时间标注 ⇒ 归 **P8 第 2 步**（`assembleChat` 块注册表） |
 | **多久没说话** | `EventStore.getLastUserMessageAt()`：`role=user AND skip_profile=0 AND synthetic=0` ✅ | `life.ts` 的 `idleSinceLastUserMessage()`（**2026-10-24 起**：同一方法） ✅ | ✅ **已收敛**（change: `prove-intimacy-decay-reachable`）。此前衰减侧在 `getRecentMessages(…, now−7d)` 里反查 ⇒ **窗口 7 天把 idle 上限钉在 7，而阈值是 8 ⇒ 衰减永不触发**，藏了 2 个月 |
 | **今天的事** | `getLifeEventInjection()`（进 prompt） | `listLifeEvents(1)` 再按本地日期筛（proactive） | 两套筛选口径 |
 

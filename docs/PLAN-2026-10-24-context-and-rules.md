@@ -39,7 +39,7 @@
 | **P11** | dsh 通道仍在往记忆系统**写**（`ingest` + **会话结算会改画像/人格**） | ✅ **已归档**（2026-10-24）：`bridge: false`，只切写；⏳ 等 dsh 重启生效 | [`archive/2026-10-24-cut-dsh-memory-bridge`](../openspec/archive/2026-10-24-cut-dsh-memory-bridge/proposal.md) |
 | **P2** | 亲密度「无互动衰减」在默认旋钮下**永不触发**（可见窗口 7 天 < 阈值 8 天）—— ★ 查实：**是 `07c9016`（08-07）那次"旋钮接线"修复把它弄坏的**（阈值 3 → 8，窗口一直是 7） | ✅ **已归档**（2026-10-24）：1868 全过 + 反向自检变红 | [`archive/2026-10-24-prove-intimacy-decay-reachable`](../openspec/archive/2026-10-24-prove-intimacy-decay-reachable/proposal.md) |
 | **P3** | 「最后一条真人消息」有**两份判据**，其中一份不排除 `synthetic`/`skip_profile` | ✅ 已收敛（同一方法 `idleSinceLastUserMessage()`） | 同上 |
-| **P8** | **组装器切面化**：抽事实层 / 块注册表 / 体裁表 / 通用装配器。四步各自独立收益，前两步可做到**零行为变更** | 👤 **已拍板要做**，未开 change | 本文 §2.6 |
+| **P8** | **组装器/事实层切面化**：抽事实层 / 块注册表 / 体裁表 / 通用装配器。四步各自独立收益 | 👤 已拍板 · **第 1+3 步已完成并归档**（`converge-context-facts`：事实层收敛 + 问候补档位/idle）；**剩第 2 步**（`block-registry`）、**第 4 步**（`genres`） | [`archive/2026-10-24-converge-context-facts`](../openspec/archive/2026-10-24-converge-context-facts/proposal.md) |
 | **P9** | `pipelineMode` **有字段、有读者、没有写者** ⇒ `assembleCode` 在生产链路**不可达**（"编程模式组装"只存在于单测里） | 🧑 待拍板：接线 / 标死 / 删 | 本文 §2.7 |
 | **P10** | 人格实际有 **3.5 份**：`proactive.ts:45` 有一行**未登记的内联人格**（`label-dual-persona-sources` 只覆盖了 2 份） | 🧑 待定 | 本文 §2.8 |
 | **P4** | `{{alysia_life}}` 在 dsh 里**恒为空**（注册了，回调固定 `return undefined`） | 🧑 待定（**严重度已下调**，见 §2.5） | spec §2.3 / §4 |

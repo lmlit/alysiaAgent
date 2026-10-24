@@ -12,6 +12,8 @@ import type { PushChannel } from './push.js';
 import type { MemoryManager } from '@alysia/core/memory';
 import { localDateKey, localDateKeyFromISO } from '@alysia/core/memory';
 import { logger } from '@alysia/core';
+// ★ 2026-10-24（converge-context-facts）：关系现状与生活事件统一从事实层取
+import { collectContextFacts } from './context-facts.js';
 
 // ── 节日表 ──────────────────────────────────────────
 
@@ -325,27 +327,31 @@ export class ProactiveService {
     this.scheduleNextGreeting(); // 放弃 → 排下一次
   }
 
-  /** ★ 问候上下文素材（8-08 优化）：用户近况 + 今天生活事件 + 亲密度。
-   *  全部静默容错——素材缺失不阻塞问候；注明"不要生硬引用"防贴标签式文案。 */
+  /** ★ 问候上下文素材（8-08 优化，2026-10-24 收敛到事实层）：用户近况 + 今天生活事件 + 关系现状。
+   *  全部静默容错——素材缺失不阻塞问候；注明"不要生硬引用"防贴标签式文案。
+   *
+   *  ★ 2026-10-24（change: `converge-context-facts`）：改吃 `collectContextFacts()`。
+   *    此前这里自己拼「我和用户的亲密度：62/100」——**没有档位、没有 idle**，
+   *    与 `life.ts` 的 `relationshipBlock()`（同一事实、带档位）不一致：
+   *    问候里看不出"已经冷了几天"，而生活事件里看得出。
+   *    现在两边同一份事实；这个函数的差异只剩**排版**。 */
   private contextSnippet(): string {
+    const f = collectContextFacts(this.memoryManager as any, new Date(), { todayEventLimit: 3 });
+    if (f.problems.length) {
+      logger.debug(`[Proactive] contextSnippet 读源问题：${f.problems.join(' | ')}`);
+    }
+
     const parts: string[] = [];
-    try {
-      const userAct = this.memoryManager.getUserActivitySummary();
-      if (userAct) parts.push(`用户近况：${userAct}`);
-    } catch { /* ignore */ }
-    try {
-      const todayKey = localDateKey();
-      // ★ 8-08 修正：listLifeEvents 入参是天数——取最近 1 天即可完整覆盖今天（旧版 2 天
-      //   窗口多查一天、语义含糊，意图只是"我今天的日常"）
-      const today = this.memoryManager.listLifeEvents(1)
-        .filter((e: any) => localDateKeyFromISO(e.createdAt) === todayKey)
-        .slice(-3);
-      if (today.length > 0) parts.push(`我今天的日常：${today.map((e: any) => e.content).join('；')}`);
-    } catch { /* ignore */ }
-    try {
-      const snap = this.memoryManager.getLifeSnapshot();
-      if (snap && snap.intimacy != null) parts.push(`我和用户的亲密度：${snap.intimacy}/100`);
-    } catch { /* ignore */ }
+    if (f.userActivity) parts.push(`用户近况：${f.userActivity}`);
+    if (f.todayEvents.length > 0) parts.push(`我今天的日常：${f.todayEvents.join('；')}`);
+    if (f.snapshotPresent) {
+      // 带上档位与 idle —— 与生活事件那边同一份事实，避免"问候看不出冷了几天"
+      const extra: string[] = [];
+      if (f.idleDays !== null && f.idleDays >= 3) extra.push(`他已经 ${f.idleDays} 天没有主动找你`);
+      parts.push(`我和用户的亲密度：${Math.round(f.intimacy)}/100（${f.tier.label}${extra.length ? ' · ' + extra.join('，') : ''}）`);
+    }
+
+    // 一条素材都没有 → 整段不出现（与改动前一致：空库不该冒出一句"亲密度 30"）
     if (parts.length === 0) return '';
     return `\n背景素材（用于让问候更自然贴切，不要生硬引用）：\n${parts.join('\n')}`;
   }
