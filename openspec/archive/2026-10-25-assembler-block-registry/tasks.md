@@ -24,14 +24,33 @@
 ## Apply / 部署任务
 
 - [x] 合并 spec（`memory-system` 契约 8）
-- [ ] `node scripts/check-spec-diff-residue.cjs`
-- [ ] 更新 `openspec/specs/index.md`
-- [ ] 部署：`node scripts/deploy.mjs`（含 `ALYSIA_BUILD_PROXY`，构建期需联网）
-- [ ] 部署输出记进本文件
-- [ ] 归档
+- [x] `node scripts/check-spec-diff-residue.cjs`（exit 0）
+- [x] 更新 `openspec/specs/index.md`
+- [x] 部署：`node scripts/deploy.mjs`（含 `ALYSIA_BUILD_PROXY`，构建期需联网）
+- [x] 部署输出记进本文件（见下）
+- [x] 归档到 `openspec/archive/2026-10-25-assembler-block-registry/`
 
 ## 明确不做
 
 - ❌ 不改 `assembleChat()` 函数体（"真正的拆块"风险高，另开 change）
 - ❌ 不改掉 `pendingConfirm` 的写副作用：那要动 `listPendingConfirmFacts()` 的语义与过期清理时机，
       属行为变更 —— **先显式化，再决定要不要动**
+
+## 部署验收证据（2026-10-25 02:10，`node scripts/deploy.mjs`）
+
+```
+Step 0b 全量测试     ✓ exit 0（164 文件 / 1929 用例）
+Step 1  config 漂移  ✓ 与服务器一致
+Step 3  构建镜像     ✓ 0a5c342346ee
+Step 4  上传         ✓ 125.5 MB
+Step 5  部署         rollback-tag=server-alysia:rollback-20261025-021012
+                     health[1]=200  OK
+部署成功             alysia-server Up (healthy) · {"status":"ok"}
+```
+
+产物校验（容器内）：`/app/packages/core/dist/memory/block-registry.js` 存在，
+含 `WRITE_EFFECT_CHAT_BLOCKS` 1 处 ⇒ 注册表已进镜像。
+
+★ 本轮又修掉一个**部署脚本自己的**缺陷：Step 0b 原来按输出文本判断"测试过没过"，
+而 vitest 的 stderr 里塞满测试日志 ⇒ **测试全绿却把部署拦下**。现在只看退出码。
+（两次部署中断都是它，不是代码问题。）
