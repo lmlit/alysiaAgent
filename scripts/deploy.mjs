@@ -108,8 +108,12 @@ say(`目标 ${HOST}:${REMOTE_DIR} · 镜像 ${IMAGE}${DRY ? ' · DRY-RUN' : ''}`
 
 if (!SKIP_TESTS) {
   log('Step 0b 全量测试（--skip-tests 可跳过，但别跳）');
-  runNpx(['vitest', 'run', '--exclude=tests/memory/e2e/*']);
-  say('✓ 全绿');
+  // ★ 必须 `quiet`：vitest 的 stderr 会把整段日志淹掉（实测一次部署日志里 90% 是测试噪声），
+  //   而部署日志的作用是**事后看发生了什么**。失败时才把尾部打出来。
+  const t = run('npx', ['vitest', 'run', '--exclude=tests/memory/e2e/*'], { shell: true, quiet: true, allowFail: true });
+  const summary = t.split('\n').filter((l) => /Test Files|Tests\s+\d/.test(l)).join(' · ') || t.slice(-500);
+  if (!/Tests\s+\d+ passed/.test(t) || /failed/.test(summary)) die(`全量测试没过：\n${summary}`);
+  say(`✓ ${summary.trim()}`);
 }
 
 // ── Step 1 config 漂移闸（今天的事故就缺这一步）───────────────────────────

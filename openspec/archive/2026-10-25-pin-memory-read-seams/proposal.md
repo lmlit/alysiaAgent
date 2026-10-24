@@ -4,7 +4,7 @@
 
 - **日期**: 2026-10-25
 - **类型**: FIX（code review 遗留四项，都是「不会报错」那类）
-- **状态**: applied（待部署+归档）
+- **状态**: **archived**（2026-10-25 已部署到生产并归档：健康 200、容器 healthy、回滚点 `rollback-20261025-014352`）
 - **影响 spec**: `memory-system`（§4.1.x 块表策略 —— 新增契约 6/7）
 - **来源**: `align-dsh-memory-blocks-with-scope` 实现后的自审（F3/F5/F7/F11）
 
