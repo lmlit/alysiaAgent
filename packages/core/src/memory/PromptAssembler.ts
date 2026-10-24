@@ -43,33 +43,22 @@ const CHARACTER_FACTS_IN_PROMPT = 8;
 //   - `required`：**无条件先占预算**（丢它不是"预算不够"，是 bug）
 //   - `optional`：`canFit` 通过才进；预算不足时**记名**（见 `assembleChat` 末尾的丢弃日志）
 //
+// ★ 2026-10-25（change: `assembler-block-registry`，P8 第 2 步）：
+//   **这张表搬到了 `block-registry.ts`**，并升级为"注册表" —— 每块多了
+//   `effect: 'read' | 'write'`（构建它会不会**写库**）与 `source`（数据源）。
+//   本文件只 re-export，不再保留第二份定义（写两份必然漂移）。
+//
 // ⚠️ 改这张表 = **行为变更**，不是重构。改完必须更新 characterization 快照。
 
-export type ChatBlockKey =
-  | 'selfNotice' | 'persona' | 'overlay' | 'basics' | 'preferences'
-  | 'facts' | 'characterFacts' | 'pendingConfirm' | 'recentConversations'
-  | 'worldbook' | 'life' | 'memories' | 'brevity';
-
-/** 顺序 = 组装顺序；策略见上方说明。**顺序本身仍是行为**（决定谁先占预算）。 */
-export const CHAT_BLOCK_POLICY: Record<ChatBlockKey, 'required' | 'optional'> = {
-  selfNotice: 'required',
-  persona: 'required',
-  overlay: 'optional',
-  basics: 'optional',
-  preferences: 'optional',
-  facts: 'optional',
-  characterFacts: 'optional',
-  pendingConfirm: 'optional',
-  recentConversations: 'optional',
-  // ★ 2026-10-24（change: `align-dsh-memory-blocks-with-scope`）：世界书 opt-in 注入。
-  //   **optional 且排在 recentConversations 之后、life 之前** —— 与 assembleCode 的相对顺序
-  //   对齐（情境提示 → life → 相关记忆）。代价要认：预算紧时先被挤掉的是它后面的两块。
-  worldbook: 'optional',
-  life: 'optional',
-  memories: 'optional',
-  // ★ 2026-10-20（make-her-brief）：输出约束，**绝不能因预算被丢**
-  brevity: 'required',
-};
+import { CHAT_BLOCK_POLICY, CODE_BLOCK_POLICY } from './block-registry.js';
+import type { ChatBlockKey, CodeBlockKey } from './block-registry.js';
+export type { ChatBlockKey, CodeBlockKey, BlockEffect, BlockSpec } from './block-registry.js';
+export {
+  CHAT_BLOCKS, CODE_BLOCKS,
+  CHAT_BLOCK_POLICY, CODE_BLOCK_POLICY,
+  CHAT_BLOCK_ORDER, CODE_BLOCK_ORDER,
+  WRITE_EFFECT_CHAT_BLOCKS,
+} from './block-registry.js';
 
 /**
  * 「给了 scope、也匹配到了世界书条目，却一条都注入不进去」的**诊断文案**（★ 2026-10-25）。
@@ -99,15 +88,6 @@ export function worldbookSkipDiagnosis(
     `（image 型 ${imageCount} 条不注入、scope 不符 ${scopeMissCount} 条）${cause}`;
 }
 
-export type CodeBlockKey = 'persona' | 'techProfile' | 'projectContext' | 'worldbook' | 'life' | 'memories';
-export const CODE_BLOCK_POLICY: Record<CodeBlockKey, 'required' | 'optional'> = {
-  persona: 'required',
-  techProfile: 'optional',
-  projectContext: 'optional',
-  worldbook: 'optional',
-  life: 'optional',
-  memories: 'optional',
-};
 
 /**
  * ★ 2026-10-24（change: `align-dsh-memory-blocks-with-scope`）：把 `mode` 的一词三义拆开。

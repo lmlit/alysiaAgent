@@ -849,6 +849,25 @@ request body 相同还不够 —— 两条链路若在**URL 拼接 / 请求头 /
 追加 `未给 worldbookScope ⇒ 世界书不注入`。此前它与"库里确实没条目"**同形**（都是 `注入 0 条`），
 而前者是调用方漏参数（可以改），后者是配置缺口（不该改代码）。
 
+**契约 8：块的事实集中在一张注册表上（2026-10-25，change: `assembler-block-registry`；P8 第 2 步）。**
+
+`packages/core/src/memory/block-registry.ts` 的 `CHAT_BLOCKS` / `CODE_BLOCKS` 是唯一出处，
+每块五件事写在一处：`key` · `policy`（required/optional）· **`effect`（`read`/`write`）** ·
+`source`（数据源）· `note`（已知代价/历史事故）。**数组顺序 = 组装顺序 = 预算优先级。**
+
+- `CHAT_BLOCK_POLICY` / `CODE_BLOCK_POLICY` 由注册表**派生**，不许再手写第二份（手写必然漂移）。
+- `CHAT_BLOCK_ORDER` / `CODE_BLOCK_ORDER` / `WRITE_EFFECT_CHAT_BLOCKS` 一并导出到 barrel，
+  包外能回答「她这一轮读哪些块 / 谁优先 / **哪块会写库**」。
+- ★ **`effect: 'write'` 目前只有 `pendingConfirm`**：它的数据源 `listPendingConfirmFacts()`
+  内部会 `expireStaleFacts() → writeFacts()` —— **读路径带写副作用**，也就是 KI-5 里
+  「吞掉一次写失败而日志看不出来」的那一处。声明出来之后：可查、可测
+  （`WRITE_EFFECT_CHAT_BLOCKS` 钉死）、且将来「只读场景跳过写块」能做成机械判断。
+  ⚠️ **只声明，不改行为**：动那个写要改 `listPendingConfirmFacts()` 的语义与过期清理时机，
+  属行为变更 —— 先显式化，再决定要不要动。
+- ★ 本步**不动** `assembleChat()` 的函数体（仍是逐个 `pushChatBlock`）。"真正的拆块重构"另开 change。
+  **零行为变更的证明标准 = characterization 快照逐字不变**（本步 4/4 通过，未 `-u`）。
+
+
 ⚠️ **禁止 `vitest -u`**：快照一旦被更新就从"证据"退化成"装饰"。
 改块顺序/策略/预算 = 行为变更 → 快照**应当**变化，但那时必须走 change 并说明。
 

@@ -88,6 +88,15 @@ export type {
   ChatBlockKey, CodeBlockKey,
 } from './PromptAssembler.js';
 export { CHAT_BLOCK_POLICY, CODE_BLOCK_POLICY, worldbookSkipDiagnosis } from './PromptAssembler.js';
+// ★ 2026-10-25（change: `assembler-block-registry`）：块注册表本体。
+//   公开面要能回答「她这一轮会读哪些块 / 谁优先 / 哪块会写库」——
+//   运维排查与后续切面（genres、只读场景跳过写块）都要用它。
+export {
+  CHAT_BLOCKS, CODE_BLOCKS,
+  CHAT_BLOCK_ORDER, CODE_BLOCK_ORDER,
+  WRITE_EFFECT_CHAT_BLOCKS,
+} from './block-registry.js';
+export type { BlockEffect, BlockSpec } from './block-registry.js';
 export { filterPII } from './PIIFilter.js';
 // ★ 2026-10-21（change: `unify-memory-eligibility`，契约 C1）：记忆资格的**唯一出处**。
 //   导出到 barrel 是必需的：server / dsh-adapter 侧判定"这条内容能不能学"时
