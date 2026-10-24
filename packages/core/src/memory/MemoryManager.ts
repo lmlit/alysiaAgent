@@ -507,13 +507,47 @@ export class MemoryManager {
   /** ★ 8-29 聊天生活衔接（chat-life-continuity）：距上次生活事件 ≤30min →
    *  "你刚才在…"补写块（用户消息进来时,对话自然从生活里走出来接话）。
    *  无近期事件返回空串。 */
+  /**
+   * 「此刻的你」块 —— 聊天时把**她手上正在做/刚做完的事**递进去，让她能自然接话。
+   *
+   * ★ 2026-10-25（change: `make-her-talk-like-a-person`，生活联动）：窗口 30 分钟 → **3 小时 + 今日兜底**。
+   *
+   * 病因：生活事件间隔是 **0.5–8h**，而原来的窗口只有 **30 分钟** ⇒ 绝大多数对话里这一块是**空的**，
+   * 于是"说话内容从生活系统里拿"在机制上根本接不上：素材在库里，但她手上没有。
+   * 现在分三档给措辞（**不能用"刚才"描述 3 小时前的事**）：
+   *
+   * | 距上次事件 | 措辞 |
+   * |---|---|
+   * | ≤30min | 你刚才在 |
+   * | ≤3h | 你不久前在 |
+   * | 今天更早（>3h） | 今天早些时候你在 |
+   */
   getLifeContinuityBlock(): string {
     try {
-      const events = this.lifeStore.getEventsSince(new Date(Date.now() - 30 * 60_000).toISOString())
+      const now = Date.now();
+      const pickLatest = (events: Array<{ content: string; createdAt: string }>) =>
+        events.length > 0 ? events[events.length - 1] : null;
+
+      const within3h = this.lifeStore
+        .getEventsSince(new Date(now - 3 * 3600_000).toISOString())
         .filter(e => e.origin !== 'followup');
-      if (events.length === 0) return '';
-      const last = events[events.length - 1];
-      return `你刚才在: ${last.content.slice(0, 60)}（${formatLocalTime(new Date(last.createdAt)).slice(-5)}）`;
+      let last = pickLatest(within3h);
+      let prefix = '';
+      if (last) {
+        const mins = Math.max(0, Math.round((now - new Date(last.createdAt).getTime()) / 60_000));
+        prefix = mins <= 30 ? '你刚才在' : '你不久前在';
+      } else {
+        // 3h 内没有事件 → 退回「今天最近一条」：宁可说"今天早些时候"，也不要让她手上空着
+        const todayKey = localDateKey();
+        const todayEvents = this.lifeStore
+          .getEventsSince(new Date(`${todayKey}T00:00:00`).toISOString())
+          .filter(e => e.origin !== 'followup' && localDateKeyFromISO(e.createdAt) === todayKey);
+        last = pickLatest(todayEvents);
+        prefix = '今天早些时候你在';
+      }
+      if (!last) return '';
+      const time = formatLocalTime(new Date(last.createdAt)).slice(-5);
+      return `${prefix}: ${last.content.slice(0, 60)}（${time}）`;
     } catch (err: any) {
       // ★ KI-5：原先裸 catch + 返回空串 ⇒「生活衔接块没了」和「她最近确实没有生活事件」
       //   在 prompt 上完全同形。热路径（每条用户消息）→ 限频。

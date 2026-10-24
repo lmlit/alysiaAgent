@@ -170,7 +170,9 @@ export class LLMAgentStage implements Stage {
       if (windowBase) systemPrompt += `\n[跨世界之窗]\n${windowBase}`;
       const continuity = this.ctx.memoryManager.getLifeContinuityBlock?.() ?? '';
       if (continuity) {
-        systemPrompt += `\n[此刻的你]\n${continuity}——轻月找你说话，自然地从这段生活里走出来接话。不用特意提起刚才的事，除非它自然地相关。`;
+        // ★ 2026-10-25：措辞去掉「刚才」—— 衔接块窗口已放宽到 3h/今日兜底，
+        //   3 小时前的事叫"刚才"会让她自己都说不圆。时间感由块内前缀给出。
+        systemPrompt += `\n[此刻的你]\n${continuity}——轻月找你说话，自然地从这段生活里走出来接话。不用特意提起，除非它自然地相关。`;
       }
     }
 

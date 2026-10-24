@@ -56,6 +56,14 @@ describe('talk_system.md —— 说话方式守卫', () => {
     }
   });
 
+  it('★ 规则必须**指名素材来源**（否则"可以带一句自己的事"是空话）', () => {
+    // 2026-10-25（生活联动）：素材是【我的近期日常】/【此刻的你】，规则里必须点出来
+    expect(raw).toContain('【我的近期日常】');
+    expect(raw).toContain('【此刻的你】');
+    expect(raw, '要禁止把素材当清单复述').toContain('不是汇报');
+    expect(raw, '没有素材时不许编').toContain('不要编');
+  });
+
   it('长度规则与代码常量一致（md 与 CHAT_BREVITY_DIRECTIVE 两处都要在）', () => {
     expect(raw).toContain('默认不超过 3 句');
     expect(raw, '要保留"两处都要改"的提醒，否则下次只改一处').toContain('CHAT_BREVITY_DIRECTIVE');

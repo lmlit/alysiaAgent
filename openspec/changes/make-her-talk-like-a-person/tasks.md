@@ -45,3 +45,13 @@
 - ❌ 不改 `CHAT_BREVITY_DIRECTIVE`（长度规则本来就对，且被 characterization 快照钉着）
 - ❌ 不改 `01_default.md`（与 soul 同源，改了等于重复加法）
 - ❌ 不加新的"不要…"条目（这类规则已经够多了，再加只会更拘谨）
+
+## 生活联动（2026-10-25 追加）
+
+- [x] `MemoryManager.getLifeContinuityBlock()`：30min → **3h + 今日兜底**，措辞分三档
+- [x] `llm-agent.ts` 衔接句去掉「刚才」
+- [x] `talk_system.md`「她有自己的事」**指名素材**（【我的近期日常】/【此刻的你】）+ 用法 + 禁令（不许清单复述 / 不许编）
+- [x] 新测试 `tests/memory/unit/life-continuity.test.ts`（6 例）：三档措辞 / 空 / followup 不算 / 取最近
+- [x] 旧用例「30min 外 → 空串」按行为变更更新；新增「昨天 → 空串」防跨天串味
+- [x] 全量 **161 文件 / 1900 用例**
+- [ ] ⏸ 结构化块 `[我想跟你说的一件事]`（挑一条未被引用的事件，放 brevity 前）—— 待真人验收后再决定

@@ -290,8 +290,26 @@ describe('MemoryManager — 8-29 聊天生活衔接（chat-life-continuity）', 
     expect(mm.getLifeContinuityBlock()).toBe('');
   });
 
-  it('30min 外的事件 → 空串（久远生活不干扰对话）', () => {
-    mm.lifeStore.addEvent({ id: 'old', createdAt: new Date(Date.now() - 2 * 3600_000).toISOString(), type: 'internal', content: '两小时前的事' });
+  it('★ 2h 前的事件 → 仍然注入，措辞降级为「你不久前在」（2026-10-25 放宽窗口）', () => {
+    // ⚠️ **行为变更**（change: `make-her-talk-like-a-person`，生活联动）：
+    //   原用例是「30min 外 → 空串（久远生活不干扰对话）」。
+    //   但生活事件间隔是 **0.5–8h**，30 分钟窗口意味着**绝大多数对话里她手上没有"当下"** ——
+    //   "说话内容从生活系统里拿"在机制上接不上（素材在库里，但她接不到）。
+    //   现在：3h 内按时间差分档（≤30min「刚才」/ ≤3h「不久前」）；3h 外退回「今天最近一条」。
+    const twoHoursAgo = new Date(Date.now() - 2 * 3600_000);
+    // 跨午夜时 2h 前已是"昨天"，那种情况应保持空串 —— 见下一条用例
+    if (twoHoursAgo.getDate() !== new Date().getDate()) return;
+
+    mm.lifeStore.addEvent({ id: 'old', createdAt: twoHoursAgo.toISOString(), type: 'internal', content: '两小时前的事' });
+    const block = mm.getLifeContinuityBlock();
+    expect(block, '2h 前属于"不久前"，不该是空串').toContain('两小时前的事');
+    expect(block).toContain('你不久前在');
+    expect(block, '2 小时前不能说"刚才"').not.toContain('刚才');
+  });
+
+  it('昨天的事件 → 空串（跨天不串味）', () => {
+    const yesterday = new Date(Date.now() - 30 * 3600_000).toISOString();
+    mm.lifeStore.addEvent({ id: 'y', createdAt: yesterday, type: 'internal', content: '昨天的事' });
     expect(mm.getLifeContinuityBlock()).toBe('');
   });
 });
