@@ -108,7 +108,7 @@ say(`目标 ${HOST}:${REMOTE_DIR} · 镜像 ${IMAGE}${DRY ? ' · DRY-RUN' : ''}`
 
 if (!SKIP_TESTS) {
   log('Step 0b 全量测试（--skip-tests 可跳过，但别跳）');
-  run('npx', ['vitest', 'run', '--exclude=tests/memory/e2e/*']);
+  runNpx(['vitest', 'run', '--exclude=tests/memory/e2e/*']);
   say('✓ 全绿');
 }
 
@@ -148,7 +148,7 @@ if (DRY) { log('DRY-RUN 结束：前置检查通过，未改动服务器'); proc
 
 // ── Step 2/3 构建 ────────────────────────────────────────────────────────
 log('Step 2 构建前端产物（镜像只 COPY console/out，不在镜像里构建）');
-run('pnpm', ['build:console']);
+runPnpm(['build:console']);
 const outIdx = join(ROOT, 'packages', 'console', 'out', 'index.html');
 if (!existsSync(outIdx)) die('packages/console/out 无产物');
 say(`✓ out/ 就绪（mtime ${new Date(statSync(outIdx).mtimeMs).toISOString()}）`);
