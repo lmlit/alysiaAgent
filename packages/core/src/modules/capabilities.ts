@@ -25,6 +25,7 @@ import {
 } from '../tools/filesystem.js';
 import { createSessionCommands } from '../commands/session.js';
 import { createStatsCommand } from '../commands/stats.js';
+import { createPrivacyCommand } from '../commands/privacy.js';
 import { logger } from '../utils/logger.js';
 import type { MemoryManager } from '../memory/MemoryManager.js';
 // ★ 2026-10-20（change: make-stop-really-stop；KI-7）：`/stop` 要接真正的中断注册表
@@ -263,6 +264,15 @@ export const commandsModule: Module<CommandsConfig> = {
       registry.register(cmd);
     }
     registry.register(createStatsCommand((sid) => memoryManager.getTokenStats(sid) as any));
+    // ★ 2026-10-25（change: `fulfill-privacy-mode`）：spec §4.6 早就承诺过隐私命令，
+    //   但从来没注册过（入口只有 API，无 UI）。现在补上 `/privacy <mode>`。
+    registry.register(createPrivacyCommand({
+      getMode: () => memoryManager.getPrivacyMode(),
+      setMode: (mode, sessionId) => {
+        memoryManager.setPrivacyMode(mode, sessionId);
+        return memoryManager.getPrivacyMode();
+      },
+    }));
 
     ctx.provide('al:commands', registry);
   },

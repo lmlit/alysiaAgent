@@ -1034,19 +1034,34 @@ active fact 永久固化（valid_until=null）→ `getUserActivitySummary` 按 c
 
 **问题**: 临时话题/借用设备时，记忆照写照读，无控制开关。
 
-**解决**: MemoryManager 暴露 `setPrivacyMode(mode)`:
+**解决**: MemoryManager 暴露 `setPrivacyMode(mode, sessionId?)`:
 
 | 模式 | 写入 EventLog | 读取 Profile/Worldbook | 使用场景 |
 |------|:---:|:---:|------|
 | `'off'` | ✅ | ✅ | 正常模式（默认） |
-| `'readonly'` | ✅ | ❌ | 本次对话不被长期记忆引用 |
+| `'readonly'` | ✅（**带 `skip_profile`**，不参与学习/召回） | ❌ | 本次对话不被长期记忆引用 |
 | `'full'` | ❌ | ❌ | 临时隐身/借用设备 |
 
 会话结束后自动恢复 `'off'`。
 
 触发方式:
-- 用户消息: `//privacy full`、`//privacy readonly`、`//privacy off`
-- Pipeline 阶段: 检测到隐私指令 → 调用 `memoryManager.setPrivacyMode()`
+- 用户消息: `/privacy off|readonly|full`（单斜杠 —— `CommandRegistry` 按 `rawText.slice(1)` 解析，
+  双斜杠写法在该注册表里**永远匹配不到**）
+- HTTP: `POST /api/privacy`
+
+#### ★ 2026-10-25 兑现三处欠账（change: `fulfill-privacy-mode`）
+
+原设计（2026-08-02）从没被完整实现，且**都不会报错**，所以一直没人发现：
+
+| # | 原状 | 现在 |
+|---|---|---|
+| 1 | spec 写着「用户消息 `//privacy …`」，但**全仓没有这个命令处理器**（入口只有 `POST /api/privacy`，console 也没 UI） | 新增 `createPrivacyCommand()` → `/privacy`（别名 `/p`）。无参数报当前模式 + 用法；非法值**明确说明没变**；切换后回执**说清这个模式做了什么** |
+| 2 | `readonly` 只做了「当次不注入」，`ingest` 照写、画像照提取 ⇒ 这段对话**会**在下次正常对话里被注入 —— 承诺的「不被长期记忆引用」**没兑现** | `readonly` 时 `ingest` 给 payload 打 **`skip_profile`**（复用 `eligibility` 的现成判据：不进画像 / 不进人格 / 不生成嵌入 ⇒ 不会被召回）。事件**仍入库**（可审计、可复盘），但**不参与学习** |
+| 3 | 「会话结束恢复」是 `onSessionEnd` 里的**内联赋值**，而 `resetPrivacyMode()` 成了**只有测试在调用的死代码**；且**任何**会话结束都会清（多会话时，别人一句 `/new` 就把你刚开的隐私清了） | 统一走 `resetPrivacyMode(sessionId?)`：**由哪个会话开启的，只在该会话结束时恢复**（`privacySessionId`）；由 API 全局开启（无 sessionId）则任何会话结束都恢复。恢复时**留痕**，返回布尔值（不假装做了事） |
+
+⚠️ **对账须知**：`readonly` 的语义是「**她读不到，但系统照写**」——
+名字有歧义，**表格才是准的**。别把它当"什么都别记"（那是 `full`）。
+⚠️ `skip_profile` 是 `eligibility.ts` 的**同一套判据**，不要为隐私模式另写一份"不学习"判定。
 
 ---
 

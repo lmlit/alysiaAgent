@@ -244,18 +244,54 @@ export class MemoryManager {
   }
 
   // ===== 隐私模式 =====
+  //
+  // ★ 2026-10-25（change: `fulfill-privacy-mode`）：三档语义**兑现**。
+  //
+  // 原设计（spec §4.6，2026-08-02）：
+  //   问题 = 「临时话题/借用设备时，记忆照写照读，无控制开关」
+  //   `readonly` 的承诺是「**本次对话不被长期记忆引用**」。
+  // 但实现只做了"当次不注入"（`assembleMinimal`）：`ingest` 照写、`RealtimeProcessor` 照跑、
+  // 会话结算照提取画像 ⇒ 这段对话**会**变成 facts/摘要，在**下次正常对话里被注入** —— 承诺没兑现。
+  //
+  // 现在：
+  //   - `readonly` → `ingest` 时给 payload 打 **`skip_profile`**（复用 `eligibility` 那套现成判据：
+  //     不进画像 / 不进人格 / 不生成嵌入 ⇒ 不会被召回）。事件**仍在 EventLog**（可审计、可复盘），
+  //     但**不参与学习**。这才是「不被长期记忆引用」。
+  //   - `full` → 连 EventLog 都不写（原有行为不变）。
+  //   - **谁会恢复 `off`**：由某会话开启的，**只在该会话结束时**恢复（`privacySessionId`）；
+  //     通过 `POST /api/privacy` 全局开启的（无 sessionId），任何会话结束都恢复。
+  //     此前是"任何会话结束都清" —— 多会话时会把你刚开的隐私被别人一句 `/new` 清掉。
 
-  setPrivacyMode(mode: PrivacyMode): void {
+  /** 隐私模式由哪个会话开启；`null` = 通过 API 全局开启 */
+  private privacySessionId: string | null = null;
+
+  setPrivacyMode(mode: PrivacyMode, sessionId?: string): void {
     this.privacyMode = mode;
+    this.privacySessionId = mode === 'off' ? null : (sessionId ?? null);
+    logger.info(
+      `[Memory] privacy → ${mode}` +
+      (mode === 'off' ? '' : sessionId ? `（会话 ${sessionId.slice(-12)}）` : '（全局）'),
+    );
   }
 
   getPrivacyMode(): PrivacyMode {
     return this.privacyMode;
   }
 
-  /** 会话结束时自动恢复隐私模式 */
-  resetPrivacyMode(): void {
+  /**
+   * 恢复 `off`。返回是否真的变了（便于如实回话/留痕）。
+   *
+   * `sessionId` 给出时：只在**开启它的那个会话**结束时恢复
+   * （`privacySessionId` 为空 = 全局开启 ⇒ 任何会话结束都恢复）。
+   */
+  resetPrivacyMode(sessionId?: string): boolean {
+    if (this.privacyMode === 'off') return false;
+    if (sessionId && this.privacySessionId && this.privacySessionId !== sessionId) return false;
+    const from = this.privacyMode;
     this.privacyMode = 'off';
+    this.privacySessionId = null;
+    logger.info(`[Memory] privacy ${from} → off（会话结束自动恢复）`);
+    return true;
   }
 
   // ===== Token 统计（由 LLMAgentStage POST 调用）=====
@@ -970,6 +1006,14 @@ export class MemoryManager {
       return;
     }
 
+    // ★ 2026-10-25（change: `fulfill-privacy-mode`）：`readonly` = **入库但不学习**。
+    //   打 `skip_profile`（`eligibility` 那套现成判据）⇒ 不进画像 / 不进人格 / 不生成嵌入
+    //   ⇒ 不会被召回。事件本身仍在 EventLog（可审计/可复盘）。
+    //   ⚠️ 放在 PII 之前：下面那行的 `{ ...event.payload }` 会带着这个标记一起走。
+    if (this.privacyMode === 'readonly' && !event.payload.skip_profile) {
+      event.payload = { ...event.payload, skip_profile: true };
+    }
+
     // PII filter before storing
     if (event.payload.content) {
       event.payload = { ...event.payload, content: filterPII(event.payload.content as string) };
@@ -1404,8 +1448,10 @@ export class MemoryManager {
       logger.error(`[Memory] onSessionEnd failed: ${err.message}`);
       throw err;
     }
-    // 会话结束自动恢复隐私模式
-    this.privacyMode = 'off';
+    // ★ 2026-10-25（change: `fulfill-privacy-mode`）：会话结束恢复隐私模式 ——
+    //   以前这里是**内联** `this.privacyMode = 'off'`，而 `resetPrivacyMode()` 方法成了
+    //   「只有测试在调用的死代码」。现在统一走方法（含 sessionId 判据与留痕）。
+    this.resetPrivacyMode(sessionId);
     return result;
   }
 

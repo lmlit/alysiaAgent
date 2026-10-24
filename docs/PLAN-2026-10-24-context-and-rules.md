@@ -27,7 +27,7 @@
 | **P1（dsh 世界书注入）** | **降级为卫生修复**：代码与测试保留（真实缺陷已修），但**取消**内容迁移（决定 2）与真机验收；`/api/memory/read` 不再被 dsh 调用 ⇒ 新字段生产上不再使用 |
 | **P9（`pipelineMode` 无写者）/ P10（人格 3.5 份）** | 仍成立，但与 dsh 无关的 P10 保留优先；P9 视 dsh 存废再定 |
 | **历史数据** | **不清理**（用户：「已写入的就先不管了，问题不大」） |
-| **重心** | 移回与 dsh 无关的四项：**P2/P3（亲密度衰减可达性）✅ → P8 第 1+3 步（context-facts）✅ → P10（人格第三份）✅ → 隐私模式定义 / 采样槽** |
+| **重心** | 移回与 dsh 无关的四项：**P2/P3（亲密度衰减可达性）✅ → P8 第 1+3 步（context-facts）✅ → P10（人格第三份）✅ → 隐私模式 ✅（P12）→ 采样槽（P8 第 4 步）** |
 
 ---
 
@@ -42,6 +42,7 @@
 | **P8** | **组装器/事实层切面化**：抽事实层 / 块注册表 / 体裁表 / 通用装配器。四步各自独立收益 | 👤 已拍板 · **第 1+3 步已完成并归档**（`converge-context-facts`：事实层收敛 + 问候补档位/idle）；**剩第 2 步**（`block-registry`）、**第 4 步**（`genres`） | [`archive/2026-10-24-converge-context-facts`](../openspec/archive/2026-10-24-converge-context-facts/proposal.md) |
 | **P9** | `pipelineMode` **有字段、有读者、没有写者** ⇒ `assembleCode` 在生产链路**不可达**（"编程模式组装"只存在于单测里） | 🧑 待拍板：接线 / 标死 / 删 | 本文 §2.7 |
 | **P10** | 人格实际有 **3.5 份**：`proactive.ts:45` 有一行**未登记的内联人格**（`label-dual-persona-sources` 只覆盖了 2 份） | ✅ **已归档**（2026-10-24）：身份/语气改取 DB，体裁约束留常量 | [`archive/2026-10-24-unify-greeting-persona-source`](../openspec/archive/2026-10-24-unify-greeting-persona-source/proposal.md) |
+| **P12** | 隐私模式三档**从没兑现**：eadonly 只挡注入、不挡学习（画像照提取 ⇒ 下次对话照样被引用）；//privacy 命令从未注册；reset 是内联赋值（命名方法是死代码，且任何会话结束都清） | ✅ **2026-10-25 已归档**（ulfill-privacy-mode）：eadonly 打 skip_profile、补 /privacy 命令、reset 按 privacySessionId 收口 | [rchive/2026-10-25-fulfill-privacy-mode](../openspec/archive/2026-10-25-fulfill-privacy-mode/proposal.md) |
 | **P4** | `{{alysia_life}}` 在 dsh 里**恒为空**（注册了，回调固定 `return undefined`） | 🧑 待定（**严重度已下调**，见 §2.5） | spec §2.3 / §4 |
 | **P5** | 生活事件上下文**不含任何用户画像**（是否设计意图待确认） | 🧑 **待澄清**——可能是**故意的** | 本文 §2.3 |
 | **P6** | 「沉默 → 少说话」缺一条**表态时钟**驱动的衰减帽（whale 有，我们是档位驱动） | 🧑 待拍板（数值别照抄，见 §2.4） | 本文 §2.4 |
