@@ -154,7 +154,17 @@ if (!existsSync(outIdx)) die('packages/console/out 无产物');
 say(`✓ out/ 就绪（mtime ${new Date(statSync(outIdx).mtimeMs).toISOString()}）`);
 
 log('Step 3 构建镜像');
-run('docker', ['compose', 'build'], { cwd: SERVER_DIR });
+// ★ 2026-10-25 实测：`Dockerfile` 里的 `pnpm install` 层**一旦失效就必须联网**
+//   （改根 package.json / lockfile 都会失效它）。容器内直连 `registry.npmmirror.com`
+//   在本机会 `ECONNRESET`，所以支持传构建期代理：
+//     ALYSIA_BUILD_PROXY=http://host.docker.internal:7898
+//   ⚠️ 容器打的是 `host.docker.internal`，而 Clash 只监听回环 ⇒ 需要一个
+//   `0.0.0.0:7898 → 127.0.0.1:7897` 的转发（见 docs/Docker-Deployment.md 的说明）。
+const proxyArgs = process.env.ALYSIA_BUILD_PROXY
+  ? ['--build-arg', `HTTP_PROXY=${process.env.ALYSIA_BUILD_PROXY}`,
+     '--build-arg', `HTTPS_PROXY=${process.env.ALYSIA_BUILD_PROXY}`]
+  : [];
+run('docker', ['compose', 'build', ...proxyArgs], { cwd: SERVER_DIR });
 say(`✓ ${IMAGE} → ${run('docker', ['images', IMAGE, '--format', '{{.ID}}'], { allowFail: true }) || '(未找到)'}`);
 
 // ── Step 4 打包 + 上传 ───────────────────────────────────────────────────
