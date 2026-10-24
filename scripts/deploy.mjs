@@ -64,6 +64,23 @@ function run(cmd, args, { cwd = ROOT, allowFail = false, quiet = false, shell = 
 }
 
 /**
+ * 只看**退出码**的版本（★ 2026-10-25 修：Step 0b 曾按文本判断"测试过没过"，
+ * 而 vitest 的 stderr 里塞满了测试自己的日志 —— 解析文本就会误判成失败，
+ * 于是部署在"测试其实全绿"的情况下被自己拦下。退出码才是唯一可信信号。）
+ */
+function tryRun(cmd, args, { cwd = ROOT, quiet = true } = {}) {
+  try {
+    execFileSync(cmd, args, {
+      cwd, encoding: 'utf8', shell: true, maxBuffer: 64 * 1024 * 1024,
+      stdio: quiet ? ['ignore', 'pipe', 'pipe'] : ['ignore', 'pipe', 'inherit'],
+    });
+    return { ok: true, out: '' };
+  } catch (e) {
+    return { ok: false, out: ((e.stdout || '') + (e.stderr || '') || e.message || '').toString() };
+  }
+}
+
+/**
  * 跑 pnpm/npx —— Windows 上它们是 `.cmd`，`execFileSync` 直接调会 ENOENT，
  * 所以走 shell。参数都是固定字面量，没有注入面。
  */
@@ -108,12 +125,13 @@ say(`目标 ${HOST}:${REMOTE_DIR} · 镜像 ${IMAGE}${DRY ? ' · DRY-RUN' : ''}`
 
 if (!SKIP_TESTS) {
   log('Step 0b 全量测试（--skip-tests 可跳过，但别跳）');
-  // ★ 必须 `quiet`：vitest 的 stderr 会把整段日志淹掉（实测一次部署日志里 90% 是测试噪声），
-  //   而部署日志的作用是**事后看发生了什么**。失败时才把尾部打出来。
-  const t = run('npx', ['vitest', 'run', '--exclude=tests/memory/e2e/*'], { shell: true, quiet: true, allowFail: true });
-  const summary = t.split('\n').filter((l) => /Test Files|Tests\s+\d/.test(l)).join(' · ') || t.slice(-500);
-  if (!/Tests\s+\d+ passed/.test(t) || /failed/.test(summary)) die(`全量测试没过：\n${summary}`);
-  say(`✓ ${summary.trim()}`);
+  // 只看退出码（见 `tryRun` 的注释：文本判断会把 stderr 里的测试日志误当成失败）
+  const r = tryRun('npx', ['vitest', 'run', '--exclude=tests/memory/e2e/*']);
+  if (!r.ok) {
+    const tail = r.out.split('\n').filter((l) => /FAIL|✗|×|Tests\s+\d|Test Files/.test(l)).slice(-12).join('\n');
+    die(`全量测试没过（exit≠0）：\n${tail || r.out.slice(-1200)}`);
+  }
+  say('✓ 全量测试通过（exit 0）');
 }
 
 // ── Step 1 config 漂移闸（今天的事故就缺这一步）───────────────────────────
