@@ -9,7 +9,9 @@
     "build": "pnpm -r build",
     "dev:server": "pnpm --filter @alysia/server dev",
     "dev:console": "pnpm --filter @alysia/console dev",
-    "build:console": "pnpm --filter @alysia/console build"
+    "build:console": "pnpm --filter @alysia/console build",
+    "deploy:dry": "node scripts/deploy.mjs --dry-run",
+    "deploy": "node scripts/deploy.mjs"
   },
   "devDependencies": {
     "@rolldown/binding-win32-x64-msvc": "^1.1.3",

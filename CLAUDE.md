@@ -23,6 +23,28 @@ AI Agent 桌面应用：聊天模式 + 编程模式，搭载"昔涟"人格和记
 3. 纯文档修改也走 change（tasks.md 标"纯文档"）
 4. 完整规则见 `openspec/project.md`（治理宪法）
 
+## ★ 部署是流程的一部分，不是可选项（2026-10-25 立）
+
+**每一批 change 做完就部署，不要攒**。这条是踩出来的：
+2026-10-24～25 有 8 个 change 只提交不部署，结果「验收」变成了让用户去重启一个根本没更新的服务 ——
+而 SOP（`docs/Docker-Deployment.md`）的顺序本来就是 **Step 3 部署 → Step 5 提交**，是我做反了。
+
+```bash
+# 1) 先空跑（前置检查：Docker 引擎 / SSH / 工作区干净 / config 漂移）
+ALYSIA_DEPLOY_HOST=root@<host> pnpm deploy:dry
+
+# 2) 真部署（自动：全量测试 → 构建前端 → 构建镜像 → 打回滚标签 → 切换 → 健康检查，不健康自动回滚）
+ALYSIA_DEPLOY_HOST=root@<host> pnpm deploy
+```
+
+- **host 只在环境变量里**，绝不写进仓库（本仓 PUBLIC，已发生两次泄露事故）
+- 脚本 `scripts/deploy.mjs` 拦的三个坑，都是**不报错**的那种：
+  ① `config.yml` 是 **gitignore** 的、与服务器会漂移 —— 整份覆盖曾把服务器侧
+  `max_tokens 1024→256` / `4096→2048` 和整段 `projects:`（委托工具靠它注册）静默退回默认
+  ⇒ 脚本**默认拒绝**服务器独有键，要显式 `--merge-config`；
+  ② 切镜像前不打回滚标签 ⇒ 退不回去；③ 切完不看健康 ⇒ 服务半死而你以为发成功了
+- 部署完把 `docker ps` + `/api/health` 输出记进该 change 的 tasks，**那才是验收依据**
+
 ## ★ 开发约束：Web 端接口兼容（必读）
 
 后续开发**服务端功能**时，新增/修改 core 方法必须先对照 `docs/Web-API-Design.md`：
@@ -37,9 +59,9 @@ AI Agent 桌面应用：聊天模式 + 编程模式，搭载"昔涟"人格和记
 ## Current State
 
 **记忆系统核心 + 架构重构 + Feature Flag + AI 主动生活系统 + 模块化内核 + dsh 通道全部完成。**
-测试基线：**1743**（core 997 / server 400 / dsh-adapter 138 / dsh-console 8 / console 100）
-+ **E2E 5/5**（真实 API）。★ 2026-10-19 实测全绿；**基线数字以 `docs/HANDOFF.md` 顶部为准**
-（它会随会话更新，本行只是快照）。⚠️ 跑测试**必须用 Node 24**（`E:\nodejs24\node.exe`），
+测试基线：**1911**（**162** 个测试文件，★ 2026-10-25 实测全绿；原写 1743 已过期，
+分 package 的数字以 `docs/HANDOFF.md` 顶部为准 —— 本行只是快照）
++ **E2E 5/5**（真实 API）。⚠️ 跑测试**必须用 Node 24**（`E:\nodejs24\node.exe`），
 PATH 上的 node 是 v20，而 better-sqlite3 是给 24 编的 —— 否则 401 条全挂（`NODE_MODULE_VERSION` 不匹配）。
 ★ 2026-10-02 起**编程模式由 dsh 承接，四层通道（人格 / 记忆读 / 记忆写 / 结算）全通**。
 
