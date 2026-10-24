@@ -4,7 +4,8 @@
 
 | 文件 | 用途 |
 |---|---|
-| `life.ts` | `al:life` 的 5 段：事件生成 / 每日摘要 / 承诺裁决 / 情绪侧端 / 每日反思 |
+| `life.ts` | `al:life` 的 8 段：事件生成 / 每日摘要 / 承诺裁决 / 情绪侧端 / 每日反思 / 拒绝理由 / 日记 / 周信 |
+| `proactive.ts` | `al:proactive` 的问候/祝福：`buildProactiveSystemPrompt()`（**身份与语气从 DB 取**）+ 体裁约束常量 |
 
 ## 为什么不是 `.md` 资源文件
 

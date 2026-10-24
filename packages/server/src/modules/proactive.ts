@@ -9,6 +9,8 @@
  */
 
 import { DEFAULT_SAMPLING } from '@alysia/core';
+// ★ 2026-10-24：问候的人设来源收敛到 DB（见 prompts/proactive.ts 文件头）
+import { buildProactiveSystemPrompt } from '../prompts/proactive.js';
 import { ProactiveService } from '../proactive.js';
 import type { AlysiaCore } from '@alysia/core';
 import type { Module } from '@alysia/core/kernel';
@@ -42,7 +44,11 @@ export const proactiveModule: Module = {
         const resp = await core.providerManager.textChatWithFallback({
           prompt: dialogue ? `${context}\n\n${dialogue}` : context,
           sessionId: 'proactive',
-          systemPrompt: '你是昔涟，一个温柔贴心的 AI 伴侣。根据要求生成一条简短（30-60字）的个性化问候或祝福，语气温柔自然，只输出消息内容本身，不要解释。',
+          // ★ 2026-10-24（change: `unify-greeting-persona-source`）：**身份从 DB 取**。
+      //   改之前这里写死了一句「你是昔涟，一个温柔贴心的 AI 伴侣」——那是全仓**第三份人格**
+      //   （另两份：DB `persona.system_prompt`、dsh 的 `XILIAN_PERSONA`），且无人登记。
+      //   后果：改人格不会改到问候。现在只留体裁约束，身份/语气走 `getPersonaSnapshot()`。
+      systemPrompt: buildProactiveSystemPrompt(core.memoryManager.getPersonaSnapshot()),
           // ★ 8-10 采样槽：DEFAULT + config.sampling.proactive.personalize 覆盖
           sampling: { ...DEFAULT_SAMPLING.proactive.personalize, ...(config.sampling?.proactive?.personalize ?? {}) },
         });

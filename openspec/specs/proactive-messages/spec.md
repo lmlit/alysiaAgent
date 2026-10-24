@@ -78,7 +78,16 @@ prompt 注明"用于让问候更自然贴切，不要生硬引用"——防贴�
 
 ### 2.2 LLM 个性化（bootstrap 注入 generateText）
 
-- systemPrompt 固定：以昔涟身份生成 30-60 字问候/祝福，只输出内容
+- systemPrompt 固定：**以昔涟身份**生成 30-60 字问候/祝福，只输出内容
+- ★ **2026-10-24（change: `unify-greeting-persona-source`）：人设来源收敛到 DB**
+  原文「systemPrompt 固定」被实现成**写死的一句**：「你是昔涟，一个**温柔贴心的 AI 伴侣**。…」
+  —— 那是全仓**第三份人格**（另两份：DB `persona.system_prompt`、dsh 的 `XILIAN_PERSONA`），
+  且**没有任何文档登记**它。后果：**改人格不会改到问候**，问候可能一直用着过时的自我描述。
+  现在：`packages/server/src/prompts/proactive.ts` 的 `buildProactiveSystemPrompt(persona)`
+  从 `getPersonaSnapshot()` 取**名字 + 4 个语气维度**，文件里只留**体裁约束**。
+  ⚠️ **不注入完整 compact persona**：生产库 `system_prompt` = 36352 字 / 31 节，
+  前 4 节 = 6375 字；给一条 30-60 字的问候塞全套不划算，也会把"问候"带成"对话"。
+  ⚠️ 体裁约束三条（变化即行为变更）：第一人称像发微信 / 不自称「AI」「助手」/ 只输出内容本身。
 - sessionId 固定 `'proactive'`（独立会话）
 - 失败/空 → 回退写死文案；发送日志只打 sent/failed 不打内容
 - **主动关怀同走 personalize**（8-08，原写死池子随机取、与问候/祝福不一致）：

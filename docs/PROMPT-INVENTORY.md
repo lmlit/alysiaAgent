@@ -56,7 +56,7 @@
 | 10 | 拒绝理由 | `maybeDecline` | 手拼 | 当前处境 | — | `0.3` | `LIFE_DECLINE_PROMPT` |
 | 11 | 意图裁决（承诺兑现/延期/取消） | `processDueIntents` | 手拼 | 到期 intent + 近况 | — | `0.3` | `LIFE_INTENT_PROMPT`（JSON） |
 | 12 | 心情侧写 | `analyzeMoodNote` | 手拼 | moodValue 序列 | — | `0.3` | `LIFE_MOOD_NOTE_PROMPT` |
-| 13 | **主动问候 / 节日 / 关怀** | `ProactiveService.tick` | **行内 systemPrompt** + 手拼 snippet | `contextSnippet()`（近况+今天日常+亲密度）**＋ `getRecentDialogueBlock()`**（最近对话） | — | `proactive.personalize` | ❗`modules/proactive.ts:45` 的**内联一行人格** |
+| 13 | **主动问候 / 节日 / 关怀** | `ProactiveService.tick` | **`buildProactiveSystemPrompt(persona)`** + 手拼 snippet | 系统提示 = 从 `getPersonaSnapshot()` 取的**名字+语气维度** + 体裁约束；素材 = `contextSnippet()`（近况+今天日常+亲密度档位/idle）**＋ `getRecentDialogueBlock()`** | — | `proactive.personalize` | `prompts/proactive.ts`（2026-10-24 前是**写死在 modules/proactive.ts 的一句**） |
 | 14 | 会话结算（摘要/画像/人格确认） | `onSessionEnd` / `/extract` | 直接调 LLM | 会话原文 | — | `session.summary` / `profile.extract` | `SESSION_SUMMARY_SYSTEM_PROMPT` / `PROFILE_EXTRACT_SYSTEM_PROMPT` |
 | 15 | cron 深度画像重写 | `al:cron`（6h） | 直接调 LLM | 存量 facts/basics | — | `profile.deepRewrite` | `CRON_DEEP_PROFILE_SYSTEM_PROMPT` |
 | 16 | 上下文压缩 | 超限时 | 直接调 LLM | 原文 | — | — | `CONTEXT_COMPACT_SYSTEM_PROMPT` / `…MERGE…` |
