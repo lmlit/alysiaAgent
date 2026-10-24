@@ -80,6 +80,14 @@ export { RealtimeProcessor } from './processors/RealtimeProcessor.js';
 export { SessionEndProcessor } from './processors/SessionEndProcessor.js';
 export { CronProcessor } from './processors/CronProcessor.js';
 export { PromptAssembler } from './PromptAssembler.js';
+// ★ 2026-10-25（change: `pin-memory-read-seams`）：把组装器的**选项与回执类型**也导出。
+//   此前只有类本身在 barrel 上：包外（server / dsh-adapter）想声明"我传的是 AssembleOptions"
+//   只能 `any` 或深路径 —— 而 core 的 exports 不暴露深路径。类型不导出 = 契约不可见。
+export type {
+  AssembleOptions, AssembleReport,
+  ChatBlockKey, CodeBlockKey,
+} from './PromptAssembler.js';
+export { CHAT_BLOCK_POLICY, CODE_BLOCK_POLICY, worldbookSkipDiagnosis } from './PromptAssembler.js';
 export { filterPII } from './PIIFilter.js';
 // ★ 2026-10-21（change: `unify-memory-eligibility`，契约 C1）：记忆资格的**唯一出处**。
 //   导出到 barrel 是必需的：server / dsh-adapter 侧判定"这条内容能不能学"时

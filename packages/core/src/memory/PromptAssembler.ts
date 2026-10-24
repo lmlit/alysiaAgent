@@ -71,8 +71,35 @@ export const CHAT_BLOCK_POLICY: Record<ChatBlockKey, 'required' | 'optional'> = 
   brevity: 'required',
 };
 
-export type CodeBlockKey = 'persona' | 'techProfile' | 'projectContext' | 'worldbook' | 'life' | 'memories';
+/**
+ * 「给了 scope、也匹配到了世界书条目，却一条都注入不进去」的**诊断文案**（★ 2026-10-25）。
+ *
+ * 抽成纯函数的两个理由：
+ *   ① 原来两种原因（全 image / scope 不符）混在一句里、**没有计数** ⇒ 看得见但诊断不了；
+ *      而它们的处置完全不同：全 image 是 `content_type` 配错；scope 不符是**该 scope 没条目**
+ *      （生产库实测 `scope='code'` 就是 0 条 —— 那是配置缺口，不是故障，不该去查代码）。
+ *   ② 内联字符串**没法测**：`warnThrottled` 有限频，同一 tag 第二次调用会被吞，
+ *      断言"文案里有 X" 在第二个用例里就会莫名其妙地空。
+ *
+ * @returns 需要告警时的文案；无需告警（没匹配到任何条目）返回 `null`
+ */
+export function worldbookSkipDiagnosis(
+  triggers: WorldbookEntry[],
+  worldbookScope: 'chat' | 'code',
+): string | null {
+  if (triggers.length === 0) return null;
+  const imageCount = triggers.filter((w) => w.content_type === 'image').length;
+  const scopeMissCount = triggers.length - imageCount;
+  const cause = imageCount === 0
+    ? '⇒ 该 scope 在库里没有条目（配置缺口，不是故障）'
+    : scopeMissCount === 0
+      ? '⇒ 只有 image 条目匹配（检查 content_type 是否配错）'
+      : '⇒ 两类原因并存';
+  return `[PromptAssembler] worldbookScope=${worldbookScope} 且匹配到 ${triggers.length} 条，但注入 0 条` +
+    `（image 型 ${imageCount} 条不注入、scope 不符 ${scopeMissCount} 条）${cause}`;
+}
 
+export type CodeBlockKey = 'persona' | 'techProfile' | 'projectContext' | 'worldbook' | 'life' | 'memories';
 export const CODE_BLOCK_POLICY: Record<CodeBlockKey, 'required' | 'optional'> = {
   persona: 'required',
   techProfile: 'optional',
@@ -392,11 +419,10 @@ ${rangeText}`;
       } else if (triggers.length > 0) {
         // 守卫：给了 scope、也匹配到了条目，却一条都进不去。
         // 只可能是「全是 image」或「scope 不符」—— 两种都该被看见，否则又会退化成静默死参数。
-        warnThrottled(
-          'PromptAssembler.worldbookTrivial',
-          `[PromptAssembler] worldbookScope=${worldbookScope} 且匹配到 ${triggers.length} 条，但注入 0 条` +
-          '（全是 image / scope 不符）',
-        );
+        // ★ 2026-10-25（change: `pin-memory-read-seams`）：文案抽成纯函数（见下），
+        //   一是因为两种原因混在一句里就诊断不了，二是**内联字符串没法测**（限频会吞掉重复断言）。
+        const why = worldbookSkipDiagnosis(triggers, worldbookScope);
+        if (why) warnThrottled('PromptAssembler.worldbookTrivial', why);
       }
     }
 

@@ -817,6 +817,38 @@ request body 相同还不够 —— 两条链路若在**URL 拼接 / 请求头 /
 `tests/memory/unit/prompt-assembler-characterization.test.ts` 覆盖
 `chat/empty`（哪些块完全不出现）、`chat/rich`（正常顺序）、
 **`chat/starved`（预算饥饿时丢谁）**、`code/rich`。
+
+**契约 6：块的顺序与导出面也要被钉住（2026-10-25，change: `pin-memory-read-seams`）。**
+
+快照锁的是**整段文本**，它对"块之间谁先谁后"不敏感（顺序换了文本也会变，但**看不出为什么**）。
+所以另有一条显式断言，钉住**已知的代价**：
+
+- chat 表顺序必须是 `… recentConversations → worldbook → life → memories → brevity`。
+  世界书排在 life/memories **之前**是**有记录的权衡**（情境提示优先），代价是预算紧时
+  **先被挤掉的是她的生活与相关记忆**。改这个顺序 = 行为变更，必须显式改测试并说明谁该让位。
+- `required` 只有 `persona` / `selfNotice` / `brevity` 三个。
+- **barrel 必须导出 `AssembleOptions` / `AssembleReport` / `ChatBlockKey` / `CodeBlockKey` /
+  `CHAT_BLOCK_POLICY` / `CODE_BLOCK_POLICY` / `worldbookSkipDiagnosis`。**
+  理由：core 的 `exports` 不暴露深路径 ⇒ 类型不导出时，包外（server / dsh-adapter）想声明
+  "我传的是 `AssembleOptions`" 只能写 `any` —— **契约不可见**。
+
+**契约 7：世界书"注入 0 条"必须能诊断（同上 change，修 F7/F3）。**
+
+`worldbookSkipDiagnosis()` 是一个**纯函数**（不是内联字符串），把两种原因分开计数：
+
+| 原因 | 文案落点 | 处置 |
+|---|---|---|
+| 全 image 型 | 「image 型 N 条不注入 … 检查 `content_type` 是否配错」 | 库里类型配错 |
+| scope 不符 | 「scope 不符 M 条 … **配置缺口，不是故障**」 | 该 scope 没条目（生产库 `scope='code'` 实测 0 条） |
+| 两类并存 | 「两类原因并存」 | 分别处理 |
+
+★ 必须是纯函数：`warnThrottled` **有限频**，同一 tag 第二次调用会被吞 ——
+断言"文案里有 X" 在第二个用例里就会莫名其妙地空（这是实测踩到的，不是推测）。
+
+★ 与之配套，`POST /api/memory/read` 的日志在 `blocks='chat'` 但**没给 `worldbookScope`** 时
+追加 `未给 worldbookScope ⇒ 世界书不注入`。此前它与"库里确实没条目"**同形**（都是 `注入 0 条`），
+而前者是调用方漏参数（可以改），后者是配置缺口（不该改代码）。
+
 ⚠️ **禁止 `vitest -u`**：快照一旦被更新就从"证据"退化成"装饰"。
 改块顺序/策略/预算 = 行为变更 → 快照**应当**变化，但那时必须走 change 并说明。
 

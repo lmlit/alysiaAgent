@@ -1158,10 +1158,14 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
     // ★ 2026-10-24：**匹配**与**注入**必须分开打 ——
     //   以前只有"worldbook N 条"，于是"匹配到了但一条没进 prompt"看起来跟成功完全一样，
     //   dsh 的世界书就这样一直没生效（2026-10-02 上线 → 2026-10-24 发现，22 天）。
+    // ★ 2026-10-25（change: `pin-memory-read-seams`，修 F3）：再把**"为什么不注入"**打出来。
+    //   原来 `注入 0 条 / blocks=chat` —— 少给 `worldbookScope` 与"库里确实没条目"**同形**，
+    //   而前者是调用方漏参数（可以改），后者是配置缺口（不该改代码）。日志必须能分开。
+    const noScopeHint = blocks === 'chat' && !worldbookScope ? ' / 未给 worldbookScope ⇒ 世界书不注入' : '';
     logger.info(
       `[memory/read] query=${JSON.stringify(query.slice(0, 24))} → 召回 ${read.retrieved.length} 条` +
       ` / worldbook 匹配 ${read.worldbook_triggers.length} 注入 ${report.worldbookInjected} 条` +
-      ` / blocks=${blocks ?? mode}${worldbookScope ? ` scope=${worldbookScope}` : ''}` +
+      ` / blocks=${blocks ?? mode}${worldbookScope ? ` scope=${worldbookScope}` : ''}${noScopeHint}` +
       ` / context ${report.text.length} 字` +
       (report.dropped.length ? ` / 预算丢弃 ${report.dropped.join(',')}` : ''),
     );
