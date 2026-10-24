@@ -106,7 +106,7 @@
 |---|---|---|---|
 | **亲密度** | `life.ts:379` `relationshipBlock()`：「与轻月: 41/100（**疏远**）」+ idle | `proactive.ts:347`：「我和用户的亲密度：41/100」 | B **没有档位、没有 idle** —— 问候里看不出"冷了几天" |
 | **用户近况** | 组装层 `facts` 块：去重（`norm`/`normContains`）+ 时间标注（今天/3天前） | `getUserActivitySummary()`：`getActiveFacts()` 按 confidence 取 5 条 join | B **绕过去重与时间标注** |
-| **多久没说话** | `EventStore.getLastUserMessageAt()`：`role=user AND skip_profile=0 AND synthetic=0` ✅ | `life.ts:1483` `[...msgs].reverse().find(role==='user')` 于 `getRecentBySession()`（不排除注入）❌ | **B 会让衰减永不触发**（详见 PLAN P2/P3） |
+| **多久没说话** | `EventStore.getLastUserMessageAt()`：`role=user AND skip_profile=0 AND synthetic=0` ✅ | `life.ts` 的 `idleSinceLastUserMessage()`（**2026-10-24 起**：同一方法） ✅ | ✅ **已收敛**（change: `prove-intimacy-decay-reachable`）。此前衰减侧在 `getRecentMessages(…, now−7d)` 里反查 ⇒ **窗口 7 天把 idle 上限钉在 7，而阈值是 8 ⇒ 衰减永不触发**，藏了 2 个月 |
 | **今天的事** | `getLifeEventInjection()`（进 prompt） | `listLifeEvents(1)` 再按本地日期筛（proactive） | 两套筛选口径 |
 
 `eligibility.ts` 头注释已经把这类问题命名为「判据被四份代码各答一次」——**上表是同一类，只是还没收。**

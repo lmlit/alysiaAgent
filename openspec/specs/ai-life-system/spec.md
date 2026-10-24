@@ -457,8 +457,27 @@ intimacy = clamp(30 + 频率分 + 时长分 + 主动分, 10, 100)，经 confirma
 - **衰减**：`decay_rate` 驱动——每日衰减 = `decay_rate×6`（默认 0.3→1.8/天），
   衰减阈值 = `2 + (1−importance_threshold)×10` 天（默认 0.4→8 天；只记大事→2 天，什么都记→12 天），
   超过阈值每天 `−decayPerDay×(idleDays−threshold+1)`，只作用于频率分，下限 10
+- ★ **idle 的判据（2026-10-24 重写，change: `prove-intimacy-decay-reachable`）**：
+  **唯一来源 = `getLastUserMessageAt()`（全表 SQL）**，`null` = 库里没有真人消息（没有基线）⇒ **不衰减**。
+  ⚠️ **禁止**在 `getRecentMessages(sid, ·, now−7d)` 这类**带窗口**的查询里反查"最后一条 user 消息"：
+  窗口 7 天会把 `idle` 的可观测上限钉在 7，而默认阈值是 8 ⇒ **衰减条件恒假**。
+  这正是官方 bug 的形态（`07c9016` 修旋钮接线时把阈值从硬编码 **3** 抬到 **8**，越过了窗口天花板，藏了 2 个月）。
+  ⚠️ **禁止**用哨兵数字（旧实现是 `: 7`、档位侧显示用 `999`）参与衰减运算。
 - **平滑**：`confirmation_bias`——新值 = 旧值 + (计算值−旧值)×(1−c×0.7)（固执→变化小，防跳变；默认 0.3）
 - 初始 30；旋钮均读 `persona.memory_config`（2026-08-07 接线，change: wire-memory-config-knobs）
+
+#### 11.0 阈值判据的**可达性契约**（2026-10-24，change: `prove-intimacy-decay-reachable`）
+
+> 任何 `if (x >= T)` / `if (x < T)` 形式的阈值判据，**必须**有一条用例把 `x` 构造成**跨过 T 的两侧**。
+> 只测"没跨过"等于没测 —— 它连"函数被调用过"都证明不了（本引擎实测：只守了一侧 ⇒ 藏了 2 个月）。
+>
+> 同时**必须有一条反向自检**：临时把判据改成"不可达"/把边界挪一格，对应用例**必须变红**；
+> 否则你无法区分"测试守住了"和"测试只是恰好是绿的"。
+>
+> 教训归档：[`docs/SILENT-FAILURE.md` §4.3 第四形态「不可达」](../../docs/SILENT-FAILURE.md)。
+> 本引擎现有实现：`life-service.test.ts` 的「亲密度衰减 —— 可达性（跨阈值）」5 例
+> （7 / 8 / 30 / null / 同源），且已用「强制 idle=7」反向自检验证过会变红。
+
 
 **用途**（★ 2026-10-20 改写，change: `tie-intimacy-to-speech`）：
 

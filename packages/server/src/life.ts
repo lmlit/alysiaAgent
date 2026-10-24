@@ -318,16 +318,44 @@ export class LifeService {
    * 判不出来时返回 0（**不降档**）：宁可保守地按"他刚说过话"处理，
    * 也不要因为一个查询 bug 让她无缘无故变安静。
    */
-  private idleDaysSinceUserMessage(now: Date = new Date()): number {
+  /**
+   * ★ 2026-10-24（change: `prove-intimacy-decay-reachable`）：**idle 天数的唯一出处**。
+   *
+   * 返回 `null` = 库里从来没有过真人消息（**没有基线**）。调用方必须显式处理，
+   * **不许再用一个数字冒充它** —— 旧实现写的是 `: 7`，而默认衰减阈值是 8，
+   * 于是"从没说过话"和"一年没说话"都得到 7，衰减条件恒假。
+   *
+   * ⚠️ **为什么必须用 `getLastUserMessageAt()`**：它是全表 SQL
+   * （`role=user AND skip_profile=0 AND synthetic=0`）。旧实现在
+   * `getRecentMessages(sid, 500, now−7d)` 里反查 —— **查询窗口就 7 天**，
+   * 意味着 `idle` 的可观测上限永远是 7，而阈值是 8 ⇒ **条件恒假**，藏了 2 个月
+   * （`07c9016` 修"旋钮接线"时把阈值从硬编码 3 抬到 8，顺手越过了窗口天花板）。
+   * 教训见 `docs/SILENT-FAILURE.md` §4.3（第四形态：**不可达**）。
+   */
+  private idleSinceLastUserMessage(now: Date = new Date()): number | null {
+    let at: string | null = null;
     try {
-      const at = this.memoryManager.getLastUserMessageAt?.() ?? null;
-      if (!at) return 999; // 库里从没有过真人消息（新库/测试）——按最安静处理
-      const ms = now.getTime() - new Date(at).getTime();
-      return Number.isFinite(ms) ? Math.max(0, Math.floor(ms / 86_400_000)) : 0;
+      at = this.memoryManager.getLastUserMessageAt?.() ?? null;
     } catch (err: any) {
+      // 判不出来 → 按"他刚说过话"处理（宁可保守，不要因查询 bug 让她无缘无故变安静）
       logger.warn(`[Life] idle days unavailable: ${err?.message ?? err}`);
       return 0;
     }
+    if (!at) return null;
+    const ms = now.getTime() - new Date(at).getTime();
+    if (!Number.isFinite(ms)) return 0;
+    return Math.max(0, Math.floor(ms / 86_400_000));
+  }
+
+  /**
+   * 档位/推送闸用的 idle 天数 —— `idleSinceLastUserMessage()` 的**显示版**。
+   *
+   * ⚠️ `999` 是**显示哨兵**（"从未说过话"），**不是真实天数**；
+   * 别拿它当数据去算衰减（那正是上一个 bug 的形态：用哨兵值参与运算）。
+   */
+  private idleDaysSinceUserMessage(now: Date = new Date()): number {
+    const d = this.idleSinceLastUserMessage(now);
+    return d === null ? 999 : d;
   }
 
   /**
@@ -1455,6 +1483,9 @@ export class LifeService {
    *    - recency_weight(0=念旧,1=只认最近) → 近 3 天消息加权 (1+w)，更早 ×(1-w*0.5)
    *    - confirmation_bias(0=随风倒,1=固执) → 亲密度变化平滑：变化幅度 ×(1-c*0.7)
    *    - retention_bias 不在此用（正负偏向属记忆筛选，不是亲密度） */
+  /** ★ 2026-10-24：`idle=null`（无真人消息）的日志只打一次，避免每轮刷 */
+  private idleNullLogged = false;
+
   updateIntimacy(): void {
     try {
       const since7d = new Date(Date.now() - 7 * 86_400_000);
@@ -1479,13 +1510,23 @@ export class LifeService {
       // 频率：近 7 天活跃度（加权消息数近似，0 条 → 0，40 条 → 35 封顶）
       let freqScore = Math.min(35, weightedCount / 4 * 5);
 
-      // ★ 无互动衰减（旋钮驱动阈值与幅度）：取最后一条 user 消息时间；无 user 消息按窗口上限 7 天计
-      const lastUserMsg = [...msgs].reverse().find((m: any) => m.role === 'user');
-      const lastUserAt = lastUserMsg?.createdAt ? new Date(lastUserMsg.createdAt).getTime() : 0;
-      const idleDays = lastUserAt ? Math.floor((Date.now() - lastUserAt) / 86_400_000) : 7;
-      if (idleDays >= decayThreshold) {
+      // ★ 无互动衰减（旋钮驱动阈值与幅度）—— 判据与数据窗口**解耦**（2026-10-24）。
+      //   旧实现：在 getRecentMessages(…, now−7d) 里反查最后一条 user 消息，
+      //   兜底 `: 7`。窗口 7 天 ⇒ idle 上限 7，而默认阈值 8 ⇒ **衰减永不触发**。
+      const idleDays = this.idleSinceLastUserMessage();
+      if (idleDays === null) {
+        // 库里没有真人消息 = 没有基线，不衰减（**不是**"他刚说过话"）。
+        // 只留一次痕：这条路径是常态（新库/测试），不该每轮刷日志。
+        if (!this.idleNullLogged) {
+          this.idleNullLogged = true;
+          logger.debug('[Life] intimacy decay: 无真人消息（idle=null）⇒ 不衰减（没有基线）');
+        }
+      } else if (idleDays >= decayThreshold) {
         freqScore = Math.max(0, freqScore - decayPerDay * (idleDays - decayThreshold + 1));
-        logger.debug(`[Life] intimacy decay: ${idleDays}d idle (threshold ${decayThreshold}d, ${decayPerDay.toFixed(1)}/d)`);
+        logger.debug(
+          `[Life] intimacy decay: ${idleDays}d idle (threshold ${decayThreshold}d, ` +
+          `${decayPerDay.toFixed(1)}/d) → freqScore ${freqScore.toFixed(2)}`,
+        );
       }
 
       // 时长：>20 条视为有长会话（封顶 21；旧实现 (n>20?10:n/2)*2 最大只到 20，达不到上限）

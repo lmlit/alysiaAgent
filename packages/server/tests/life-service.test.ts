@@ -16,6 +16,10 @@ function makeMocks(overrides: Record<string, any> = {}) {
     getWorldbookSample: vi.fn().mockReturnValue([{ id: 'wb-mock', content: '设定' }]),
     getUserActivitySummary: vi.fn().mockReturnValue('用户最近在忙'),
     getRecentMessages: vi.fn().mockReturnValue([]),
+    // ★ 2026-10-24（prove-intimacy-decay-reachable）：idle 的唯一判据。
+    //   默认 null = 库里没有真人消息（没有基线）。**必须显式 mock** ——
+    //   不 mock 会让衰减用例"通过得毫无意义"（旧实现正是只靠 getRecentMessages 的窗口）。
+    getLastUserMessageAt: vi.fn().mockReturnValue(null),
     updateLifeState: vi.fn(),
     listLifeEvents: vi.fn().mockReturnValue([]),
     listLifeSummaries: vi.fn().mockReturnValue([]),
@@ -400,7 +404,11 @@ describe('LifeService', () => {
     const msgs = Array.from({ length: 5 }, (_, i) => ({
       role: 'user', content: `消息${i}`, createdAt: '2026-08-01T10:04:00', // 距现在 5 天
     }));
-    const { memoryManager, qqOff } = makeMocks({ getRecentMessages: vi.fn().mockReturnValue(msgs) });
+    const { memoryManager, qqOff } = makeMocks({
+      getRecentMessages: vi.fn().mockReturnValue(msgs),
+      // ★ idle 必须走 getLastUserMessageAt（2026-10-24 起），不再是"窗口里反查"
+      getLastUserMessageAt: vi.fn().mockReturnValue('2026-08-01T10:04:00'),
+    });
     const svc = new LifeService(memoryManager as any, qqOff as any, { ownerOpenid: 'openid-1' });
     svc.updateIntimacy();
     // weighted = 5条×max(0.1, 1-0.3×0.5=0.85)（全在 3 天外） = 4.25
@@ -415,13 +423,73 @@ describe('LifeService', () => {
     const msgs = Array.from({ length: 5 }, (_, i) => ({
       role: 'user', content: `消息${i}`, createdAt: '2026-08-06T10:00:00', // 今天
     }));
-    const { memoryManager, qqOff } = makeMocks({ getRecentMessages: vi.fn().mockReturnValue(msgs) });
+    const { memoryManager, qqOff } = makeMocks({
+      getRecentMessages: vi.fn().mockReturnValue(msgs),
+      getLastUserMessageAt: vi.fn().mockReturnValue('2026-08-06T10:00:00'),
+    });
     const svc = new LifeService(memoryManager as any, qqOff as any, { ownerOpenid: 'openid-1' });
     svc.updateIntimacy();
     // weighted = 5条×(1+0.3=1.3)（都在近 3 天）= 6.5 → freqScore=6.5/4×5=8.125
     // longScore=5.25；activeScore=3；raw=46.375 → 平滑 30+(46.375-30)×0.79=42.936
     const call = memoryManager.updateLifeState.mock.calls[0][0] as { intimacy: number };
     expect(call.intimacy).toBeCloseTo(42.936, 2);
+  });
+
+  // ★ 2026-10-24（change: `prove-intimacy-decay-reachable`）：**可达性**用例。
+  //
+  //   旧实现在 `getRecentMessages(sid, 500, now−7d)` 里反查最后一条 user 消息，
+  //   兜底 `: 7` ⇒ idle 的可观测上限就是 7，而默认阈值是 8 ⇒ **衰减永不触发**（藏了 2 个月）。
+  //   上面那两条只守"没跨过阈值就不衰减"——**这一侧永远是绿的**，所以从没发现问题。
+  //   下面这几条把 idle 构造成**跨过阈值两侧**，这才是这类 bug 的唯一拦网。
+  describe('亲密度衰减 —— 可达性（跨阈值）', () => {
+    const MSGS_5D = Array.from({ length: 5 }, (_, i) => ({
+      role: 'user', content: `消息${i}`, createdAt: '2026-08-01T10:04:00',
+    }));
+
+    /** 跑一次 updateIntimacy，返回落库的亲密度 */
+    const run = (lastUserAt: string | null): number => {
+      freezeTime(12); // now = 2026-08-06T12:00
+      const { memoryManager, qqOff } = makeMocks({
+        getRecentMessages: vi.fn().mockReturnValue(MSGS_5D),
+        getLastUserMessageAt: vi.fn().mockReturnValue(lastUserAt),
+      });
+      const svc = new LifeService(memoryManager as any, qqOff as any, { ownerOpenid: 'openid-1' });
+      svc.updateIntimacy();
+      return (memoryManager.updateLifeState.mock.calls[0][0] as { intimacy: number }).intimacy;
+    };
+
+    it('idle=7（未过阈值 8）→ 不衰减', () => {
+      expect(run('2026-07-30T11:00:00')).toBeCloseTo(40.714, 2);
+    });
+
+    it('★ idle=8（刚好跨过阈值）→ 衰减 1.8/天 × 1 天', () => {
+      const d7 = run('2026-07-30T11:00:00');
+      const d8 = run('2026-07-29T11:00:00');
+      // freqScore 5.3125 → 3.5125；raw 43.5625 → 41.7625；平滑系数 0.79 ⇒ 差 1.8×0.79
+      expect(d8).toBeCloseTo(39.292, 2);
+      expect(d7 - d8, '跨过阈值必须真的产生衰减').toBeCloseTo(1.422, 2);
+    });
+
+    it('★ idle=30（远超）→ freqScore 被衰减到 0 封顶', () => {
+      // 衰减量 1.8×23 = 41.4 > freqScore 5.3125 ⇒ 夹到 0；raw = 30+0+5.25+3 = 38.25
+      expect(run('2026-07-07T11:00:00')).toBeCloseTo(36.518, 2);
+    });
+
+    it('idle=null（库里没有真人消息）→ 不衰减，且**不拿哨兵值冒充天数**', () => {
+      // 旧实现这里取 `: 7`，正好卡在阈值 8 之下 —— 用哨兵参与运算正是那个 bug 的形态
+      expect(run(null)).toBeCloseTo(40.714, 2);
+    });
+
+    it('衰减用的 idle 与推送闸的 idle 同源（同一个方法）', () => {
+      freezeTime(12);
+      const { memoryManager, qqOff } = makeMocks({
+        getLastUserMessageAt: vi.fn().mockReturnValue('2026-07-29T11:00:00'),
+      });
+      const svc = new LifeService(memoryManager as any, qqOff as any, { ownerOpenid: 'openid-1' });
+      expect((svc as any).idleSinceLastUserMessage()).toBe(8);
+      // 档位那条用同一个来源，只是把 null 折成显示哨兵 999
+      expect((svc as any).idleDaysSinceUserMessage()).toBe(8);
+    });
   });
 });
 
