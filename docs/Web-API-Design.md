@@ -319,10 +319,12 @@ dsh 插件只回传原始事件；提取 / 5 道护栏 / 事实去重 / supersed
 
 ### 2.4.4 `POST /api/memory/read` — 记忆检索（2026-10-02 新增）
 
-**Core 方法**: `MemoryManager.read()` + `assembleWithWorldbook()`
+**Core 方法**: `MemoryManager.read()` + `assembleWithReport()`
 
 ```
-请求  { query: string, mode?: 'chat'|'code', limit?: 1..20, sessionId?: string }
+请求  { query: string, mode?: 'chat'|'code', limit?: 1..20, sessionId?: string,
+        blocks?: 'chat'|'code',           // ★ 2026-10-24 新增
+        worldbookScope?: 'chat'|'code' }  // ★ 2026-10-24 新增
 响应  { context: string, retrieved: SearchResult[] }
 ```
 
@@ -337,6 +339,36 @@ dsh 插件只回传原始事件；提取 / 5 道护栏 / 事实去重 / supersed
 （dsh 的 prompt provider 是**同步**的，等不到异步检索）。
 
 ★ 用 POST 而非 GET：`query` 是用户原话，可能很长，且不该进 URL/日志历史。
+
+#### ★ 2026-10-24：`mode` 一词三义已拆（change: `align-dsh-memory-blocks-with-scope`）
+
+`mode` 原本同时决定三件事，而 dsh 场景下三者想要**不同值**，选谁都错一半：
+
+| 语义 | dsh 想要 | 理由 |
+|---|---|---|
+| 世界书 scope | `code` | 干活的对话，不该触发闲聊条目 |
+| 提示块表（**13 块** / 6 块） | `chat` | 人味块（关于你/偏好/事实/关于我/待确认/最近对话/情境提示/分寸）**只在 chat 表里** |
+| token 预算（3200 / 2450） | 更大 | 编程会话本来就长（**本次未改**，另议） |
+
+| 字段 | 作用 | 缺省 |
+|---|---|---|
+| `blocks` | **只**覆盖"用哪张块表" | `mode` |
+| `worldbookScope` | **只**覆盖"世界书匹配哪个 scope"，且**显式给出 ⇒ 该 scope 条目注入 prompt**。⚠️ **仅对 `blocks='chat'` 生效**（`code` 表的 scope 是隐式的） | 不给 = 只匹配不注入（**与 2026-10-24 之前逐字相同**） |
+| `mode` | 保留为语法糖（`blocks` / `worldbookScope` 的缺省值来源） | `chat` |
+
+⚠️ **`worldbookScope` 的"显式才注入"不是权宜之计**：QQ/console 的产品决定是
+"世界书走 `lookup_worldbook` 工具、不常驻 prompt"，那条边界不能因为 dsh 的 bug 被顺手改掉。
+
+⚠️ **`[情境提示]` 是 optional 块**：预算不足时会被丢弃，那时 `worldbookInjected` 必须是 **0**
+（"匹配到" ≠ "注入了"）。
+
+**dsh 的调用形态**（`packages/dsh-adapter/src/alysia-client.ts`）：
+`{ query, sessionId, limit, blocks: 'chat', worldbookScope: 'code' }`
+
+**观测**：日志同时打**匹配数**与**注入数**——
+`[memory/read] … worldbook 匹配 3 注入 3 条 / blocks=chat scope=code …`。
+只打匹配数是历史教训：dsh 读通道自 **2026-10-02** 上线起，世界书"匹配到但全被丢弃"
+持续 **22 天**（到 2026-10-24 发现为止），而日志看起来完全正常。
 
 ---
 

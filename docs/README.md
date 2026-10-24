@@ -48,6 +48,7 @@
 | | [`ALYSIA-DSH-BRIDGE-PROBE-2026-10-17.md`](ALYSIA-DSH-BRIDGE-PROBE-2026-10-17.md) ⚠️ 被 spec 引用 | record | 2026-10-17 | ai |
 | | [`ALYSIA-DSH-BRIDGE-SERVER-INVENTORY.md`](ALYSIA-DSH-BRIDGE-SERVER-INVENTORY.md) ⚠️ 被 spec 引用 | record | 2026-10-17 | ai |
 | **G 参考** | [`dsh-plugin-architecture.md`](dsh-plugin-architecture.md) — dsh 原理 + 本仓模块化设计 | current | 2026-10-01 | ai |
+| | [`PROMPT-INVENTORY.md`](PROMPT-INVENTORY.md) — ★ **提示词与上下文现状总账**（17 条链路各注入了什么 / 两张块表逐块 / 6 条静默断点；**改任何链路提示词前必读**） | current | 2026-10-24 | both |
 | | [`frontend-map.md`](frontend-map.md) — 前端区块词汇表（**改前端前必读**） | current | 2026-10-03 | both |
 | **H 废案** | [`WebUI-PRD.md`](WebUI-PRD.md) — 对象 `packages/webui` **已删** | dead | 2026-10-02 | — |
 

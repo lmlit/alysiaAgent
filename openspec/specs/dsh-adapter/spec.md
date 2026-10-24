@@ -30,8 +30,24 @@
 - `systemPrompt.context({name: 'alysia:memory', text: provider})` 注入检索结果快照
 - **AssembleContext 不含用户消息**(只有 `{scope?, signal?}`)——插件缓存最近一次 `session/event` 的 `user/message` 文本,作为检索 query
 - ✅ **2026-10-02 已落地**（change: `bridge-memory-read`）:provider 内调 server API
-  **`POST /api/memory/read`**（`{query, mode?, limit?, sessionId?}` → `{context, retrieved}`）,
-  `context` 由 server 侧 `read()` + `assembleWithWorldbook()` 组装,**与聊天管线同一套**。
+  **`POST /api/memory/read`**（`{query, mode?, blocks?, worldbookScope?, limit?, sessionId?}` → `{context, retrieved}`）,
+  `context` 由 server 侧 `read()` + `assembleWithReport()` 组装,**与聊天管线同一套**。
+  - ★ **2026-10-24（change: `align-dsh-memory-blocks-with-scope`）：`mode` 一词三义拆开**。
+    adapter **必须显式传** `blocks: 'chat'` + `worldbookScope: 'code'`：
+    dsh 要 chat 的**块表**（人味块只在 chat 表里）,但世界书要 **code scope**。
+    只传 `mode`（缺省 chat）的后果是**世界书 triggers 匹配完被组装器丢弃** —— 而日志只打"匹配 N 条",
+    看起来完全正常。★ **可核验的时长**：dsh 读通道自 **2026-10-02** 上线（`bridge-memory-read`），
+    到 2026-10-24 发现为止 **22 天**;而 chat 表不注入世界书本身更早（2026-07-25「worldbook 改为工具」起）。
+    ⚠️ 这里**不写"潜伏一个月"这类叙事型断言** —— 规范文本里的时长必须能被 git 复算。
+  - ★ **`worldbookScope` 只对 `blocks='chat'` 生效**：`blocks='code'` 的 scope 是隐式的（一直是 code/both），
+    传 `worldbookScope` 也不改变它 —— 免得把自家 pipeline 的既有行为一起改了。
+  - ★ **`[情境提示]` 是 `optional` 块**：预算不足时会被丢掉，此时 `worldbookInjected` 必须是 **0**
+    （`dropped` 里会有 `worldbook`）。**"匹配到" ≠ "注入了"**，API 与日志都不许把两者混用。
+  - ★ **为什么 dsh 自动注入世界书,而 QQ/console 不**:dsh 是编程会话,"项目级约定"类条目
+    （`scope: code`）恰恰**最该默认在场**,不该赌她想起来调工具;
+    而 QQ 闲聊的既有产品决定是"世界书走 `lookup_worldbook` 工具、不常驻 prompt"（为省 token）。
+    ⇒ **两会话行为不同是有意的**,见 `PromptAssembler` 的 `worldbookScope` opt-in 语义（不给 = 不注入）。
+    ⚠️ 下次对账**不要**把这个差异判成不一致。
   - **空 query 也照常返回**（`[关于你]` 等块不依赖 query）——这是**预热**的前提
   - **缓存 + 后台刷新**：挂载时预热一次（空 query）→ 第一轮就有画像;
     `session/event` 的 `user/message` 到达后用**原话**刷新（话题相关）;
@@ -77,6 +93,17 @@
   `adjust_persona`/`switch_role`/`import_knowledge`/`list_life_events`/`set_reminder`
 
 ### 2.5 消息 ingest hook(替代 MemoryIngestStage / SessionEndProcessor)
+
+> ## ⚠️ 2026-10-24：**当前部署该通道已关闭**（change: `cut-dsh-memory-bridge`）
+>
+> `alysia-adapter.config.bridge: false`。原因：dsh 的昔涟模式已基本不用，而本通道会往记忆系统**写**两样东西
+> —— ① `/api/ingest` → `events` 表；② `/api/sessions/:id/extract` → **摘要 + 画像事实 + 人格确认**（②会改画像与人格参数）。
+>
+> **读一侧保留**：`recall_memory` 与 `{{alysia_persona}}` 人格注入**不受影响**（用户选 A 档，只切「写」）。
+>
+> ⚠️ **对账须知**：所以「dsh 会话没有新事件 / 画像不更新」是**预期行为，不是 bug**。
+> 要恢复写入：删掉该 `bridge: false` 行（`config` 是整体替换语义，`alysiaBaseUrl` 已在同处重述）。
+> ⚠️ 安装形态是 **Junction → 仓库包**；重装若变成实体拷贝，改仓库就不再生效 —— 重装后必须复查本开关。
 
 | dsh 事件 | 用途 |
 |---|---|

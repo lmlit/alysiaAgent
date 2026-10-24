@@ -89,6 +89,38 @@ describe('MemoryManager', () => {
     expect(result.worldbook_triggers).toBeDefined();
   });
 
+  // ★ 2026-10-24（F8，change: align-dsh-memory-blocks-with-scope）
+  //   `MemoryManager.assembleWithReport(mode, **triggers**, **retrieved**, …)` 调
+  //   `PromptAssembler.assembleWithReport(mode, **retrieved**, **triggers**, …)` ——
+  //   两个参数都是数组、且**顺序相反**。写反了 TS 未必拦得住（`any` 化路径存在），
+  //   后果是把召回记忆当情境提示注入、把世界书当记忆 —— 属"改坏了也不红"。
+  //   这条断言补的就是这个洞：用**可区分的文本**分别落在各自块里。
+  it('★ assembleWithReport：triggers 与 retrieved 不许传反', async () => {
+    const retrieved = [
+      { id: 'mem-1', score: 0.9, text: '召回记忆的标记MEM', metadata: {} },
+    ] as any[];
+    const triggers = [
+      {
+        id: 'wb-1', trigger_keys: '["x"]', trigger_mode: 'any',
+        content: '世界书条目的标记WB', scope: 'code', priority: 0, cooldown_sec: 0,
+        last_triggered: null, hit_count: 0,
+        created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+      },
+    ] as any[];
+
+    const r = await manager.assembleWithReport('chat', triggers, retrieved, undefined, {
+      worldbookScope: 'code',
+    });
+
+    expect(r.text, '世界书该进 [情境提示]').toContain('[情境提示]');
+    expect(r.text).toContain('世界书条目的标记WB');
+    expect(r.text).toContain('召回记忆的标记MEM');
+    // 位置判据：传反时 WB 会落进 [相关记忆]，且 [情境提示] 根本不存在
+    expect(r.text.indexOf('世界书条目的标记WB')).toBeGreaterThan(r.text.indexOf('[情境提示]'));
+    expect(r.text.indexOf('召回记忆的标记MEM')).toBeGreaterThan(r.text.indexOf('[相关记忆]'));
+    expect(r.worldbookInjected).toBe(1);
+  });
+
   it('should assemble chat mode system prompt', async () => {
     const prompt = await manager.assemble('chat');
     expect(prompt).toContain('昔涟');

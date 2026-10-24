@@ -52,6 +52,7 @@ import { SessionEndProcessor } from './processors/SessionEndProcessor.js';
 import type { SessionEndResult } from './processors/SessionEndProcessor.js';
 import { CronProcessor } from './processors/CronProcessor.js';
 import { PromptAssembler } from './PromptAssembler.js';
+import type { AssembleOptions, AssembleReport } from './PromptAssembler.js';
 import { filterPII } from './PIIFilter.js';
 import { logger } from '../utils/logger.js';
 import { warnThrottled } from '../utils/write-trace.js';
@@ -955,7 +956,10 @@ export class MemoryManager {
   async read(req: MemoryReadRequest): Promise<MemoryReadResult> {
     // Worldbook matching（按当前激活角色过滤）
     const activeRole = this.getActiveRoleId();
-    const triggers = await this.worldbookMatcher.match(req.query, req.mode, activeRole);
+    // ★ 2026-10-24（change: `align-dsh-memory-blocks-with-scope`）
+    //   scope 单独可覆写：dsh 要 code scope（干活的对话）但 chat 块表。
+    //   缺省仍取 `mode` —— 与改动前一致。
+    const triggers = await this.worldbookMatcher.match(req.query, req.worldbookScope ?? req.mode, activeRole);
 
     // ★ 8-12 记忆旋钮（memory-knobs-into-recall-pipeline）：召回排序前应用
     //   recency_weight（时间衰减）+ decay_rate（遗忘速度）+ importance_threshold（优先）
@@ -1245,17 +1249,27 @@ export class MemoryManager {
   }
 
   /** 带 Worldbook 匹配的 assemble — 供 MemoryRetrievalStage 使用 */
-  async assembleWithWorldbook(mode: 'chat' | 'code', triggers: WorldbookEntry[], retrieved: SearchResult[], sessionId?: string): Promise<string> {
+  async assembleWithWorldbook(mode: 'chat' | 'code', triggers: WorldbookEntry[], retrieved: SearchResult[], sessionId?: string, opts: AssembleOptions = {}): Promise<string> {
+    return (await this.assembleWithReport(mode, triggers, retrieved, sessionId, opts)).text;
+  }
+
+  /**
+   * ★ 2026-10-24（change: `align-dsh-memory-blocks-with-scope`）：带报告版组装。
+   *
+   * 只有它能让调用方回答「世界书**真的**进了几条」——`matched` 与 `injected` 是两件事，
+   * 以前日志只有前者，于是 dsh 侧"匹配到但全丢"完全看不出来。
+   */
+  async assembleWithReport(mode: 'chat' | 'code', triggers: WorldbookEntry[], retrieved: SearchResult[], sessionId?: string, opts: AssembleOptions = {}): Promise<AssembleReport> {
     // 隐私模式 readonly/full: 不注入 Profile/Worldbook/Life
     if (this.privacyMode !== 'off') {
-      return this.promptAssembler.assembleMinimal(mode);
+      return { text: await this.promptAssembler.assembleMinimal(opts.blocks ?? mode), dropped: [], worldbookInjected: 0 };
     }
     const lifeInjection = this.getLifeEventInjection();
     if (lifeInjection) {
-      logger.debug(`[Memory] life injection: ${lifeInjection.length} chars into ${mode} prompt`);
+      logger.debug(`[Memory] life injection: ${lifeInjection.length} chars into ${opts.blocks ?? mode} prompt`);
     }
     // ★ 8-09 会话隔离：sessionId 透传给会话摘要过滤（防群聊摘要混入私聊）
-    return this.promptAssembler.assemble(mode, retrieved, triggers, lifeInjection, sessionId);
+    return this.promptAssembler.assembleWithReport(mode, retrieved, triggers, lifeInjection, sessionId, opts);
   }
 
   /**

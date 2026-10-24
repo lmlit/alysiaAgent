@@ -1120,7 +1120,8 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
 
   /**
    * 记忆检索 —— dsh 记忆回传的**读通道**（change: bridge-memory-read）。   *
-   * ★ 与聊天管线**同一套组装**（`read()` + `assembleWithWorldbook()`）：
+   * ★ 与聊天管线**同一套组装**（`read()` + `assembleWithReport()`；2026-10-24 起用报告版，
+   *   以便日志区分「匹配数」与「注入数」）：
    *   各写各的会让她在 dsh 里和 QQ 里记起不同的东西
    *   （同 `getCompactPersonaPrompt` 的教训——「人设/记忆文本长什么样」只能有一处定义）。
    *
@@ -1128,11 +1129,17 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
    */
   app.post('/api/memory/read', async (req) => {
     const body = req.body as
-      | { query?: unknown; mode?: unknown; limit?: unknown; sessionId?: unknown }
+      | { query?: unknown; mode?: unknown; blocks?: unknown; worldbookScope?: unknown; limit?: unknown; sessionId?: unknown }
       | undefined;
 
     const query = typeof body?.query === 'string' ? body.query : '';
     const mode = body?.mode === 'code' ? 'code' : 'chat';
+    // ★ 2026-10-24（change: align-dsh-memory-blocks-with-scope）：把 `mode` 的一词三义拆开。
+    //   `blocks` 只选块表；`worldbookScope` 只选世界书 scope，且**显式给出才注入**。
+    //   不传 = 旧行为（逐字不变），所以老调用方零影响。
+    const blocks = body?.blocks === 'code' ? 'code' : body?.blocks === 'chat' ? 'chat' : undefined;
+    const worldbookScope =
+      body?.worldbookScope === 'code' ? 'code' : body?.worldbookScope === 'chat' ? 'chat' : undefined;
     const rawLimit = typeof body?.limit === 'number' && Number.isFinite(body.limit) ? body.limit : 5;
     const limit = Math.min(Math.max(1, Math.trunc(rawLimit)), 20);
     const sessionId = typeof body?.sessionId === 'string' && body.sessionId ? body.sessionId : undefined;
@@ -1140,15 +1147,25 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
     // ★ 空 query 也照常返回：`[关于你]`/`[你的偏好]`/`[关于你的事实]` 等块
     //   **不依赖 query**（直接读 store）。dsh 侧挂载预热正是靠这一点，
     //   否则第一轮会是一片空白（provider 同步，等不到异步检索）。
-    const read = await core.memoryManager.read({ query, mode, limit });
-    const context = await core.memoryManager.assembleWithWorldbook(
-      mode, read.worldbook_triggers, read.retrieved, sessionId,
+    // ★ 注意：`blocks` **不传给 `read()`** —— 它只决定用哪张块表，属于**组装**的事；
+    //   `read()` 只负责按 scope 匹配。曾经把它塞进 `MemoryReadRequest`，
+    //   但那边从头到尾没读过它（"看着接上其实没接"，F10），已删。
+    const read = await core.memoryManager.read({ query, mode, worldbookScope, limit });
+    const report = await core.memoryManager.assembleWithReport(
+      mode, read.worldbook_triggers, read.retrieved, sessionId, { blocks, worldbookScope },
     );
 
+    // ★ 2026-10-24：**匹配**与**注入**必须分开打 ——
+    //   以前只有"worldbook N 条"，于是"匹配到了但一条没进 prompt"看起来跟成功完全一样，
+    //   dsh 的世界书就这样一直没生效（2026-10-02 上线 → 2026-10-24 发现，22 天）。
     logger.info(
-      `[memory/read] query=${JSON.stringify(query.slice(0, 24))} → 召回 ${read.retrieved.length} 条 / worldbook ${read.worldbook_triggers.length} 条 / context ${context.length} 字`,
+      `[memory/read] query=${JSON.stringify(query.slice(0, 24))} → 召回 ${read.retrieved.length} 条` +
+      ` / worldbook 匹配 ${read.worldbook_triggers.length} 注入 ${report.worldbookInjected} 条` +
+      ` / blocks=${blocks ?? mode}${worldbookScope ? ` scope=${worldbookScope}` : ''}` +
+      ` / context ${report.text.length} 字` +
+      (report.dropped.length ? ` / 预算丢弃 ${report.dropped.join(',')}` : ''),
     );
-    return { context, retrieved: read.retrieved };
+    return { context: report.text, retrieved: read.retrieved };
   });
 
   // ── 平台 ──────────────────────────────────────────

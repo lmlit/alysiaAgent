@@ -48,7 +48,7 @@ const CHARACTER_FACTS_IN_PROMPT = 8;
 export type ChatBlockKey =
   | 'selfNotice' | 'persona' | 'overlay' | 'basics' | 'preferences'
   | 'facts' | 'characterFacts' | 'pendingConfirm' | 'recentConversations'
-  | 'life' | 'memories' | 'brevity';
+  | 'worldbook' | 'life' | 'memories' | 'brevity';
 
 /** 顺序 = 组装顺序；策略见上方说明。**顺序本身仍是行为**（决定谁先占预算）。 */
 export const CHAT_BLOCK_POLICY: Record<ChatBlockKey, 'required' | 'optional'> = {
@@ -61,6 +61,10 @@ export const CHAT_BLOCK_POLICY: Record<ChatBlockKey, 'required' | 'optional'> = 
   characterFacts: 'optional',
   pendingConfirm: 'optional',
   recentConversations: 'optional',
+  // ★ 2026-10-24（change: `align-dsh-memory-blocks-with-scope`）：世界书 opt-in 注入。
+  //   **optional 且排在 recentConversations 之后、life 之前** —— 与 assembleCode 的相对顺序
+  //   对齐（情境提示 → life → 相关记忆）。代价要认：预算紧时先被挤掉的是它后面的两块。
+  worldbook: 'optional',
   life: 'optional',
   memories: 'optional',
   // ★ 2026-10-20（make-her-brief）：输出约束，**绝不能因预算被丢**
@@ -77,6 +81,31 @@ export const CODE_BLOCK_POLICY: Record<CodeBlockKey, 'required' | 'optional'> = 
   life: 'optional',
   memories: 'optional',
 };
+
+/**
+ * ★ 2026-10-24（change: `align-dsh-memory-blocks-with-scope`）：把 `mode` 的一词三义拆开。
+ *
+ * 拆之前：`mode` 同时决定「世界书 scope」「提示块表」「token 预算」，而 dsh 场景下三者
+ * 想要**不同值**（scope 要 code、块表要 chat、预算要更大）—— 选谁都错一半。
+ */
+export interface AssembleOptions {
+  /** 用哪张块表。缺省 = `mode` */
+  blocks?: 'chat' | 'code';
+  /**
+   * 世界书 scope。**显式给出 ⇒ 该 scope 的条目注入 prompt**（仅 `blocks === 'chat'` 生效）；
+   * 缺省 ⇒ 只匹配不注入 —— 与 2026-10-24 之前**逐字相同**。
+   */
+  worldbookScope?: 'chat' | 'code';
+}
+
+/** 组装报告（★ 2026-10-24）：把"丢了几块""世界书真注入了几条"从隐式变显式 */
+export interface AssembleReport {
+  text: string;
+  /** 因预算不足被丢掉的块 key（与 `[Prompt] 预算不足…` 日志同源） */
+  dropped: string[];
+  /** **真正进了 prompt** 的世界书条目数（≠ 匹配数；0 = 没注入） */
+  worldbookInjected: number;
+}
 
 export class PromptAssembler {
   constructor(
@@ -127,15 +156,26 @@ export class PromptAssembler {
     this.pushBlock(CODE_BLOCK_POLICY[key], key, block, budget, blocks, dropped);
   }
 
-  async assemble(mode: 'chat' | 'code', extraRetrieved: SearchResult[] = [], worldbookTriggers: WorldbookEntry[] = [], lifeInjection: string = '', sessionId?: string): Promise<string> {
-    if (mode === 'chat') {
-      return this.assembleChat(extraRetrieved, worldbookTriggers, lifeInjection, sessionId);
-    } else {
-      return this.assembleCode(extraRetrieved, worldbookTriggers, lifeInjection);
-    }
+  async assemble(mode: 'chat' | 'code', extraRetrieved: SearchResult[] = [], worldbookTriggers: WorldbookEntry[] = [], lifeInjection: string = '', sessionId?: string, opts: AssembleOptions = {}): Promise<string> {
+    return (await this.assembleWithReport(mode, extraRetrieved, worldbookTriggers, lifeInjection, sessionId, opts)).text;
   }
 
-  private async assembleChat(retrieved: SearchResult[], triggers: WorldbookEntry[], lifeInjection: string = '', sessionId?: string): Promise<string> {
+  /**
+   * ★ 2026-10-24（change: `align-dsh-memory-blocks-with-scope`）：带报告版。
+   *
+   * 存在的理由是**观测口径**：以前 `[memory/read]` 只能打出"匹配到 N 条"，
+   * 于是"匹配到了但一条都没注入"和"注入成功"在日志里**完全同形** ——
+   * dsh 的世界书就那样一直没生效（读通道 2026-10-02 上线 → 2026-10-24 发现，22 天）。
+   * 现在调用方能拿到 `worldbookInjected`。
+   */
+  async assembleWithReport(mode: 'chat' | 'code', extraRetrieved: SearchResult[] = [], worldbookTriggers: WorldbookEntry[] = [], lifeInjection: string = '', sessionId?: string, opts: AssembleOptions = {}): Promise<AssembleReport> {
+    const blocks = opts.blocks ?? mode;
+    return blocks === 'chat'
+      ? this.assembleChat(extraRetrieved, worldbookTriggers, lifeInjection, sessionId, opts.worldbookScope)
+      : this.assembleCode(extraRetrieved, worldbookTriggers, lifeInjection);
+  }
+
+  private async assembleChat(retrieved: SearchResult[], triggers: WorldbookEntry[], lifeInjection: string = '', sessionId?: string, worldbookScope?: 'chat' | 'code'): Promise<AssembleReport> {
     const persona = this.personaStore.get();
     const profile = this.profileStore.get();
     // ★ 8-09 会话隔离：只取当前会话类型（private/同群）的摘要，防群聊摘要混入私聊
@@ -329,6 +369,37 @@ ${rangeText}`;
       this.pushChatBlock('recentConversations', recentBlock, budget, blocks, dropped);
     }
 
+    // ★ 2026-10-24（change: `align-dsh-memory-blocks-with-scope`）：世界书 **opt-in 注入**。
+    //
+    //   历史坑（这条注释就是为它而写）：本函数的 `triggers` 参数**曾经是死参数** ——
+    //   匹配了、`recordTrigger()` 计数了、日志打着「worldbook N 条」，然后**整包扔掉**。
+    //   于是 chat 侧的世界书从来没进过 prompt，而日志看起来完全正常。
+    //   ★ 时长按 git 复算（别凭感觉写）：dsh 读通道 2026-10-02 上线 → 2026-10-24 发现，22 天。
+    //
+    //   现在语义写死两条：
+    //     ① **给 `worldbookScope` 才注入**；不给 ⇒ 不注入（与改动前逐字相同，QQ/console 走工具）
+    //     ② filter **按传入的 scope 决定**（不许硬编码 'code' —— 否则将来给 QQ 开注入会一条都进不来）
+    let worldbookInjected = 0;
+    if (worldbookScope) {
+      const wanted = triggers.filter(
+        w => w.content_type !== 'image' && (w.scope === worldbookScope || w.scope === 'both'),
+      );
+      if (wanted.length > 0) {
+        const wbBlock = `[情境提示]\n${wanted.map(w => w.content).join('\n')}`;
+        this.pushChatBlock('worldbook', wbBlock, budget, blocks, dropped);
+        // 预算不足会被丢 —— 那时"注入了 0 条"才是实话
+        worldbookInjected = dropped.includes('worldbook') ? 0 : wanted.length;
+      } else if (triggers.length > 0) {
+        // 守卫：给了 scope、也匹配到了条目，却一条都进不去。
+        // 只可能是「全是 image」或「scope 不符」—— 两种都该被看见，否则又会退化成静默死参数。
+        warnThrottled(
+          'PromptAssembler.worldbookTrivial',
+          `[PromptAssembler] worldbookScope=${worldbookScope} 且匹配到 ${triggers.length} 条，但注入 0 条` +
+          '（全是 image / scope 不符）',
+        );
+      }
+    }
+
     // AI 近期生活（主动生活系统）— 由调用方通过 getLifeEventInjection() 预组装（今天事件 + 近 7 天摘要）
     if (lifeInjection) {
       this.pushChatBlock('life', lifeInjection, budget, blocks, dropped);
@@ -340,8 +411,9 @@ ${rangeText}`;
       this.pushChatBlock('memories', memBlock, budget, blocks, dropped);
     }
 
-    // Worldbook 已改为 Agent 工具 lookup_worldbook，不再注入 Prompt
-    // Agent 在需要背景知识时会主动调用工具查询
+    // ⚠️ chat 侧**默认不注入**世界书（上面的 opt-in 分支除外）：QQ/console 走 Agent 工具
+    //    `lookup_worldbook` 按需查。改成默认注入是一个**产品决定**，不是重构 ——
+    //    见 change `align-dsh-memory-blocks-with-scope` 的「否决 B」。
 
     // ★ 2026-10-20（change: `make-her-brief`）：**说话的分寸**放**最后一个必选块**。
     //   为什么在最后：它是"输出约束"，离生成位置越近越有效（近因）；
@@ -354,10 +426,10 @@ ${rangeText}`;
       logger.info(`[Prompt] 预算不足，本轮丢弃 ${dropped.length} 块：${dropped.join(', ')}`);
     }
 
-    return blocks.join('\n\n');
+    return { text: blocks.join('\n\n'), dropped, worldbookInjected };
   }
 
-  private async assembleCode(retrieved: SearchResult[], triggers: WorldbookEntry[], lifeInjection: string = ''): Promise<string> {
+  private async assembleCode(retrieved: SearchResult[], triggers: WorldbookEntry[], lifeInjection: string = ''): Promise<AssembleReport> {
     const persona = this.personaStore.get();
     const profile = this.profileStore.get();
     const codeCtx = this.codeContextStore.getActive();
@@ -431,7 +503,14 @@ ${persona.name} 编程助手模式。语气: ${tone.formality < 0 ? '随意' : '
       logger.info(`[Prompt] 预算不足（code），本轮丢弃 ${dropped.length} 块：${dropped.join(', ')}`);
     }
 
-    return blocks.join('\n\n');
+    // ★ 2026-10-24：code 表**行为不变** —— 它一直注入 code/both scope 的世界书
+    //   （`worldbookScope` 对它无效；code 的 scope 是隐式的）。
+    //   报告里如实回填"真正进去几条"，供观测使用。
+    return {
+      text: blocks.join('\n\n'),
+      dropped,
+      worldbookInjected: dropped.includes('worldbook') ? 0 : codeTriggers.length,
+    };
   }
 
   /** 隐私模式：仅注入角色设定，不含用户画像/Worldbook/记忆 */

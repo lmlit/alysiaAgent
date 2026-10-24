@@ -163,7 +163,21 @@ export class AlysiaClient {
    * @param sessionId alysia 侧会话 id（已带前缀）。用于会话摘要的按类型过滤
    */
   async readMemory(query: string, sessionId?: string): Promise<MemoryReadResult | null> {
-    const data = await this.request('POST', '/api/memory/read', { query, sessionId, limit: 5 });
+    // ★ 2026-10-24（change: align-dsh-memory-blocks-with-scope）：**必须显式给这两个字段**。
+    //
+    //   dsh 是编程环境，但我们要的是「聊天那块表」——人味块（关于你/偏好/事实/关于我/
+    //   待确认/最近对话/说话的分寸）只在 chat 表里，code 表一个都没有。
+    //   而世界书要 **code scope**：干活的对话不该触发闲聊条目。
+    //
+    //   不给会回到"mode 一词三义"的老问题：默认 chat ⇒ 世界书 triggers 匹配完被丢弃，
+    //   于是 dsh 的世界书一条都进不了 prompt（2026-10-02 上线 → 2026-10-24 发现，22 天）。
+    const data = await this.request('POST', '/api/memory/read', {
+      query,
+      sessionId,
+      limit: 5,
+      blocks: 'chat',
+      worldbookScope: 'code',
+    });
     if (data === null) return null;
     const r = data as { context?: unknown; retrieved?: unknown };
     return {

@@ -180,7 +180,23 @@ export interface MemoryReadRequest {
   /** ★ 8-28 视角过滤（memory-character-perspective）：'self'=只召回昔涟自己的生活，'interaction'=只召回互动，缺省不过滤 */
   perspective?: 'interaction' | 'self';
   query: string;
+  /**
+   * ⚠️ **一词三义**（历史包袱）：既决定**世界书 scope**、又决定**提示块表**（chat 12 块 / code 6 块），
+   * 还间接决定 token 预算（3200 / 2450）。三者想要不同值时，用下面两个字段单独覆盖。
+   */
   mode: 'chat' | 'code';
+  /**
+   * ★ 同上：**只**覆盖"世界书匹配哪个 scope"。
+   *
+   * ⚠️ **显式给出 ⇒ 该 scope 的条目会注入 prompt**（仅 chat 块表时生效）；
+   * 缺省 ⇒ 只匹配、不注入（= 2026-10-24 之前的行为，QQ/console 仍走 `lookup_worldbook` 工具）。
+   *
+   * 📌 **没有 `blocks` 字段**：`read()` 只负责"匹配"，它不需要知道用哪张块表。
+   * 块表选择属于**组装**（`assembleWithReport(mode, …, { blocks })`）。
+   * ★ 2026-10-24 曾在这里加过 `blocks`，但它**从头到尾没被 `read()` 读过** ——
+   * 典型的"看着接上其实没接"，已删除（F10）。
+   */
+  worldbookScope?: 'chat' | 'code';
   limit: number;
 }
 
