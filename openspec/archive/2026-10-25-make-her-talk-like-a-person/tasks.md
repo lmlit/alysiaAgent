@@ -27,13 +27,13 @@
 - [ ] 运行 `node scripts/check-spec-diff-residue.cjs`（非 0 不许归档）
 - [ ] 更新 `openspec/specs/index.md`（memory-system 行「最后变更」）
 - [x] `docs/TODO.md` 加一行
-- [ ] 归档到 `openspec/archive/YYYY-MM-DD-make-her-talk-like-a-person/`
+- [x] 归档到 `openspec/archive/2026-10-25-make-her-talk-like-a-person/`
 
 ## 生效与验收
 
 - ⚠️ **重启即生效**：`al:persona-seed` 每次启动用文件重建 `system_prompt`
   （所以**改人格要改文件**；改库会在重启时被覆盖）
-- 验收方式：跟她聊几句，看四件事
+- ★ **2026-10-25 已部署到生产并验证**：`system_prompt` = **38248 字**（部署前 36352），六个新标记全部命中；容器 healthy，`/api/health` 200；QQ Bot ONLINE。回滚标签 `server-alysia:rollback-20261025-010556`。- 验收方式：跟她聊几句，看四件事
   1. 有没有**语气词起头**（「欸？」「哦…」）而不是每句都完整得体
   2. 有没有**具体名词**（今天/刚才/那个），而不是抽象评价
   3. 有没有**她自己的一件小事**，而不是把话题全推回来

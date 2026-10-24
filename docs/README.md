@@ -37,7 +37,7 @@
 | **E 待办** | [`TODO.md`](TODO.md) — ★ **待办总表（导航层）** | current | 2026-10-18 | both |
 | | [`KNOWN-ISSUES.md`](KNOWN-ISSUES.md) — 缺陷登记册正文（26 条 KI） | current | 2026-10-17 | both |
 | | [`SILENT-FAILURE.md`](SILENT-FAILURE.md) — ★ 静默失败族根因审计（含 **§4.3 第四形态「不可达」**，2026-10-24） | current | 2026-10-24 | both |
-| | [`../openspec/changes/`](../openspec/changes/) — 在办 change（13 个） | current | — | both |
+| | [`../openspec/changes/`](../openspec/changes/) — 在办 change（12 个） | current | — | both |
 | **F 时点** | [`HANDOFF.md`](HANDOFF.md) — 会话转接；⚠️ **4 个状态叠层，以顶部"当前状态"为准** | record | 2026-10-17 | ai |
 | | [`SESSION-2026-10-18-DELEGATED-RUNTIME.md`](SESSION-2026-10-18-DELEGATED-RUNTIME.md) | record | 2026-10-18 | ai |
 | | [`E02-E03-ABOUT-PAGE-RECORD.md`](E02-E03-ABOUT-PAGE-RECORD.md) | record | 2026-10-18 | ai |
