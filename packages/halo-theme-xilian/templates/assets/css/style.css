@@ -703,3 +703,26 @@ button{font-family:inherit;}
   background:var(--glass-2);transition:all .22s ease;}
 .cat-chip:hover{color:var(--text);border-color:var(--green-stroke-strong);background:var(--green-tint);}
 @media (max-width:720px){.cat-strip{padding:14px 0 2px;}.cat-chip{font-size:13px;padding:5px 12px;}}
+
+
+/* ============================================================
+   文章页日记体（theme-xilian）
+   ============================================================ */
+.diary-hero{text-align:left;padding:56px 0 18px;max-width:760px;margin:0 auto;}
+.diary-stamp{display:flex;align-items:baseline;gap:12px;margin:6px 0 14px;}
+.diary-stamp .d-day{font-family:var(--serif);font-size:64px;line-height:.9;color:var(--text);letter-spacing:-.03em;}
+.diary-stamp .d-ym{font-size:12px;letter-spacing:.2em;color:var(--muted);}
+.diary-stamp .d-weekday{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);}
+.diary-hero .headline{font-size:22px;font-weight:400;color:var(--light);letter-spacing:.02em;margin:0;}
+.diary-hero .post-meta-bar{margin-top:14px;font-size:12px;color:var(--muted);}
+.post-panel{background:transparent;border:none;box-shadow:none;padding:8px 0 0;max-width:760px;margin:0 auto;}
+.post-panel .post-content{font-family:var(--serif);font-size:18px;line-height:2.05;color:var(--para);}
+.post-panel .post-content p{margin:0 0 1.35em;}
+.post-panel .post-content h2,.post-panel .post-content h3{font-family:var(--serif);font-weight:500;color:var(--text);margin:2em 0 .8em;}
+.post-panel .post-content blockquote{border-left:2px solid var(--green-stroke-strong);margin:1.6em 0;padding-left:1.1em;color:var(--muted);}
+.post-nav{max-width:760px;margin:44px auto 0;gap:14px;}
+@media (max-width:720px){
+  .diary-stamp .d-day{font-size:48px;}
+  .diary-hero{padding:36px 0 12px;}
+  .post-panel .post-content{font-size:17px;line-height:1.95;}
+}

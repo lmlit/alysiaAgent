@@ -8,9 +8,15 @@
   <div class="container">
 
     <!-- ===================== 文章头 ===================== -->
-    <header class="post-hero">
+    <header class="post-hero diary-hero">
       <p class="eyebrow" th:if="${!#lists.isEmpty(post.categories)}"
          th:text="${post.categories[0].spec.displayName}">分类</p>
+      <p class="diary-stamp" th:if="${post.spec.publishTime != null}">
+        <span class="d-day" th:text="${#dates.format(new java.util.Date(post.spec.publishTime.toEpochMilli()), 'dd')}">24</span>
+        <span class="d-ym" th:text="${#dates.format(new java.util.Date(post.spec.publishTime.toEpochMilli()), 'yyyy · MM')}">2026 · 10</span>
+        <span class="d-weekday" th:text="${#dates.format(new java.util.Date(post.spec.publishTime.toEpochMilli()), 'EEE')}">Fri</span>
+      </p>
+
       <h1 class="headline" th:text="${post.spec.title}">文章标题</h1>
       <div class="post-meta-bar">
         <span th:if="${post.spec.publishTime != null}"

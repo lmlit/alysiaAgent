@@ -9,12 +9,17 @@
   </a>
 
   <div class="nav-center" id="nav-center">
-    <a th:if="${!#strings.isEmpty(theme.config.basic?.personal_home)}"
-       th:href="${theme.config.basic.personal_home}">个人主页</a>
-    <a th:each="menuItem : ${menu != null ? menu.menuItems : {}}"
-       th:href="@{${menuItem.status.href}}"
-       th:text="${menuItem.status.displayName}">导航项</a>
-  </div>
+    <!-- ★ theme-xilian：导航固定为这五项。
+         原因：Halo 2.27 的 menus 相关端点（api.halo.run 组 + console 组）都返回 404，
+         后台改菜单无法通过 REST 落地；而 setup 时 Halo 会自动建一个
+         「首页 / 文章 / 默认分类 / 关于」的菜单，直接用会带着占位项。
+         要换成别的项：直接改这里。 -->
+    <a th:href="@{/}">首页</a>
+    <a th:href="@{/archives}">归档</a>
+    <a th:href="@{/categories/daily}">日常</a>
+    <a th:href="@{/categories/blank}">留白</a>
+    <a th:href="@{/categories}">栏目</a>
+  </div></div>
 
   <div class="nav-right">
     <div class="weather-switch" role="group" aria-label="背景天气切换" th:if="${theme.config.style.weather == null or theme.config.style.weather}">
