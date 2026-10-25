@@ -10,6 +10,7 @@
     "dev:server": "pnpm --filter @alysia/server dev",
     "dev:console": "pnpm --filter @alysia/console dev",
     "build:console": "pnpm --filter @alysia/console build",
+    "smoke": "node scripts/smoke-local.mjs",
     "deploy:dry": "node scripts/deploy.mjs --dry-run",
     "deploy": "node scripts/deploy.mjs"
   },

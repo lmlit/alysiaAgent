@@ -125,6 +125,27 @@ if (!/ok/.test(remote('echo ok', { allowFail: true }))) die(`SSH 免密连不上
 
 say(`目标 ${HOST}:${REMOTE_DIR} · 镜像 ${IMAGE}${DRY ? ' · DRY-RUN' : ''}`);
 
+// ── Step 0c 本地真机 smoke（★ 2026-10-25 新增，**不可跳过**）──────────────
+//
+// 起因：这一整天我都是"改完直接推生产"，把生产当测试环境。
+// 用户原话：「靠，你什么时候养出来的坏毛病，直接推生产，本地改完本地真机测一下调用 api 测，
+// 测完没问题再推服务器好不好」。
+//
+// 从此刻起：**本地起真服务 + 调真 API 验过，才允许构建/上传**。
+// 唯一例外是 `--skip-smoke`，用了会**大声警告**并记进日志 —— 不许悄悄跳过。
+log('Step 0c 本地真机 smoke（起真服务 + 调真 API）');
+if (argv.has('--skip-smoke')) {
+  console.warn('\n⚠️⚠️ 你用了 --skip-smoke：这次**没有**在本地真机验证过就推生产。');
+  console.warn('   只该在"生产已经烧起来了，必须紧急回滚/修一行"时用。\n');
+} else {
+  const smoke = tryRun('node', ['scripts/smoke-local.mjs']);
+  if (!smoke.ok) {
+    const tail = smoke.out.split('\n').filter((l) => /✖|✓|▸/.test(l)).slice(-14).join('\n');
+    die(`本地真机 smoke 没过 ⇒ 不许推生产：\n${tail || smoke.out.slice(-1500)}`);
+  }
+  say('✓ 本地真机 smoke 通过');
+}
+
 if (!SKIP_TESTS) {
   log('Step 0b 全量测试（--skip-tests 可跳过，但别跳）');
   // 只看退出码（见 `tryRun` 的注释：文本判断会把 stderr 里的测试日志误当成失败）
