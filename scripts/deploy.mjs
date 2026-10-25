@@ -6,10 +6,11 @@
  *   node scripts/deploy.mjs             # 真部署
  *
  * 环境变量（**不进仓库** —— 本仓公开，见 CLAUDE.md 的两次泄露事故）：
- *   ALYSIA_DEPLOY_HOST  必填，形如 root@1.2.3.4
- *   ALYSIA_DEPLOY_DIR   服务器部署目录，默认 /root/alysia
+ *   ALYSIA_DEPLOY_HOST    必填，形如 root@1.2.3.4
+ *   ALYSIA_DEPLOY_DIR     服务器部署目录，默认 /root/alysia
+ *   ALYSIA_ROLLBACK_KEEP  部署后保留几个回滚点，默认 3（见 Step 6）
  *
- * 开关：--dry-run / --allow-dirty / --skip-tests / --merge-config
+ * 开关：--dry-run / --allow-dirty / --skip-tests / --merge-config / --keep-rollbacks=N
  *
  * ## 它拦的是今天真踩到的三个坑（每个都**不报错**）
  *
@@ -19,6 +20,9 @@
  *      要你显式 `--merge-config` 才继续。
  *   ② **切镜像前没打回滚标签** ⇒ 出问题退不回去。⇒ 先 tag 再切。
  *   ③ **切完不看健康** ⇒ 服务半死而你以为发成功了。⇒ 轮询 /api/health，不健康**自动回滚**。
+ *   ④ **回滚标签只打不删**（★ 2026-10-25 第二个补丁）⇒ 生产 37 个镜像 8.7 GB、可用只剩一个，
+ *      一天 12 次部署就是 12 个回滚点。⇒ Step 6 部署成功后只留最近 N 个（默认 3）。
+ *      决策逻辑在 `scripts/lib/rollback-retention.mjs`（纯函数、有单测）。
  *
  * ## 为什么用 .mjs 而不是 .sh
  * 主战场是 Windows，`.sh` 依赖 git-bash；node 是硬依赖（构建/测试都要 24），两端一致。
@@ -27,6 +31,13 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import {
+  IMAGE as BASE_IMAGE,
+  buildPruneScript,
+  parseImageList,
+  planRollbackPrune,
+  resolveKeep,
+} from './lib/rollback-retention.mjs';
 
 const ROOT = join(import.meta.dirname, '..');
 const SERVER_DIR = join(ROOT, 'packages', 'server');
@@ -35,7 +46,7 @@ const IMAGE_TAR = join(SERVER_DIR, 'alysia-image.tar');
 const CFG_TAR = join(SERVER_DIR, 'alysia-deploy.tar.gz');
 const HOST = (process.env.ALYSIA_DEPLOY_HOST || '').trim();
 const REMOTE_DIR = (process.env.ALYSIA_DEPLOY_DIR || '/root/alysia').trim();
-const IMAGE = 'server-alysia:latest';
+const IMAGE = BASE_IMAGE;
 const HEALTH_URL = 'http://localhost:6186/api/health';
 
 const argv = new Set(process.argv.slice(2));
@@ -189,7 +200,26 @@ if (!serverCfg) {
   }
 }
 
-if (DRY) { log('DRY-RUN 结束：前置检查通过，未改动服务器'); process.exit(0); }
+// ── Step 1b 回滚点盘点（只读；DRY-RUN 也会打出来）─────────────────────────
+//
+// 只列不删 —— 真正的清理在 Step 6（部署成功之后），因为**失败时现场要留着**：
+// 部署失败/自动回滚时把回滚标签删掉，等于把唯一的退路也删了。
+const KEEP_ROLLBACKS = resolveKeep({ argv: process.argv.slice(2), env: process.env });
+const listAlysiaImages = () =>
+  remote(`docker images --filter 'reference=server-alysia:*' --format '{{.CreatedAt}}|{{.Repository}}:{{.Tag}}|{{.ID}}'`, {
+    allowFail: true,
+  });
+const planFrom = (text) => planRollbackPrune(parseImageList(text), KEEP_ROLLBACKS);
+
+if (DRY) {
+  log(`Step 1b 回滚点盘点（保留最近 ${KEEP_ROLLBACKS} 个，DRY-RUN 不删）`);
+  const plan = planFrom(listAlysiaImages());
+  for (const e of plan.keep) say(`保留 ${e.tag}（${e.createdAt}）`);
+  for (const e of plan.remove) say(`将删 ${e.tag}（${e.createdAt}）`);
+  say(`回滚点 ${plan.keep.length + plan.remove.length} 个 ⇒ 保留 ${plan.keep.length} / 将删 ${plan.remove.length}`);
+  log('DRY-RUN 结束：前置检查通过，未改动服务器');
+  process.exit(0);
+}
 
 // ── Step 2/3 构建 ────────────────────────────────────────────────────────
 //
@@ -278,4 +308,27 @@ curl -s --max-time 5 ${HEALTH_URL} || true
 log('部署成功');
 say(remote(`docker ps --format '{{.Names}} {{.Status}}'; curl -s --max-time 5 ${HEALTH_URL}; echo`).replace(/\n/g, '\n  '));
 say(`回滚点：${rollbackTag || '（无）'}`);
+
+// ── Step 6 回收旧回滚点（★ 2026-10-25 新增）───────────────────────────────
+//
+// 起因见文件头 ④：脚本只打标签不删，生产 37 个镜像 / 8.7 GB、可用只剩一个。
+// 放在**健康检查通过之后**（失败分支已 exit，走不到这里 ⇒ 现场自动保留）。
+// 安全边界：只删 `server-alysia:rollback-*`，`latest` 结构性不可能进待删集合，
+// 悬空清理带 compose project 的 label 过滤（见 lib 的注释 ①②③）。
+log(`Step 6 回收旧回滚点（保留最近 ${KEEP_ROLLBACKS} 个）`);
+const planNow = planFrom(listAlysiaImages());
+for (const e of planNow.remove) say(`删 ${e.tag}（${e.createdAt}）`);
+if (!planNow.remove.length) say('无需清理（都在保留范围内）');
+const pruned = remote(buildPruneScript(planNow.remove.map((e) => e.tag), { healthUrl: HEALTH_URL }), {
+  allowFail: true,
+});
+for (const l of pruned.split('\n').filter(Boolean)) say(l);
+
+if (!/latest=present/.test(pruned)) {
+  die('★ 清理后 server-alysia:latest 不见了 —— 立刻人工检查（docker images server-alysia）。部署本身已成功');
+}
+if (!/health=200/.test(pruned)) {
+  console.warn('\n⚠️ 清理后健康检查不是 200 —— 立刻看 docker logs alysia-server --tail 50');
+}
+
 console.log('\n下一步：把这次部署输出记进 change（验收依据），再提交代码 —— SOP 的 Step 5。');

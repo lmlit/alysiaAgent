@@ -57,11 +57,16 @@ ALYSIA_DEPLOY_HOST=root@<host> pnpm deploy       # 真部署（内部**强制**�
 - 唯一例外 `--skip-smoke`：会**大声警告**（只该用于"生产已烧起来、必须紧急回滚"）
 
 - **host 只在环境变量里**，绝不写进仓库（本仓 PUBLIC，已发生两次泄露事故）
-- 脚本 `scripts/deploy.mjs` 拦的三个坑，都是**不报错**的那种：
+- 脚本 `scripts/deploy.mjs` 拦的**四**个坑，都是**不报错**的那种：
   ① `config.yml` 是 **gitignore** 的、与服务器会漂移 —— 整份覆盖曾把服务器侧
   `max_tokens 1024→256` / `4096→2048` 和整段 `projects:`（委托工具靠它注册）静默退回默认
   ⇒ 脚本**默认拒绝**服务器独有键，要显式 `--merge-config`；
-  ② 切镜像前不打回滚标签 ⇒ 退不回去；③ 切完不看健康 ⇒ 服务半死而你以为发成功了
+  ② 切镜像前不打回滚标签 ⇒ 退不回去；③ 切完不看健康 ⇒ 服务半死而你以为发成功了；
+  ④ **回滚标签只打不删**（★ 2026-10-25 补）⇒ 实测生产 37 个镜像 / 8.736 GB、可用只剩 1 个，
+  一天 12 次部署 ≈ 4.7 GB/天，而它爆掉时报的是**数据库写入失败**。
+  ⇒ Step 6 部署成功后只留最近 3 个（`--keep-rollbacks=N` / `ALYSIA_ROLLBACK_KEEP`），
+  决策在 `scripts/lib/rollback-retention.mjs`（纯函数 + 19 条单测，**`latest` 结构性不可删**、
+  **按 docker `CreatedAt` 排序而非标签名**）。契约见 `openspec/specs/deploy-pipeline/spec.md`
 - 部署完把 `docker ps` + `/api/health` 输出记进该 change 的 tasks，**那才是验收依据**
 
 ## ★ 开发约束：Web 端接口兼容（必读）
