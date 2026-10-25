@@ -32,9 +32,13 @@ describe('生效的说话规则（代码侧，改动即生效）', () => {
     expect(CHAT_BREVITY_DIRECTIVE, '允许不完整').toContain('允许不完整');
   });
 
-  it('★ 配额规则在（语气词 / ♪ / 反问 合计最多一处）', () => {
-    expect(CHAT_BREVITY_DIRECTIVE).toMatch(/合计最多一处/);
-    expect(CHAT_BREVITY_DIRECTIVE).toContain('♪');
+  it('★ 语气词不再有硬配额（2026-10-25 产品判断：她的语气密度是她要的样子）', () => {
+    // ⚠️ 行为变更（change: `revert-speech-quota`）：
+    //   本条原来断言「三样合计最多一处」。实测她确实每句 2-3 个语气词，
+    //   但用户判断「现在的版本就挺好的了」⇒ 那不是缺陷，是她的说话方式。
+    //   这里改为**反向守卫**：谁也不许再把硬配额加回来（否则她会立刻变得干巴）。
+    expect(CHAT_BREVITY_DIRECTIVE).not.toMatch(/合计最多一处/);
+    expect(CHAT_BREVITY_DIRECTIVE, '仍要保留"别为每句都加"的分寸提醒').toMatch(/不必刻意压掉/);
   });
 
   it('长度约束没被挤掉（默认 ≤3 句仍是第一句）', () => {
