@@ -77,6 +77,17 @@ export const personaSeedModule: Module<PersonaSeedConfig> = {
         `（读时兜底只影响内存，不再静默写回 —— 所以这里必须报出来）`,
       );
     }
+    // ★ 2026-10-25（change: `first-person-self-facts`）：**存量自省人称清洗**。
+    //   实测生产 48 条自省里 5 条是第三人称（"昔涟会…"），注入【关于我】时她像在说别人。
+    //   写入端已加归一（`normalizeSelfFact`）；这里补旧数据，且**必须报条数**
+    //   （静默改写用户数据的做法在本仓禁止）。
+    const fixedSelfFacts = memoryManager.repairCharacterFactPerspective();
+    if (fixedSelfFacts > 0) {
+      ctx.logger.warn(
+        `[al:persona-seed] 启动时把 ${fixedSelfFacts} 条第三人称自省改成第一人称` +
+        `（它们会注入【关于我】，"昔涟…"会让她像在说别人）`,
+      );
+    }
     // 传 ctx.logger 而非模块级全局 logger —— 让本模块在隔离测试里可观测
     await loadRolePackages(memoryManager, config?.workspaceDir ?? process.cwd(), ctx.logger);
   },

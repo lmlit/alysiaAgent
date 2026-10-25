@@ -125,6 +125,10 @@ function metrics(text) {
   if (!up) { console.error(out.slice(-2000)); cleanup(); die('本地服务没起来'); }
   say(`✓ 服务就绪（${PORT}，数据目录 .tmp/chat-local）`);
 
+  // ★ 启动期修复要看得见（不静默改数据）：把 persona-seed 的 warn 抖出来
+  const repair = out.split('\n').filter((l) => /第三人称|冲空的人格列/.test(l));
+  for (const l of repair) say(`⚠ 启动修复：${l.replace(/^\[[^\]]*\]\s*/, '').trim()}`);
+
   const token = env.ALYSIA_WEBUI_TOKEN || '';
   const sessionId = `local-${Date.now()}`;
   const lines = ONLY_SAY ? [ONLY_SAY] : DEFAULT_LINES.slice(0, TURNS);

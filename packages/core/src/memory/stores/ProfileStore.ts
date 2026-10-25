@@ -407,6 +407,32 @@ export class ProfileStore {
     return added;
   }
 
+  /**
+   * ★ 2026-10-25（change: `first-person-self-facts`）：**原地**把第三人称自省改成第一人称。
+   *
+   * ⚠️ 不能用 `addCharacterFacts`！它是"追加 + 按文本去重/取代"，而
+   * `昔涟会…` 与 `我会…` 的 `normalizeKey` 不相等（它不会剥掉「昔涟」），
+   * 于是"新增一条并取代旧的"**不会发生** —— 实测结果是**两条并存**（把数据弄得更脏）。
+   * 所以这里直接改数组里那个条目的文本，再整体写回。
+   *
+   * @returns 被改的条数（0 = 没有需要改的）
+   */
+  normalizeCharacterFactPerspective(normalize: (s: string) => string): number {
+    const all = this.getAllCharacterFacts();
+    let changed = 0;
+    for (const f of all) {
+      const before = String(f.fact ?? '');
+      const after = normalize(before);
+      if (after && after !== before) { f.fact = after; changed += 1; }
+    }
+    if (changed > 0) {
+      this.ensureRow();
+      this.db.prepare('UPDATE user_profile SET character_facts = ?, updated_at = ? WHERE id = 1')
+        .run(JSON.stringify(all), NOW());
+    }
+    return changed;
+  }
+
   setUpdated(): void {
     this.ensureRow();
     this.db.prepare('UPDATE user_profile SET updated_at = ? WHERE id = 1')

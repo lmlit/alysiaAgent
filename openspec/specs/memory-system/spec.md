@@ -884,6 +884,21 @@ request body 相同还不够 —— 两条链路若在**URL 拼接 / 请求头 /
 
 ★ 通则（仍然有效）：遇到"规则写了没效果"，**先比较两端权重**；
 但比完权重之后还要问一句 —— **这真的是缺陷，还是只是和我的偏好不同？**
+**【关于我】的人称契约（2026-10-25，change: `first-person-self-facts`）**
+
+`character_facts` 是"她对自己的认识"，会**原样注入【关于我】块** ⇒ **必须是第一人称**。
+否则她读到"昔涟会…"时，等于**在用别人的名字说自己**。
+
+- **写入端归一**：`normalizeSelfFact()`（`昔涟/小昔涟/她` 开头 → `我`），
+  在 `recordReflection()` 写 insight 前应用。**不靠 prompt 自觉** —— 实测 prompt 写了"第一人称"，
+  48 条里仍有 5 条漂移。
+- **存量清洗**：`repairCharacterFactPerspective()` 在 `al:persona-seed` 启动时执行，
+  **必须 warn 报条数**（静默改写用户数据禁止）。
+- ⚠️ **必须原地改**（`ProfileStore.normalizeCharacterFactPerspective`），
+  **不能**走 `addCharacterFacts`：后者按 `normalizeKey` 去重/取代，而
+  `昔涟会…` 与 `我会…` 的 key 不相等 ⇒ 取代不发生 ⇒ **两条并存**（本地实测 2 条变 4 条）。
+- 归一有意保守：只动**开头**的自称；不动中间的第三人称（"我告诉她"正常）；
+  不动以「用户/轻月」开头的（那是被错放进来的"关于他"，不该伪装成自省）。
 **契约 9：人格的注入面是「前 4 节」，写在这之外的规则**不会生效**（2026-10-25，change: `make-speech-rules-reachable`）。**
 
 | 事实 | 值（2026-10-25 生产实测） |

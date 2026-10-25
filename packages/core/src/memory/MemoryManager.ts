@@ -2,6 +2,7 @@
 // Unified facade that wires all stores, engines, processors, and PromptAssembler.
 import type Database from 'better-sqlite3';
 import { EventStore } from './stores/EventStore.js';
+import { normalizeSelfFact } from './self-facts.js';
 import { ProfileStore } from './stores/ProfileStore.js';
 import { PersonaStore } from './stores/PersonaStore.js';
 import { ConversationStore } from './stores/ConversationStore.js';
@@ -1664,6 +1665,31 @@ export class MemoryManager {
     return this.personaStore.repairEmptyColumns();
   }
 
+  /**
+   * ★ 2026-10-25（change: `first-person-self-facts`）：**存量自省的人称清洗**。
+   *
+   * 生产实测 48 条 `character_facts` 里有 5 条是第三人称（"昔涟会…"/"她…"），
+   * 它们会被原样注入【关于我】⇒ 她读到时像在说别人。
+   *
+   * 写入端已加归一（`normalizeSelfFact`）；这里把**旧数据**补上，
+   * 并在启动时**留痕**（返回被改的条数，由 `al:persona-seed` 打 warn）——
+   * 静默改写用户数据的做法在本仓是被禁止的。
+   */
+  repairCharacterFactPerspective(): number {
+    try {
+      // ⚠️ 必须**原地改**（`normalizeCharacterFactPerspective`），不能走 `addCharacterFacts`：
+      //   后者按 `normalizeKey` 去重/取代，而 `昔涟会…` 与 `我会…` 的 key 不相等 ⇒
+      //   实测会变成"两条并存"，把数据弄得更脏（第一版就是这么错的，本地注入两条后变四条）。
+      return this.profileStore.normalizeCharacterFactPerspective(normalizeSelfFact);
+    } catch (err: any) {
+      warnThrottled(
+        'MemoryManager.repairCharacterFacts',
+        `[Memory] 自省人称清洗失败（保持原样）: ${err?.message ?? err}`,
+      );
+      return 0;
+    }
+  }
+
   /** ★ 手动调整人格参数（Web 端滑条/按钮）。
    *  包装 PersonaAdapter.apply()，带护栏（|Δ|≤0.1 / 5min 冷却 / 24h 回归 / 显式 bypass）。
    *  param 格式: "tone.warmth" / "speech_style.emoji_usage" / "emotional_range.empathy" 等。
@@ -1715,7 +1741,13 @@ export class MemoryManager {
     if (input.insight?.trim()) {
       const now = new Date().toISOString();
       insightAdded = this.profileStore.addCharacterFacts([{
-        fact: input.insight.trim().slice(0, 100),
+        // ★ 2026-10-25（change: `first-person-self-facts`）：**人称归一**。
+        //   生产实测 48 条自省里 **5 条是第三人称**（"昔涟昨天给用户发了很多消息。"
+        //   "昔涟会对用户表达亲昵/肉麻的话"），而这块会原样注入【关于我】——
+        //   她会读到"昔涟怎样怎样"，等于**在用别人的名字说自己**。
+        //   prompt 里本来就写了"第一人称"，但模型仍偶尔漂移 ⇒ 在写入端做确定性归一
+        //   （不靠 prompt 的自觉，那是本仓反复验证过靠不住的）。
+        fact: normalizeSelfFact(input.insight).slice(0, 100),
         confidence: 0.5,
         evidence: `每日反思 ${now.slice(0, 10)}`,
         source_event: `reflection-${now.slice(0, 10)}`,
