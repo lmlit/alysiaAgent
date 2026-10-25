@@ -1,4 +1,4 @@
-﻿# Tasks: first-person-self-facts
+# Tasks: first-person-self-facts
 
 ## 实现
 - [x] `memory/self-facts.ts`：`normalizeSelfFact()` / `needsSelfFactNormalize()`（有意保守的边界）
@@ -18,7 +18,7 @@
 - [x] 改成原地替换 → 复验 1 条 → 1 条，残留 0，无并存
 
 ## 部署
-- [ ] `pnpm deploy`（会强制先跑 smoke；本地已验证过）
-- [ ] 部署后看启动日志是否报"把 N 条第三人称自省改成第一人称"（预计 5 条）
-- [ ] 部署后复查 `character_facts` 残留第三人称 = 0
-- [ ] 归档
+- [x] `pnpm deploy`（smoke 闸 + 全量测试 + 构建；镜像 f255f0dd9ef3，`rollback-20261025-171807`）
+- [x] 启动日志：**把 5 条**第三人称自省改成第一人称
+- [x] 复查：48 条 · **残留第三人称 0** · 条数未变（原地替换，无并存）
+- [x] 归档到 `openspec/archive/2026-10-25-first-person-self-facts/`
