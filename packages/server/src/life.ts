@@ -18,6 +18,9 @@ import {
   INTIMACY_TIERS,
   INTIMACY_UPGRADE_MARGIN,
   INTIMACY_RECOVERY_MIN,
+  silenceCap,
+  SILENCE_QUIET_DAYS,
+  SILENCE_MUTE_DAYS,
 } from './context-facts.js';
 import type { ContextFacts, IntimacyTierDef, IntimacyTierName } from './context-facts.js';
 
@@ -29,6 +32,14 @@ export interface LifeOpts {
   cooldownHours?: number;
   /** ★ 每日 chat 推送软上限，默认 5——超限的 chat 事件降级 internal 入库不推送 */
   maxChatPushesPerDay?: number;
+  /**
+   * ★ 2026-10-25（change: `worth-telling-and-silence-clock`）：**表态时钟**（第二根轴）。
+   * 沉默这么多天开始压低每日推送上限；到 `silenceMuteDays` 直接归零（她不主动说了）。
+   * 默认 3 / 7 —— **保守起点，不抄 whale**（它的数值是在它自己的分享模型里调的）。
+   * ⚠️ 与亲密度档位取 min（只降不升）。
+   */
+  silenceQuietDays?: number;
+  silenceMuteDays?: number;
   /** ★ 事件默认间隔（小时），LLM 未给 next_in_hours 时使用，默认 2（±30min 抖动） */
   defaultIntervalHours?: number;
   /** 聊天锁：最近 N 分钟有互动则跳过，默认 30 */
@@ -622,8 +633,25 @@ export class LifeService {
       const spoken = await this.spokenText(evt, now);
       const tier = this.resolveIntimacyTier(now);
       const configuredCap = this.opts.maxChatPushesPerDay ?? 5;
-      // 只降不升：`min` 而不是 `max`
-      const effectiveCap = Math.min(configuredCap, tier.cap);
+      // ★ 2026-10-25（change: `worth-telling-and-silence-clock`）：**第二根轴 —— 表态时钟**。
+      //   亲密度也在"沉默→少说话"，但它慢（1.8/天：82→70 要 7 天、→40 要 23 天）。
+      //   whale 的形状是 3 天开始降 / 7 天归零，管的是**发言额度**而不是关系温度 —— 所以敢快。
+      //   这里只压额度、不动亲密度；三处**取 min**（沿用「只降不升」）。
+      //   ⚠️ 必须用 `idleSinceLastUserMessage()`（如实返回 `number | null`），
+      //   不能用 `idleDaysSinceUserMessage()` —— 后者是**显示包装**（null → 999），
+      //   拿它算额度会把「从没说过话」当成「沉默 999 天」而把推送直接掐死。
+      //   （这不是假设：第一版就是这么写的，被 life-service 测试当场抓出来。）
+      const idleDays = this.idleSinceLastUserMessage(now);
+      const silence = silenceCap(
+        idleDays,
+        this.opts.silenceQuietDays ?? SILENCE_QUIET_DAYS,
+        this.opts.silenceMuteDays ?? SILENCE_MUTE_DAYS,
+      );
+      const effectiveCap = Math.min(configuredCap, tier.cap, silence?.cap ?? Number.POSITIVE_INFINITY);
+      // 这根轴一旦真正压低额度就留痕（攒数据后再谈数值，不拍脑袋调）
+      if (silence && silence.cap < Math.min(configuredCap, tier.cap)) {
+        logger.info(`[Life] silence cap 生效（idle=${idleDays}天, ${silence.label}）⇒ 日上限 ${Math.min(configuredCap, tier.cap)} → ${effectiveCap}`);
+      }
       const cooldownHours = tier.cap === 0 ? (this.opts.cooldownHours ?? 1) : tier.cooldownHours;
       const cooldownMs = cooldownHours * 3_600_000;
       const inCooldown = now.getTime() - this.state.lastProactiveAt < cooldownMs;
@@ -708,7 +736,7 @@ export class LifeService {
   private async retellForUser(
     evt: { content: string; message?: string },
     now: Date,
-  ): Promise<{ ok: true; text: string } | { ok: false; why: string }> {
+  ): Promise<{ ok: true; text: string; why?: string } | { ok: false; why: string }> {
     if (!this.opts.retellEvent) return { ok: false, why: 'no generator' };
 
     const time = formatLocalTime(now).slice(-5);
@@ -717,7 +745,7 @@ export class LifeService {
       `【你刚做的事】${evt.content}`,
       evt.message ? `【你当时想说的大意】${evt.message}` : '',
       this.relationshipBlock(now),
-      '把上面这件事，用你对轻月说话的口吻讲一句（1-2 句，不超过 50 字）。只输出那句话。',
+      '判断这件事值不值得占用轻月一次注意力；值得就用一句话讲给他，不值得就 worth=false。只输出 JSON。',
     ].filter(Boolean).join('\n\n');
 
     let raw = '';
@@ -729,14 +757,50 @@ export class LifeService {
       return { ok: false, why: 'threw' };
     }
 
-    const text = this.stripWrappingQuotes(raw);
+    // ★ 2026-10-25（change: `worth-telling-and-silence-clock`）：第二段输出 JSON
+    //   `{worth, why, say}` —— 「值不值得说」是**语义判断**，不是配额。
+    //   解析失败视为不合格（不推）：宁可这次不说话，也不要瞎猜它想说什么。
+    const parsed = this.parseRetellJSON(raw);
+    if (!parsed) {
+      logger.info(`[Life] retell rejected (unparseable json): ${raw.slice(0, 80) || '(空)'}`);
+      return { ok: false, why: 'unparseable json' };
+    }
+    if (parsed.worth === false) {
+      logger.info(`[Life] retell says not worth telling (${parsed.why || '无理由'}): ${evt.content.slice(0, 40)}`);
+      return { ok: false, why: `not worth: ${parsed.why || '无理由'}` };
+    }
+
+    const text = this.stripWrappingQuotes((parsed.say ?? '').trim());
     const bad = this.checkRetell(text, evt.content);
     if (bad) {
       logger.info(`[Life] retell rejected (${bad}): ${text.slice(0, 60) || '(空)'}`);
       return { ok: false, why: bad };
     }
-    logger.info(`[Life] retell ok (${text.length}字)`);
-    return { ok: true, text };
+    logger.info(`[Life] retell ok (${text.length}字, worth=true, ${parsed.why || '无理由'})`);
+    return { ok: true, text, why: parsed.why };
+  }
+
+  /**
+   * 解析第二段的 JSON（容忍 ``` 围栏与前后杂字）。
+   * 返回 `null` = 解析不了 ⇒ 上层按"不合格"处理（**不推**）。
+   */
+  private parseRetellJSON(raw: string): { worth?: boolean; why?: string; say?: string } | null {
+    if (!raw) return null;
+    const cleaned = raw.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
+    const start = cleaned.indexOf('{');
+    const end = cleaned.lastIndexOf('}');
+    if (start < 0 || end <= start) return null;
+    try {
+      const o = JSON.parse(cleaned.slice(start, end + 1));
+      if (typeof o !== 'object' || o === null) return null;
+      return {
+        worth: typeof o.worth === 'boolean' ? o.worth : undefined,
+        why: typeof o.why === 'string' ? o.why : undefined,
+        say: typeof o.say === 'string' ? o.say : (typeof o.message === 'string' ? o.message : undefined),
+      };
+    } catch {
+      return null;
+    }
   }
 
   /** 去掉模型可能加的成对引号（不改变内容） */

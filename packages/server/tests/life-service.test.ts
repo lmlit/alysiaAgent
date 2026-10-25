@@ -139,7 +139,7 @@ describe('LifeService', () => {
       generateEvent: async () => '那夜为云描的月光，已随风陪我过了第三日。', // 07:16 实测案例
       // ★ 2026-10-25（retell-events-in-her-voice）：裸文本没有 message，
       //   所以推送文本必须来自**转述**这一段（否则这次不打扰）。
-      retellEvent: async () => '昨晚那点月光，我记了三天了。',
+      retellEvent: async () => JSON.stringify({ worth: true, why: '他还惦记着昨晚那句', say: '昨晚那点月光，我记了三天了。' }),
     });
     await svc.tick();
     // 裸文本不再被丢弃（原行为：fallback 模板）——直接作为 chat 事件
@@ -156,7 +156,7 @@ describe('LifeService', () => {
     const svc = new LifeService(memoryManager as any, qqOff as any, {
       ownerOpenid: 'openid-1',
       generateEvent: async () => '深夜的独白。',
-      retellEvent: async () => '还没困，想跟你说句话。',
+      retellEvent: async () => JSON.stringify({ worth: true, why: '深夜想他', say: '还没困，想跟你说句话。' }),
       deepNightHours: [0, 7],
     });
     await svc.tick();
@@ -1462,7 +1462,7 @@ describe('LifeService — 8-29 事件/对话拆分（life-event-message-split）
       generateEvent: async () => '{"content":"在阳台看星星","type":"chat","message":"原始想说的话"}',
       retellEvent: async (ctx: string) => {
         contexts.push(ctx);
-        return '今晚星星好多，你那能看到吗？';
+        return JSON.stringify({ worth: true, why: '想让他一起看', say: '今晚星星好多，你那能看到吗？' });
       },
     });
     await svc.tick();
@@ -1470,6 +1470,35 @@ describe('LifeService — 8-29 事件/对话拆分（life-event-message-split）
     // 转述的输入必须含"刚做的事"与关系现状（否则她不知道对谁说、用什么分寸）
     expect(contexts[0]).toContain('在阳台看星星');
     expect(contexts[0]).toContain('你刚做的事');
+  });
+
+  // ★★★ 2026-10-25（worth-telling-and-silence-clock）：第二段现在要判"值不值得说"
+  it('★★ worth=false → 不推送（安静也是一种表达），且日志记下理由', async () => {
+    freezeTime(14);
+    vi.spyOn(Math, 'random').mockReturnValue(0.1);
+    const { qqOff } = makeMocks();
+    const svc = new LifeService(makeMocks().memoryManager as any, qqOff as any, {
+      ownerOpenid: 'openid-1',
+      cooldownHours: 0,
+      generateEvent: async () => '{"content":"把碗洗了，擦了灶台","type":"chat"}',
+      retellEvent: async () => JSON.stringify({ worth: false, why: '洗碗这种事不值得占他注意力', say: '' }),
+    });
+    await svc.tick();
+    expect(qqOff.sendProactive, '不值得就不发').not.toHaveBeenCalled();
+  });
+
+  it('★ 第二段返回非 JSON → 判不合格，不推送（不许瞎猜）', async () => {
+    freezeTime(14);
+    vi.spyOn(Math, 'random').mockReturnValue(0.1);
+    const { qqOff } = makeMocks();
+    const svc = new LifeService(makeMocks().memoryManager as any, qqOff as any, {
+      ownerOpenid: 'openid-1',
+      cooldownHours: 0,
+      generateEvent: async () => '{"content":"在阳台看星星","type":"chat"}',
+      retellEvent: async () => '就直接说了句话没有 JSON',
+    });
+    await svc.tick();
+    expect(qqOff.sendProactive).not.toHaveBeenCalled();
   });
 
   it('★ 转述的长度失控（>70 字）→ 判不合格，不推送并记名', async () => {
@@ -1480,7 +1509,7 @@ describe('LifeService — 8-29 事件/对话拆分（life-event-message-split）
       ownerOpenid: 'openid-1',
       cooldownHours: 0,
       generateEvent: async () => '{"content":"在阳台看星星","type":"chat"}',
-      retellEvent: async () => '今晚星星好多呀'.repeat(11), // 77 字
+      retellEvent: async () => JSON.stringify({ worth: true, why: 'x', say: '今晚星星好多呀'.repeat(11) }), // say 77 字
     });
     await svc.tick();
     expect(qqOff.sendProactive).not.toHaveBeenCalled();
@@ -1511,5 +1540,84 @@ describe('LifeService — 8-29 事件/对话拆分（life-event-message-split）
     });
     await svc.tick();
     expect(memoryManager.saveIntent).toHaveBeenCalledWith(expect.objectContaining({ content: '想告诉你粉蝶花开了' }));
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ★ 2026-10-25（change: `worth-telling-and-silence-clock`）：两件事
+//   ① 第二段要判「值不值得说」（worth=false ⇒ 这次不打扰）
+//   ② **表态时钟**：沉默越久，每日额度越低（3 天开始降 / 7 天归零）
+//      —— 与亲密度档位**取 min**（只降不升），且**不动**亲密度衰减速率
+// ═══════════════════════════════════════════════════════════════════════════
+describe('LifeService — 表态时钟（第二根轴）', () => {
+  const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
+
+  function svcWith(lastUserAt: string | null, opts: Record<string, any> = {}) {
+    // 亲密度显式设成 82（亲近档 cap 5）=> 这一组里**只有沉默轴会压额度**，
+    // 不会因为 makeMocks 默认的 30（疏远档 cap 1）而误判成"沉默生效"。
+    const { memoryManager, qqOff } = makeMocks({
+      getLastUserMessageAt: vi.fn().mockReturnValue(lastUserAt),
+      getLifeSnapshot: vi.fn().mockReturnValue({ currentActivity: '', mood: '', intimacy: 82, moodValue: 0, updatedAt: '' }),
+    });
+    const svc = new LifeService(memoryManager as any, qqOff as any, {
+      ownerOpenid: 'openid-1',
+      cooldownHours: 0,
+      maxChatPushesPerDay: 5,
+      generateEvent: async () => '{"content":"在阳台看星星","type":"chat","message":"今晚星星好多"}',
+      ...opts,
+    });
+    return { svc, memoryManager, qqOff };
+  }
+
+  it('沉默 0 天 → 不受影响，正常推送', async () => {
+    freezeTime(14);
+    vi.spyOn(Math, 'random').mockReturnValue(0.1);
+    const { svc, qqOff } = svcWith(daysAgo(0));
+    await svc.tick();
+    expect(qqOff.sendProactive).toHaveBeenCalled();
+  });
+
+  it('★ 从没说过话（null）→ **不受影响**（拿哨兵值会把她直接静音）', async () => {
+    freezeTime(14);
+    vi.spyOn(Math, 'random').mockReturnValue(0.1);
+    const { svc, qqOff } = svcWith(null);
+    await svc.tick();
+    expect(qqOff.sendProactive, 'null 不是"沉默 999 天"').toHaveBeenCalled();
+  });
+
+  it('★ 沉默 8 天 → 额度归零，不推送（她安静下来）', async () => {
+    freezeTime(14);
+    vi.spyOn(Math, 'random').mockReturnValue(0.1);
+    const { svc, qqOff } = svcWith(daysAgo(8));
+    await svc.tick();
+    expect(qqOff.sendProactive).not.toHaveBeenCalled();
+  });
+
+  it('★ 沉默 4 天 → 额度压到 3：已推 3 条就不再推', async () => {
+    freezeTime(14);
+    vi.spyOn(Math, 'random').mockReturnValue(0.1);
+    const { svc, qqOff } = svcWith(daysAgo(4));
+    (svc as any).state.chatPushesToday = 3;
+    (svc as any).state.pushCountDate = '2026-08-06';
+    await svc.tick();
+    expect(qqOff.sendProactive).not.toHaveBeenCalled();
+  });
+
+  it('沉默 4 天但今天只推了 1 条 → 仍可推（压额度不是封禁）', async () => {
+    freezeTime(14);
+    vi.spyOn(Math, 'random').mockReturnValue(0.1);
+    const { svc, qqOff } = svcWith(daysAgo(4));
+    (svc as any).state.chatPushesToday = 1;
+    (svc as any).state.pushCountDate = '2026-08-06';
+    await svc.tick();
+    expect(qqOff.sendProactive).toHaveBeenCalled();
+  });
+
+  it('可覆盖阈值：归零日推到 10 天 ⇒ 第 8 天仍可推（数值是保守起点，可配）', async () => {
+    freezeTime(14);
+    vi.spyOn(Math, 'random').mockReturnValue(0.1);
+    const { svc, qqOff } = svcWith(daysAgo(8), { silenceQuietDays: 5, silenceMuteDays: 10 });
+    await svc.tick();
+    expect(qqOff.sendProactive).toHaveBeenCalled();
   });
 });

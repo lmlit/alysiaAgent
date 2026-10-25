@@ -61,6 +61,57 @@ export const INTIMACY_UPGRADE_MARGIN = 5;
 /** 恢复转折：从 `silent` 回到这个值以上才算「他回来了」 */
 export const INTIMACY_RECOVERY_MIN = 45;
 
+// ── 表态时钟（第二根轴，★ 2026-10-25，change: `worth-telling-and-silence-clock`）──
+//
+// ## 为什么需要第二根轴
+//
+// 亲密度那条轴也在"沉默 → 少说话"，但它**慢**：decay 1.8/天，从 82 掉到 70 要 7 天、
+// 掉到 40 要 23 天、掉到 25 要 32 天。而 whale 的形状是 **3 天开始降 / 7 天归零** ——
+// 它管的是"发言额度"，不是"关系温度"，所以敢快。
+//
+// 我们**不改亲密度衰减速率**（那会让"关系温度"也掉得飞快，是另一件事），
+// 而是加一根独立的、**只压额度**的轴：沉默天数 → 每日推送上限。
+//
+// ⚠️ **数值不是抄 whale 的**：它的 3/7 天是在它自己的分享模型里调的。
+// 我们的 3/7 天是**保守起点**，可被 `LifeService` 的 opts 覆盖；
+// 每次这根轴真正生效都会打日志（`silence cap`），攒数据后再谈要不要调。
+//
+// ⚠️ 与亲密度档位**取 min**（沿用「只降不升」）：两根轴谁也抬不高对方。
+
+/** 表态时钟的默认值：3 天开始降、7 天归零 */
+export const SILENCE_QUIET_DAYS = 3;
+export const SILENCE_MUTE_DAYS = 7;
+/** 3–6 天时的额度上限 */
+export const SILENCE_QUIET_CAP = 3;
+
+export interface SilenceCap {
+  /** 本档允许的每日推送上限 */
+  cap: number;
+  /** 第一人称处境的标签（写进日志与关系块） */
+  label: string;
+}
+
+/**
+ * 纯函数：由 idle 天数算**表态时钟**给出的额外额度上限。
+ *
+ * | idleDays | 返回 |
+ * |---|---|
+ * | `null`（从没说过话） | `null` —— 没有基线，不额外压（交给亲密度档位） |
+ * | 0–2 天 | `null` —— 满额 |
+ * | 3–6 天 | `{cap: 3, label: '有点久没说话了'}` |
+ * | ≥7 天 | `{cap: 0, label: '很久没说话，安静下来'}` |
+ */
+export function silenceCap(
+  idleDays: number | null,
+  quietDays: number = SILENCE_QUIET_DAYS,
+  muteDays: number = SILENCE_MUTE_DAYS,
+): SilenceCap | null {
+  if (idleDays === null || !Number.isFinite(idleDays)) return null;
+  if (idleDays >= muteDays) return { cap: 0, label: '很久没说话，安静下来' };
+  if (idleDays >= quietDays) return { cap: SILENCE_QUIET_CAP, label: '有点久没说话了' };
+  return null;
+}
+
 /** 纯函数：给定亲密度落在哪一档（**不含**迟滞，迟滞在 `LifeService.resolveIntimacyTier`）。 */
 export function intimacyTier(intimacy: number): IntimacyTierDef {
   const v = Number.isFinite(intimacy) ? intimacy : 30;
