@@ -16,6 +16,7 @@ import { LifeService } from '../life.js';
 import {
   LIFE_EVENT_PROMPT,
   LIFE_SUMMARY_PROMPT,
+  LIFE_RETELL_PROMPT,
   LIFE_INTENT_PROMPT,
   LIFE_MOOD_NOTE_PROMPT,
   LIFE_REFLECTION_PROMPT,
@@ -93,6 +94,34 @@ export const lifeModule: Module = {
           ` tokens=${u ? `${u.input}+${u.output}` : '?'} reasoning=${u?.reasoningTokens ?? '?'}` +
           ` content=${text.length}字 (${Date.now() - started}ms)`
         );
+        return text;
+      },
+
+      // ★ 2026-10-25（change: `retell-events-in-her-voice`）：**第二段——转述给轻月**。
+      //   第一段（generateEvent）产出的是生活叙述（她的日记）；这一段把它讲成"对你说的话"。
+      //   为什么要两段：体裁互相污染。塞在同一个 prompt 里，实测要么 message 也带小说味，
+      //   要么 message 缺失 → 回落叙述直接推给人（而 postCheck 从不校验 message，无人报错）。
+      retellEvent: async (context: string) => {
+        const started = Date.now();
+        const resp = await core.providerManager.textChatWithFallback({
+          prompt: context,
+          sessionId: 'life-retell',
+          systemPrompt: LIFE_RETELL_PROMPT,
+          // ★ 采样槽：DEFAULT(0.85) + config.sampling.life.retell 覆盖（**带 max_tokens**，见 KI-1）
+          sampling: { ...DEFAULT_SAMPLING.life.retell, ...(config.sampling?.life?.retell ?? {}) },
+        });
+        const u = resp.usage;
+        const text = resp.role === 'assistant' ? (resp.completionText ?? '') : '';
+        // 预算现场留痕（finish=length + 0 字 ⇒ 推理吃光预算，与 KI-1 同一判据）
+        logger.info(
+          `[Life] retell LLM: finish=${resp.finishReason ?? '?'}` +
+          ` tokens=${u ? `${u.input}+${u.output}` : '?'} reasoning=${u?.reasoningTokens ?? '?'}` +
+          ` content=${text.length}字 (${Date.now() - started}ms)`,
+        );
+        if (resp.role !== 'assistant') {
+          logger.warn(`[Life] retell LLM call failed: ${resp.completionText || '(无错误文本)'}`);
+          return '';
+        }
         return text;
       },
 

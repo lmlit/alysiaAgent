@@ -78,20 +78,22 @@ describe('LifeService', () => {
     const svc = new LifeService(memoryManager as any, qqOff as any, {
       ownerOpenid: 'openid-1',
       probability: 0.3,
-      generateEvent: async () => '{"content":"在阳台看书，看到一朵像兔子的云","type":"chat","mood_delta":"开心"}',
+      // ★ 2026-10-25（retell-events-in-her-voice）：chat 事件**必须带 message**（对轻月说的话），
+      //   否则会被降级 internal —— content 是生活叙述，不许当消息推。
+      generateEvent: async () => '{"content":"在阳台看书，看到一朵像兔子的云","type":"chat","message":"刚看到一朵云，像兔子","mood_delta":"开心"}',
     });
     await svc.tick();
     // 存储
     expect(memoryManager.recordLifeEvent).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'chat', content: '在阳台看书，看到一朵像兔子的云' })
     );
-    // 推送
-    expect(qqOff.sendProactive).toHaveBeenCalledWith('openid-1', '在阳台看书，看到一朵像兔子的云');
-    // 推送成功 → 回写记忆（assistant 角色）
+    // 推送：推的是**对轻月说的话**（message），不是生活叙述（content）
+    expect(qqOff.sendProactive).toHaveBeenCalledWith('openid-1', '刚看到一朵云，像兔子');
+    // 推送成功 → 回写记忆（assistant 角色）：写的是**她说过的话**（message），不是叙述
     expect(memoryManager.ingest).toHaveBeenCalledWith(
       expect.objectContaining({
         source: 'chat',
-        payload: expect.objectContaining({ content: '在阳台看书，看到一朵像兔子的云', role: 'assistant' }),
+        payload: expect.objectContaining({ content: '刚看到一朵云，像兔子', role: 'assistant' }),
       })
     );
   });
@@ -116,7 +118,7 @@ describe('LifeService', () => {
     const { memoryManager, qqOff } = makeMocks();
     const svc = new LifeService(memoryManager as any, qqOff as any, {
       ownerOpenid: 'openid-1',
-      generateEvent: async () => '{"content":"深夜想说的话","type":"chat","mood_delta":"平静"}',
+      generateEvent: async () => '{"content":"深夜想说的话","type":"chat","message":"夜深了，还没困意","mood_delta":"平静"}',
       deepNightHours: [0, 7],
     });
     await svc.tick();
@@ -124,7 +126,7 @@ describe('LifeService', () => {
     expect(memoryManager.recordLifeEvent).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'chat', content: '深夜想说的话' })
     );
-    expect(qqOff.sendProactive).toHaveBeenCalledWith('openid-1', '深夜想说的话');
+    expect(qqOff.sendProactive).toHaveBeenCalledWith('openid-1', '夜深了，还没困意');
   });
 
   it('LLM 裸文本（无 JSON 外壳）→ 宽容解析直接作为事件内容并推送（8-09）', async () => {
@@ -135,13 +137,16 @@ describe('LifeService', () => {
       ownerOpenid: 'openid-1',
       probability: 0.3,
       generateEvent: async () => '那夜为云描的月光，已随风陪我过了第三日。', // 07:16 实测案例
+      // ★ 2026-10-25（retell-events-in-her-voice）：裸文本没有 message，
+      //   所以推送文本必须来自**转述**这一段（否则这次不打扰）。
+      retellEvent: async () => '昨晚那点月光，我记了三天了。',
     });
     await svc.tick();
     // 裸文本不再被丢弃（原行为：fallback 模板）——直接作为 chat 事件
     expect(memoryManager.recordLifeEvent).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'chat', content: '那夜为云描的月光，已随风陪我过了第三日。' })
     );
-    expect(qqOff.sendProactive).toHaveBeenCalledWith('openid-1', '那夜为云描的月光，已随风陪我过了第三日。');
+    expect(qqOff.sendProactive).toHaveBeenCalledWith('openid-1', '昨晚那点月光，我记了三天了。');
   });
 
   it('★ 8-28 深夜抑制关闭：裸文本深夜 → chat 类型 + 推送（不再强制 internal）', async () => {
@@ -151,13 +156,14 @@ describe('LifeService', () => {
     const svc = new LifeService(memoryManager as any, qqOff as any, {
       ownerOpenid: 'openid-1',
       generateEvent: async () => '深夜的独白。',
+      retellEvent: async () => '还没困，想跟你说句话。',
       deepNightHours: [0, 7],
     });
     await svc.tick();
     expect(memoryManager.recordLifeEvent).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'chat', content: '深夜的独白。' })
     );
-    expect(qqOff.sendProactive).toHaveBeenCalledWith('openid-1', '深夜的独白。');
+    expect(qqOff.sendProactive).toHaveBeenCalledWith('openid-1', '还没困，想跟你说句话。');
   });
 
   it('generateEvent 抛异常 → 模板 fallback 强制 internal，不推送（8-09）', async () => {
@@ -374,7 +380,7 @@ describe('LifeService', () => {
     });
     const svc = new LifeService(memoryManager as any, qqOff as any, {
       ownerOpenid: 'openid-1', probability: 0.3,
-      generateEvent: async () => '{"content":"在阳台看书","type":"chat"}',
+      generateEvent: async () => '{"content":"在阳台看书","type":"chat","message":"在阳台看了会儿书"}',
     });
     await svc.tick();
     expect(qqOff.sendProactive).toHaveBeenCalled();
@@ -1048,10 +1054,10 @@ describe('LifeService — 8-27 Agency Window 与对话余波', () => {
     const svc = new LifeService(makeMocks().memoryManager as any, qqOff as any, {
       ownerOpenid: 'openid-1',
       cooldownHours: 0,
-      generateEvent: async () => '{"content":"在阳台看星星","type":"chat"}',
+      generateEvent: async () => '{"content":"在阳台看星星","type":"chat","message":"今晚星星好多"}',
     });
     await svc.tick();
-    expect(qqOff.sendProactive).toHaveBeenCalledWith('openid-1', '在阳台看星星');
+    expect(qqOff.sendProactive).toHaveBeenCalledWith('openid-1', '今晚星星好多');
   });
 
   it('对话余波：最后 user 消息 15min 后 → 生成 internal followup 事件（不推送）', async () => {
@@ -1205,7 +1211,7 @@ describe('LifeService — 8-28 意图系统（ai-life-intent-system）', () => {
     const svc = new LifeService(memoryManager as any, qqOff as any, {
       ownerOpenid: 'openid-1',
       cooldownHours: 0,
-      generateEvent: async () => '{"content":"在阳台看星星","type":"chat"}',
+      generateEvent: async () => '{"content":"在阳台看星星","type":"chat","message":"今晚星星好多"}',
     });
     await svc.tick();
     expect(memoryManager.saveIntent).not.toHaveBeenCalled();
@@ -1414,7 +1420,12 @@ describe('LifeService — 8-29 事件/对话拆分（life-event-message-split）
     expect(memoryManager.recordLifeEvent).toHaveBeenCalledWith(expect.objectContaining({ content: '收了晾了三天的袜子,想起忘收衣服' }));
   });
 
-  it('chat 事件无 message → 回落推 content（兼容旧行为）', async () => {
+  it('★ chat 事件无 message 且无转述 → **不推送**（绝不把生活叙述当消息发）', async () => {
+    // ⚠️ 行为变更（change: `retell-events-in-her-voice`，2026-10-25）：
+    //   本用例原来是「无 message → 回落推 content（兼容旧行为）」。
+    //   而 `content` 按 `LIFE_EVENT_PROMPT` 的定义是**生活叙述**（2-4 句切片、具体时辰、小动作 = 她的日记），
+    //   把它当消息推给人，正是用户反馈"收到的像小说"的机制根因。
+    //   现在：转述拿不到、message 也没有 ⇒ 这次不打扰（降级 internal，日志记名）。
     freezeTime(14);
     vi.spyOn(Math, 'random').mockReturnValue(0.1);
     const { qqOff } = makeMocks();
@@ -1424,7 +1435,55 @@ describe('LifeService — 8-29 事件/对话拆分（life-event-message-split）
       generateEvent: async () => '{"content":"在阳台看星星","type":"chat"}',
     });
     await svc.tick();
-    expect(qqOff.sendProactive).toHaveBeenCalledWith('openid-1', '在阳台看星星');
+    expect(qqOff.sendProactive, '叙述文不许当消息推').not.toHaveBeenCalled();
+  });
+
+  it('★ 没注入转述生成器，但事件带了合格的 message → 仍可推送（via=message）', async () => {
+    freezeTime(14);
+    vi.spyOn(Math, 'random').mockReturnValue(0.1);
+    const { qqOff } = makeMocks();
+    const svc = new LifeService(makeMocks().memoryManager as any, qqOff as any, {
+      ownerOpenid: 'openid-1',
+      cooldownHours: 0,
+      generateEvent: async () => '{"content":"在阳台看星星","type":"chat","message":"今晚星星好多"}',
+    });
+    await svc.tick();
+    expect(qqOff.sendProactive).toHaveBeenCalledWith('openid-1', '今晚星星好多');
+  });
+
+  it('★★ 注入转述生成器 → 推送的是**转述结果**，而不是事件自带的 message', async () => {
+    freezeTime(14);
+    vi.spyOn(Math, 'random').mockReturnValue(0.1);
+    const { qqOff } = makeMocks();
+    const contexts: string[] = [];
+    const svc = new LifeService(makeMocks().memoryManager as any, qqOff as any, {
+      ownerOpenid: 'openid-1',
+      cooldownHours: 0,
+      generateEvent: async () => '{"content":"在阳台看星星","type":"chat","message":"原始想说的话"}',
+      retellEvent: async (ctx: string) => {
+        contexts.push(ctx);
+        return '今晚星星好多，你那能看到吗？';
+      },
+    });
+    await svc.tick();
+    expect(qqOff.sendProactive).toHaveBeenCalledWith('openid-1', '今晚星星好多，你那能看到吗？');
+    // 转述的输入必须含"刚做的事"与关系现状（否则她不知道对谁说、用什么分寸）
+    expect(contexts[0]).toContain('在阳台看星星');
+    expect(contexts[0]).toContain('你刚做的事');
+  });
+
+  it('★ 转述的长度失控（>70 字）→ 判不合格，不推送并记名', async () => {
+    freezeTime(14);
+    vi.spyOn(Math, 'random').mockReturnValue(0.1);
+    const { qqOff } = makeMocks();
+    const svc = new LifeService(makeMocks().memoryManager as any, qqOff as any, {
+      ownerOpenid: 'openid-1',
+      cooldownHours: 0,
+      generateEvent: async () => '{"content":"在阳台看星星","type":"chat"}',
+      retellEvent: async () => '今晚星星好多呀'.repeat(11), // 77 字
+    });
+    await svc.tick();
+    expect(qqOff.sendProactive).not.toHaveBeenCalled();
   });
 
   it('回写记忆的是 message（用户看到的），不是 content', async () => {

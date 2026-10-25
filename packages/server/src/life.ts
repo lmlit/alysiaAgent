@@ -37,6 +37,13 @@ export interface LifeOpts {
   deepNightHours?: [number, number];
   /** ★ LLM 事件生成器（bootstrap 注入，失败回落模板） */
   generateEvent?: (context: string) => Promise<string>;
+  /**
+   * ★ 2026-10-25（change: `retell-events-in-her-voice`）：**把刚发生的事用她的口吻讲给轻月**。
+   *
+   * 两段式的第二段。缺省（未注入）⇒ **不推送 chat 事件**（全部降级 internal）——
+   * 这是有意的：宁可这次不打扰，也不要拿生活叙述（她的日记）当消息发给人。
+   */
+  retellEvent?: (context: string) => Promise<string>;
   /** ★ LLM 每日摘要生成器（bootstrap 注入，纯文本回调）。
    *  与 generateEvent 分离：generateEvent 的 systemPrompt 强制输出 JSON，
    *  复用会导致摘要被存成 JSON 文本污染摘要层。缺失则跳过摘要生成（降级）。 */
@@ -606,10 +613,13 @@ export class LifeService {
     //    ★ 2026-10-20（tie-intimacy-to-speech）：冷却与日上限**再按亲密度档位收紧**。
     //      规则「只降不升」：档位只能压低配置值，永远不能抬高。
     // ★ 8-28 深夜抑制关闭：深夜 chat 事件同样按正常推送门（type=chat && can_contact）
-    // ★ 8-29 拆分：推送 message（对轻月说的话），无 message 回落 content（生活叙述）
+    // ★ 2026-10-25（change: `retell-events-in-her-voice`）：**推送文本只来自「转述」这一段**。
+    //   原来是 `evt.message ?? evt.content` —— message 缺失就把**生活叙述**（她的日记）直接推给人，
+    //   而且 postCheck 从不校验 message，于是这条路上**没有任何东西会报错**。
+    //   现在：先让她用自己的口吻讲一遍（第二段模型调用），讲不出来 = 这次不打扰。
     const pushable = evt.type === 'chat' && evt.can_contact !== false;
     if (pushable) {
-      const pushText = evt.message ?? evt.content;
+      const spoken = await this.spokenText(evt, now);
       const tier = this.resolveIntimacyTier(now);
       const configuredCap = this.opts.maxChatPushesPerDay ?? 5;
       // 只降不升：`min` 而不是 `max`
@@ -618,18 +628,19 @@ export class LifeService {
       const cooldownMs = cooldownHours * 3_600_000;
       const inCooldown = now.getTime() - this.state.lastProactiveAt < cooldownMs;
       const overDaily = this.state.chatPushesToday >= effectiveCap;
-      const ok = !inCooldown && !overDaily && await this.qqOff.sendProactive(this.opts.ownerOpenid, pushText);
-      if (ok) {
+      const ok = spoken.ok && !inCooldown && !overDaily && await this.qqOff.sendProactive(this.opts.ownerOpenid, spoken.text);
+      if (ok && spoken.ok) {
         this.state.lastProactiveAt = Date.now();
         this.state.chatPushesToday += 1;
         this.saveState();
         // ★ delivered=1（spec §5）：推送成功标记，Web 端可区分已推送/未推送
         if (evtId) this.memoryManager.markLifeEventDelivered(evtId);
-        logger.info(`[Life] pushed(${tier.label}, 日上限 ${effectiveCap}): ${pushText.slice(0, 50)}`);
+        logger.info(`[Life] pushed(${tier.label}, 日上限 ${effectiveCap}, via=${spoken.via}, ${spoken.text.length}字): ${spoken.text.slice(0, 50)}`);
       } else {
-        const why = tier.cap === 0 ? `tier=${tier.tier}（久无往来，不主动打扰）`
+        const why = !spoken.ok ? `no spoken text (${spoken.why})`
+          : tier.cap === 0 ? `tier=${tier.tier}（久无往来，不主动打扰）`
           : inCooldown ? 'cooldown' : overDaily ? `daily cap ${effectiveCap}（${tier.label}档）` : 'push failed';
-        logger.info(`[Life] chat event degraded to internal (${why}): ${pushText.slice(0, 50)}`);
+        logger.info(`[Life] chat event degraded to internal (${why}): ${(evt.message ?? evt.content).slice(0, 50)}`);
       }
     } else {
       logger.debug(`[Life] internal event (${deepNight ? 'deep night' : evt.can_contact === false ? 'not contactable' : 'internal'}): ${evt.content.slice(0, 50)}`);
@@ -646,6 +657,111 @@ export class LifeService {
     this.saveState();
     this.scheduleNextEvent();
     logger.info(`[Life] lock renewed +${(intervalMs / 3_600_000).toFixed(1)}h (model: ${evt.next_in_hours ?? 'default'})`);
+  }
+
+  /**
+   * ★ 2026-10-25（change: `retell-events-in-her-voice`）：决定**推给用户的那句话**。
+   *
+   * 三层，**逐层降级，但绝不回落到 `content`**（`content` 是生活叙述 = 她的日记）：
+   *
+   * | 层 | 来源 | 条件 | 日志 via |
+   * |---|---|---|---|
+   * | ① | **第二段模型转述**（`retellEvent`） | 注入了生成器且过 `checkRetell` | `retell` |
+   * | ② | 事件自带的 `message`（第一段给的"想说的话"） | 存在且过 `checkRetell` | `message` |
+   * | ③ | —— | 都不合格 ⇒ **这次不打扰**（降级 internal，记名） | — |
+   *
+   * ★ 为什么保留 ② 而不是"只有 retell 才算"：`message` 本来就是"对轻月说的话"字段，
+   *   它的问题从来不是"存在"，而是**没被校验、且缺失时静默回落叙述**。校验它、不回落 content，
+   *   就已经把那个洞堵上了；没注入生成器的场景（单测 / 老配置）也能继续工作。
+   */
+  private async spokenText(
+    evt: { content: string; message?: string },
+    now: Date,
+  ): Promise<{ ok: true; text: string; via: 'retell' | 'message' } | { ok: false; why: string }> {
+    let retellWhy = '';
+
+    if (this.opts.retellEvent) {
+      const r = await this.retellForUser(evt, now);
+      if (r.ok) return { ok: true, text: r.text, via: 'retell' };
+      retellWhy = r.why;
+    } else {
+      retellWhy = 'no generator';
+    }
+
+    // ② 事件自带的 message（必须过同一套校验：长度 / 不许抄叙述 / 不许动作描写）
+    const msg = this.stripWrappingQuotes((evt.message ?? '').trim());
+    if (msg) {
+      const bad = this.checkRetell(msg, evt.content);
+      if (!bad) return { ok: true, text: msg, via: 'message' };
+      return { ok: false, why: `retell:${retellWhy} / message:${bad}` };
+    }
+
+    return { ok: false, why: `retell:${retellWhy} / no message` };
+  }
+
+  /**
+   * ★ 2026-10-25：**第二段模型调用** —— 把刚发生的生活用她的口吻讲给轻月。
+   *
+   * 输入是**已发生的事实**（不许再编情节）；任务是**转述**：挑一个具体点，说一两句。
+   * 输出要过 `checkRetell()`（长度 / 不许抄叙述 / 不许动作描写）。
+   */
+  private async retellForUser(
+    evt: { content: string; message?: string },
+    now: Date,
+  ): Promise<{ ok: true; text: string } | { ok: false; why: string }> {
+    if (!this.opts.retellEvent) return { ok: false, why: 'no generator' };
+
+    const time = formatLocalTime(now).slice(-5);
+    const context = [
+      `【此刻时间】${time}`,
+      `【你刚做的事】${evt.content}`,
+      evt.message ? `【你当时想说的大意】${evt.message}` : '',
+      this.relationshipBlock(now),
+      '把上面这件事，用你对轻月说话的口吻讲一句（1-2 句，不超过 50 字）。只输出那句话。',
+    ].filter(Boolean).join('\n\n');
+
+    let raw = '';
+    try {
+      raw = (await this.opts.retellEvent(context)).trim();
+    } catch (err: any) {
+      // ★ 不静默：转述失败会让这次推送消失，必须能查到原因
+      logger.warn(`[Life] retell threw (will try message/fallback): ${err?.message ?? err}`);
+      return { ok: false, why: 'threw' };
+    }
+
+    const text = this.stripWrappingQuotes(raw);
+    const bad = this.checkRetell(text, evt.content);
+    if (bad) {
+      logger.info(`[Life] retell rejected (${bad}): ${text.slice(0, 60) || '(空)'}`);
+      return { ok: false, why: bad };
+    }
+    logger.info(`[Life] retell ok (${text.length}字)`);
+    return { ok: true, text };
+  }
+
+  /** 去掉模型可能加的成对引号（不改变内容） */
+  private stripWrappingQuotes(s: string): string {
+    return s.replace(/^["'「『]+/, '').replace(/["'」』]+$/, '').trim();
+  }
+
+  /**
+   * 转述文本的硬校验。返回**不合格的原因**（用于日志），合格返回 `null`。
+   *
+   * 只查机器能判的（长度/抄叙述/动作描写）；"像不像活人"不在这里判 —— 那靠 prompt 与真人看。
+   */
+  private checkRetell(text: string, content: string): string | null {
+    if (!text) return 'empty';
+    // 50 字是 prompt 要求；给 20 字余量，超了就是没按要求
+    if (text.length > 70) return `too long (${text.length})`;
+    // 抄叙述：开头 20 字与 content 相同（含被截断的情况）
+    const a = content.slice(0, 20), b = text.slice(0, 20);
+    if (a && b && a === b) return 'copied narrative';
+    // 动作/神态描写（与聊天规则同一套禁令；本仓反复出现过 *眨眼* 这类）
+    if (/[*＊]/.test(text)) return 'action asterisk';
+    if (/[（(][^）)]{0,20}[）)]/.test(text)) return 'parenthetical action';
+    // markdown
+    if (/^(#{1,6}\s|[-*]\s|>\s)/.test(text)) return 'markdown';
+    return null;
   }
 
   /** ★ 8-30 锁续期：模型建议 0.5-8h 钳制；缺失 → 时段保底（白天 1h / 夜间 2h） */

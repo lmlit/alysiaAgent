@@ -20,7 +20,23 @@ export interface SamplingConfig {
   /** 主对话 ReAct（她的"嗓子"，与 persona / memory_config 语义聚团） */
   chat: SamplingSlot;
   vision: { describe: SamplingSlot };
-  life: { generateEvent: SamplingSlot; generateSummary: SamplingSlot };
+  life: {
+    generateEvent: SamplingSlot;
+    generateSummary: SamplingSlot;
+    /**
+     * ★ 2026-10-25（change: `retell-events-in-her-voice`）：把生活事件**用她的口吻讲给用户**。
+     *
+     * 为什么要独立一段模型调用：`generateEvent` 产出的是**生活叙述**（2-4 句切片、具体时辰、
+     * 平凡物件——这是她的日记），而推送要的是**对你说的话**（像发微信、一两句、有钩子）。
+     * 塞进同一次调用时，两者的体裁互相污染：要么 `message` 也带小说味，
+     * 要么 `message` 缺失就回落成叙述直接推给人。
+     *
+     * ⚠️ **必须带 `max_tokens`**：本仓的推理模型会先花几百 token 在 reasoning 上，
+     * 且与可见内容共用预算。`life.generateEvent` 至今没有这个字段（KI-1 登记在案），
+     * 是已知隐患；新槽不留同样的坑。
+     */
+    retell: SamplingSlot;
+  };
   proactive: { personalize: SamplingSlot };
   /** 画像事实提取（SessionEndProcessor → ProfileExtractor，**返回 JSON**） */
   profile: {
@@ -64,6 +80,9 @@ export const DEFAULT_SAMPLING: SamplingConfig = {
     //     - 每日反思（本槽，bootstrap.ts:200 引用它）→ 线上 7 天 11 次 empty response
     //   提到 2048，给 reasoning 留出余量。
     generateSummary: { temperature: 0.3, max_tokens: 2048 },
+    // ★ 2026-10-25：把事件讲给用户听（输出一两句话）。温度略高于摘要、低于事件生成；
+    //   max_tokens 512 是给推理模型留余量（实测 reasoning 会吃掉 200-300 tokens）。
+    retell: { temperature: 0.85, max_tokens: 512 },
   },
   proactive: {
     personalize: { temperature: 0.7, max_tokens: 256 }, // 问候/关怀文案
@@ -120,6 +139,7 @@ export function mergeSampling(override?: DeepPartial<SamplingConfig>): SamplingC
     life: {
       generateEvent: mergeSlot(DEFAULT_SAMPLING.life.generateEvent, override.life?.generateEvent),
       generateSummary: mergeSlot(DEFAULT_SAMPLING.life.generateSummary, override.life?.generateSummary),
+      retell: mergeSlot(DEFAULT_SAMPLING.life.retell, override.life?.retell),
     },
     proactive: { personalize: mergeSlot(DEFAULT_SAMPLING.proactive.personalize, override.proactive?.personalize) },
     profile: {
