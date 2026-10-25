@@ -80,9 +80,12 @@ export const DEFAULT_SAMPLING: SamplingConfig = {
     //     - 每日反思（本槽，bootstrap.ts:200 引用它）→ 线上 7 天 11 次 empty response
     //   提到 2048，给 reasoning 留出余量。
     generateSummary: { temperature: 0.3, max_tokens: 2048 },
-    // ★ 2026-10-25：把事件讲给用户听（输出一两句话）。温度略高于摘要、低于事件生成；
-    //   max_tokens 512 是给推理模型留余量（实测 reasoning 会吃掉 200-300 tokens）。
-    retell: { temperature: 0.85, max_tokens: 512 },
+    // ★ 2026-10-25：把事件讲给用户听（输出一两句话）。温度略高于摘要、低于事件生成。
+    //   ★★ 实测（生产容器内 5 连测，同一输入）：**原定 512 会偶发空响应** ——
+    //     reasoning 吃掉 223–443 tokens，output 已到 466，再加上正文就顶到 512 ⇒
+    //     `finish=length` + content 0 字（就是 KI-1 那个形态，会话摘要曾因它 22 天 100% 失败）。
+    //     改 2048 后 5/5 稳定（output 320–355、reasoning 299–334，余量充足）。
+    retell: { temperature: 0.85, max_tokens: 2048 },
   },
   proactive: {
     personalize: { temperature: 0.7, max_tokens: 256 }, // 问候/关怀文案
