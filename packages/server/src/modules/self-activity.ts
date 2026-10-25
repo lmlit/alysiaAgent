@@ -16,6 +16,7 @@ import { SelfActivityService } from '../self-activity.js';
 import type { AlysiaCore } from '@alysia/core';
 import type { Module } from '@alysia/core/kernel';
 import type { RuntimeConfig } from './config.js';
+import { publishingEnabled } from './core.js';
 
 export const selfActivityModule: Module = {
   name: 'al:self-activity',
@@ -45,7 +46,8 @@ export const selfActivityModule: Module = {
     const service = new SelfActivityService(core, {
       enabled: true,
       projectId: cfg.projectId,
-      projectIds: Object.keys(config.projects ?? {}),
+      // ★ 2026-10-25（disable-publishing）：发布能力关闭时，她也不能自己发起项目
+      projectIds: publishingEnabled(config) ? Object.keys(config.projects ?? {}) : [],
       dailyCap: cfg.dailyCap ?? 1,
       minIdleHours: cfg.minIdleHours ?? 6,
       minGapHours: cfg.minGapHours ?? 24,

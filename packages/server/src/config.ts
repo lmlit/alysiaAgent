@@ -38,7 +38,18 @@ export interface ServerConfig {
      *  绑定回环时自动免鉴权——见 bootstrap 的 isLoopbackHost。 */
     host?: string;
   };
-  features?: { codeMode?: boolean; shell?: boolean; filesystem?: boolean; streaming?: boolean };
+  features?: {
+    codeMode?: boolean; shell?: boolean; filesystem?: boolean; streaming?: boolean;
+    /**
+     * ★ 2026-10-25（change: `disable-publishing`）：**页面 / 博客发布能力**总开关。
+     *
+     * 默认 **false** —— 即"她自己生成网站、发博客"这条链路默认关闭。
+     * 设 true 才注册委托工具（`start_project_task` 等）与页面清单工具。
+     * ⚠️ 与 `projects:` 的关系：`projects` 提供"能做哪些项目"，`publish` 决定"能不能做"。
+     *   两者都为真才生效；关掉 `publish` **不删** `projects`（配置与数据都保留）。
+     */
+    publish?: boolean;
+  };
   /**
    * **委托项目登记表**（★ 2026-10-17，change: `add-project-task-delegation`）。
    *
