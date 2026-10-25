@@ -4,7 +4,7 @@
 
 - **日期**: 2026-10-25
 - **类型**: MODIFY（补齐上一个 change 的两块未完成）
-- **状态**: applied
+- **状态**: **archived**（2026-10-25 已部署：两个端点均可用，reflection 首次可读）
 - **影响 spec**: `ai-life-system`（回读范围 + 只读出口）
 - **前置**: `her-records-one-table`（已归档：表合并 + 私密日记 + 生活生成回读）
 

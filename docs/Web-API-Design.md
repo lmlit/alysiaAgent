@@ -84,6 +84,8 @@
 | 生活 | `GET /api/life/summaries` | 近 7 天每日生活摘要 | 🟢 2026-09-25 上线路由 |
 | 生活 | `GET /api/life/companions` | 配角在场状态（含离场） | 🟢 2026-09-25 上线路由 |
 | 生活 | `GET /api/life/templates` | 生活素材库（种子 + 自创） | 🟢 core 已封装 |
+| 生活 | `GET /api/life/her-records` | **她的叙述记录**（kind=diary\|reflection, visibility=shared\|private, limit） | 🟢 2026-10-25 上线（listHerRecords） |
+| 生活 | `GET /api/life/private-diaries` | 私密日记（不加滤镜那本，别名） | 🟢 2026-10-25 上线 |
 
 > 🟢 = core 方法已就绪，只需 Web 路由层包装
 > ⚠️ = 部分就绪，需补充
