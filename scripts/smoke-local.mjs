@@ -31,7 +31,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, openSync, closeSync } from 'node:fs';
 import { join } from 'node:path';
 
 const ROOT = join(import.meta.dirname, '..');
@@ -126,20 +126,30 @@ async function waitHealth(timeoutMs = 90_000) {
   say(`✓ 临时配置 ${cfgPath.replace(ROOT + '\\', '')}（已删 platforms ⇒ 不连 QQ；数据目录隔离）`);
 
   say(`启动 node dist/bootstrap.js …`);
+  // ★ 子进程日志**写文件**，不用管道：管道 stdio 在 Windows 上 kill 后会在退出时触发
+  //   `Assertion failed ... async.c` ⇒ 退出码非 0 ⇒ 闸把自己的"通过"误判成"没过"。
+  const serverLog = join(SMOKE_DIR, 'server.log');
+  const logFd = openSync(serverLog, 'w');
   const child = spawn(process.execPath, ['dist/bootstrap.js'], {
     cwd: SERVER_DIR,
     env: { ...env, ALYSIA_CONFIG: cfgPath, ALYSIA_HOST: '127.0.0.1' },
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ['ignore', logFd, logFd],
   });
+  const readLog = () => { try { return readFileSync(serverLog, 'utf8'); } catch { return ''; } };
   let out = '';
-  child.stdout.on('data', (d) => { out += d.toString(); });
-  child.stderr.on('data', (d) => { out += d.toString(); });
   const cleanup = () => { try { child.kill('SIGKILL'); } catch { /* ignore */ } };
+  /** 杀掉子进程并**等它真的退出**（否则 process.exit 会撞上未关闭的 stdio 句柄） */
+  const stopChild = () => new Promise((resolve) => {
+    if (child.exitCode !== null) { resolve(); return; }
+    child.once('close', () => resolve());
+    try { child.kill('SIGKILL'); } catch { resolve(); }
+    setTimeout(resolve, 3000); // 兜底，别把闸挂死
+  });
   process.on('exit', cleanup);
 
   const health = await waitHealth();
   if (!health) {
-    console.error('\n--- 服务日志（末 2000 字）---\n' + out.slice(-2000));
+    console.error('\n--- 服务日志（末 2000 字）---\n' + readLog().slice(-2000));
     cleanup();
     die('本地服务 90s 内没起来');
   }
@@ -221,7 +231,14 @@ async function waitHealth(timeoutMs = 90_000) {
     }
   }
 
-  cleanup();
+  // ★ 必须**等子进程真正退出**再 process.exit：直接 exit 会让它的 stdio 句柄没关干净，
+  //   Node 在退出时触发 `Assertion failed ... async.c` ⇒ 退出码变 1 ⇒ **闸误判"smoke 没过"**。
+  //   （这不是假设：第一次接闸时就是这么被自己拦下的，而且输出里明明是"通过"。）
+  await stopChild();
+  try { closeSync(logFd); } catch { /* ignore */ }
   log('本地真机 smoke 通过 ✓ —— 现在可以推生产');
-  process.exit(0);
+  // ★ 不用 process.exit(0)：Windows 上强退会撞上未关闭的 uv_async 句柄
+  //   （Assertion failed ... async.c）⇒ 退出码变成 0xC0000409 ⇒ 闸误判失败。
+  //   改成设置 exitCode 让事件循环自然排空。
+  process.exitCode = 0;
 })();

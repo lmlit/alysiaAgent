@@ -172,5 +172,7 @@ function metrics(text) {
   }
 
   cleanup();
-  process.exit(results.length ? 0 : 1);
+  // ★ 不用 process.exit：Windows 上强退会撞 uv_async 句柄（Assertion failed ... async.c）
+  //   ⇒ 明明成功却返回 0xC0000409。改成设 exitCode 让事件循环自然排空。
+  process.exitCode = results.length ? 0 : 1;
 })();
