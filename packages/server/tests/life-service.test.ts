@@ -1683,3 +1683,29 @@ describe('LifeService — 私密日记', () => {
     expect(seenCtx).toContain('我其实有点在意');
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ★ 2026-10-25（change: `finish-her-records`）：反思也要能翻旧账
+// ═══════════════════════════════════════════════════════════════════════════
+describe('LifeService — 反思回读私密日记', () => {
+  it('★ 私密日记进**反思**的 context（否则复盘只剩当天事件）', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-06T23:30:00'));
+    const { memoryManager, qqOff } = makeMocks({
+      listLifeEvents: vi.fn().mockReturnValue([{ content: '晌午在灶前煮了粥', createdAt: new Date().toISOString() }]),
+      listHerRecords: vi.fn().mockReturnValue([
+        { kind: 'diary', visibility: 'private', date: '2026-08-05', content: '他那句话我其实有点在意。', mood: '', moodValue: 0, createdAt: '' },
+      ]),
+    });
+    let seen = '';
+    const svc = new LifeService(memoryManager as any, qqOff as any, {
+      ownerOpenid: 'openid-1',
+      generateReflection: async (ctx: string) => { seen = ctx; return JSON.stringify({ reflection: '今天还行', adjustments: [] }); },
+      generateEvent: async () => '{"content":"在阳台看书","type":"internal"}',
+    });
+    await svc.tick();
+    expect(seen).toContain('【你最近写下的】');
+    expect(seen).toContain('我其实有点在意');
+    vi.useRealTimers();
+  });
+});

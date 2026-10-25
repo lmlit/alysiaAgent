@@ -165,6 +165,17 @@ async function waitHealth(timeoutMs = 90_000) {
     say(`✓ 不含「${m}」（已被否决）`);
   }
 
+  // ── 只读出口：她的叙述记录（★ finish-her-records）────────────────────
+  log('调真 API：GET /api/life/her-records');
+  const rr = await fetch(`${BASE}/api/life/her-records?limit=5`, { headers: { Authorization: `Bearer ${token}` } });
+  if (!rr.ok) die(`/api/life/her-records → HTTP ${rr.status}`);
+  const rj = await rr.json();
+  if (!Array.isArray(rj.records)) die('/api/life/her-records 没有返回 records 数组');
+  say(`✓ records=${rj.records.length} 条（空也正常：新库还没有日记）`);
+  const pr = await fetch(`${BASE}/api/life/private-diaries`, { headers: { Authorization: `Bearer ${token}` } });
+  if (!pr.ok) die(`/api/life/private-diaries → HTTP ${pr.status}`);
+  say('✓ /api/life/private-diaries 可用');
+
   if (WITH_LIFE) {
     log('调真模型：生活推送第二段的 JSON 契约（worth/why/say）');
     const lifeDist = readFileSync(join(SERVER_DIR, 'dist', 'prompts', 'life.js'), 'utf8');

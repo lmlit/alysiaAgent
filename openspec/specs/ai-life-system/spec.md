@@ -792,6 +792,13 @@ await memoryManager.ingest({
 ★★ **回读是日记的定义性条件**：写下来但没人读的只是日志文件。
 私密日记进**生活事件生成**与**反思**的 context（`buildPrivateDiaryBlock`，最近 2 篇、每篇 ≤80 字）；
 **绝不进聊天 prompt / 推送 / 博客** —— 否则它立刻变成表演（她会为观众写）。
+回读范围：**生活事件生成**（最近 2 篇）与**每日反思**（最近 3 篇），各篇 ≤80 字。
+
+**只读出口**（2026-10-25，change: `finish-her-records`）：
+`GET /api/life/her-records?kind=diary|reflection&visibility=shared|private&limit=N`，
+以及别名 `GET /api/life/private-diaries`。
+它存在的理由：`reflection` 此前**没有任何入口**，写了 11 天谁也读不到。
+⚠️ 这个端点只是「**你能看**」，不是「它可以被引用」——两者混同，私密本立刻变成表演。
 
 ⚠️ 迁移幂等：启动时 `INSERT OR IGNORE`；旧表**冻结不删**，读路径先查新表、空则回落旧表。
 ⚠️ 反思此前"每天覆盖 + 无任何出口"（跑了 11 天全白写）；现在是**逐日累积**。

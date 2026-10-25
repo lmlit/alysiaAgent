@@ -1389,6 +1389,31 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
     summaries: core.memoryManager.listLifeSummaries(7),
   }));
 
+  /**
+   * ★ 2026-10-25（change: `finish-her-records`）：她的**叙述记录**（只读）。
+   *
+   * `GET /api/life/her-records?kind=diary|reflection&visibility=shared|private&limit=30`
+   *
+   * 为什么需要这个出口：`reflection` 此前**没有任何入口**（无 API、无页面、不进 prompt），
+   * 写了 11 天谁也读不到。合并进 `ai_life_records` 之后，这里给它一个只读窗口。
+   *
+   * ⚠️ `visibility=private` 的内容**不进聊天链路、不进推送、不进博客** ——
+   * 这个端点只是"你能看"，不是"它可以被引用"。
+   */
+  app.get('/api/life/her-records', async (req) => {
+    const q = (req as any).query as { kind?: string; visibility?: string; limit?: string } | undefined;
+    const kind = q?.kind === 'reflection' ? 'reflection' : q?.kind === 'diary' ? 'diary' : undefined;
+    const visibility = q?.visibility === 'private' ? 'private' : q?.visibility === 'shared' ? 'shared' : undefined;
+    const rawLimit = Number(q?.limit ?? 30);
+    const limit = Math.min(Math.max(1, Number.isFinite(rawLimit) ? Math.trunc(rawLimit) : 30), 200);
+    return { records: core.memoryManager.listHerRecords({ kind, visibility, limit }) };
+  });
+
+  /** 便捷别名：只看**私密日记**（不加滤镜的那本） */
+  app.get('/api/life/private-diaries', async () => ({
+    records: core.memoryManager.listHerRecords({ kind: 'diary', visibility: 'private', limit: 60 }),
+  }));
+
   /** 配角在场状态（含 off-scene；由 LifeService 巡检维护，只读） */
   app.get('/api/life/companions', async () => ({
     companions: core.memoryManager.listScenePresence(),

@@ -1539,6 +1539,12 @@ export class LifeService {
       summaries ? `【近三天】${summaries}` : '',
       `【情绪】mood_value: ${snapshot.moodValue ?? 0} / ${snapshot.moodNote || '（无氛围描述）'}`,
       `【当前人格参数】tone: ${JSON.stringify(persona.tone ?? {})} / speech_style: ${JSON.stringify(persona.speechStyle ?? {})} / emotional_range: ${JSON.stringify(persona.emotionalRange ?? {})}`,
+      // ★ 2026-10-25（change: `finish-her-records`）：**反思也要能翻旧账**。
+      //   私密日记进反思 context，否则复盘只剩当天事件，等于每天从零开始认自己。
+      (() => {
+        const note = this.buildPrivateDiaryBlock(3);
+        return note ? `【你最近写下的】\n${note}` : '';
+      })(),
       `【任务】以昔涟的视角回顾这一天——我是什么样的？哪些处理方式让我舒服/不舒服？有没有"下次不这样了"的念头？`,
     ].filter(Boolean).join('\n');
 
