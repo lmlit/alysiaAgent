@@ -42,6 +42,8 @@ const argv = new Set(process.argv.slice(2));
 const DRY = argv.has('--dry-run');
 const ALLOW_DIRTY = argv.has('--allow-dirty');
 const SKIP_TESTS = argv.has('--skip-tests');
+/** 跳过构建，直接部署本地现成镜像（见 Step 2/3 的「离线构建」说明） */
+const SKIP_BUILD = argv.has('--skip-build');
 const MERGE_CONFIG = argv.has('--merge-config');
 
 const log = (m) => console.log(`\n▸ ${m}`);
@@ -169,25 +171,38 @@ if (!serverCfg) {
 if (DRY) { log('DRY-RUN 结束：前置检查通过，未改动服务器'); process.exit(0); }
 
 // ── Step 2/3 构建 ────────────────────────────────────────────────────────
-log('Step 2 构建前端产物（镜像只 COPY console/out，不在镜像里构建）');
-runPnpm(['build:console']);
-const outIdx = join(ROOT, 'packages', 'console', 'out', 'index.html');
-if (!existsSync(outIdx)) die('packages/console/out 无产物');
-say(`✓ out/ 就绪（mtime ${new Date(statSync(outIdx).mtimeMs).toISOString()}）`);
+//
+// ★ 2026-10-25 实测的**离线构建**姿势（`--skip-build` 就是为它准备的）：
+//   本机 Docker Desktop 的 BuildKit **无法拉取基础镜像元数据**（`auth.docker.io` 被拒），
+//   而 `node:22-alpine` 其实早就在本地。稳妥做法：
+//     1. `docker tag <本地 base 镜像 ID> local/node:22-alpine`
+//     2. 临时把 Dockerfile 的两处 `FROM node:22-alpine` 指向 `local/node:22-alpine`
+//     3. `docker compose build`（命中缓存，无需联网）→ 之后**还原 Dockerfile**
+//     4. `node scripts/deploy.mjs --skip-build`
+//   ⇒ 这条路径不碰 registry，构建确定性更高。
+if (SKIP_BUILD) {
+  log('Step 2/3 跳过构建（--skip-build：用本地现成镜像）');
+  const id = run('docker', ['images', IMAGE, '--format', '{{.ID}}'], { allowFail: true });
+  if (!id) die(`本地没有 ${IMAGE} —— 不能 --skip-build`);
+  say(`✓ 复用 ${IMAGE} → ${id.split('\n')[0]}`);
+} else {
+  log('Step 2 构建前端产物（镜像只 COPY console/out，不在镜像里构建）');
+  runPnpm(['build:console']);
+  const outIdx = join(ROOT, 'packages', 'console', 'out', 'index.html');
+  if (!existsSync(outIdx)) die('packages/console/out 无产物');
+  say(`✓ out/ 就绪（mtime ${new Date(statSync(outIdx).mtimeMs).toISOString()}）`);
 
-log('Step 3 构建镜像');
-// ★ 2026-10-25 实测：`Dockerfile` 里的 `pnpm install` 层**一旦失效就必须联网**
-//   （改根 package.json / lockfile 都会失效它）。容器内直连 `registry.npmmirror.com`
-//   在本机会 `ECONNRESET`，所以支持传构建期代理：
-//     ALYSIA_BUILD_PROXY=http://host.docker.internal:7898
-//   ⚠️ 容器打的是 `host.docker.internal`，而 Clash 只监听回环 ⇒ 需要一个
-//   `0.0.0.0:7898 → 127.0.0.1:7897` 的转发（见 docs/Docker-Deployment.md 的说明）。
-const proxyArgs = process.env.ALYSIA_BUILD_PROXY
-  ? ['--build-arg', `HTTP_PROXY=${process.env.ALYSIA_BUILD_PROXY}`,
-     '--build-arg', `HTTPS_PROXY=${process.env.ALYSIA_BUILD_PROXY}`]
-  : [];
-run('docker', ['compose', 'build', ...proxyArgs], { cwd: SERVER_DIR });
-say(`✓ ${IMAGE} → ${run('docker', ['images', IMAGE, '--format', '{{.ID}}'], { allowFail: true }) || '(未找到)'}`);
+  log('Step 3 构建镜像');
+  // ★ `pnpm install` 层一旦失效就必须联网；容器内直连 npmmirror 在本机会 ECONNRESET，
+  //   所以支持传构建期代理：ALYSIA_BUILD_PROXY=http://host.docker.internal:7898
+  //   ⚠️ Clash 只监听回环 ⇒ 需要 `0.0.0.0:7898 → 127.0.0.1:7897` 的转发。
+  const proxyArgs = process.env.ALYSIA_BUILD_PROXY
+    ? ['--build-arg', `HTTP_PROXY=${process.env.ALYSIA_BUILD_PROXY}`,
+       '--build-arg', `HTTPS_PROXY=${process.env.ALYSIA_BUILD_PROXY}`]
+    : [];
+  run('docker', ['compose', 'build', ...proxyArgs], { cwd: SERVER_DIR });
+  say(`✓ ${IMAGE} → ${run('docker', ['images', IMAGE, '--format', '{{.ID}}'], { allowFail: true }) || '(未找到)'}`);
+}
 
 // ── Step 4 打包 + 上传 ───────────────────────────────────────────────────
 log('Step 4 打包 + 上传');
