@@ -37,10 +37,16 @@ AI Agent 桌面应用：聊天模式 + 编程模式，搭载"昔涟"人格和记
 
 ```bash
 pnpm smoke            # 本地起真服务 + 调真 API（deploy 会自动先跑这个）
+pnpm chat             # ★ 本地**真的跟她聊几轮**，把她的原话打出来（改说话相关时必跑）
+pnpm chat -- --fresh --turns 4   # 清库重来 / 改轮数
 ALYSIA_DEPLOY_HOST=root@<host> pnpm deploy:dry   # 空跑：前置检查 + smoke + config 漂移
 ALYSIA_DEPLOY_HOST=root@<host> pnpm deploy       # 真部署（内部**强制**先跑 smoke，不过不许推）
 ```
 
+- `scripts/chat-local.mjs`（用户要求：「本地验证直接对话一波，本地的数据调用真机不会被污染」）：
+  起本地真服务（端口 6188、数据目录 `.tmp/chat-local/`、**删 `platforms` 不连 QQ**），
+  用 `POST /api/chat/prompt` **同一 sessionId 多轮对话**，打出她的原话 + 指标
+  （字数 / 语气词个数 / 有无问句 / 是否语气词起头）。失败时**自动 dump 服务端日志**。
 - `scripts/smoke-local.mjs` 做什么：
   1. **先重建 dist** —— 否则测的是旧产物，比没闸更危险（给人假的安全感）
   2. 生成**临时配置**：**删掉整个 `platforms`**（⚠️ 同一 QQ AppID 两处在线会**互踢**，SOP 红线）、

@@ -11,6 +11,7 @@
     "dev:console": "pnpm --filter @alysia/console dev",
     "build:console": "pnpm --filter @alysia/console build",
     "smoke": "node scripts/smoke-local.mjs",
+    "chat": "node scripts/chat-local.mjs",
     "deploy:dry": "node scripts/deploy.mjs --dry-run",
     "deploy": "node scripts/deploy.mjs"
   },
