@@ -29,13 +29,26 @@ AI Agent 桌面应用：聊天模式 + 编程模式，搭载"昔涟"人格和记
 2026-10-24～25 有 8 个 change 只提交不部署，结果「验收」变成了让用户去重启一个根本没更新的服务 ——
 而 SOP（`docs/Docker-Deployment.md`）的顺序本来就是 **Step 3 部署 → Step 5 提交**，是我做反了。
 
-```bash
-# 1) 先空跑（前置检查：Docker 引擎 / SSH / 工作区干净 / config 漂移）
-ALYSIA_DEPLOY_HOST=root@<host> pnpm deploy:dry
+### ★★ 顺序是「本地真机 → 生产」，**不许反过来**（2026-10-25 追加，用户明确要求）
 
-# 2) 真部署（自动：全量测试 → 构建前端 → 构建镜像 → 打回滚标签 → 切换 → 健康检查，不健康自动回滚）
-ALYSIA_DEPLOY_HOST=root@<host> pnpm deploy
+用户原话：「**直接推生产，本地改完本地真机测一下调用 api 测，测完没问题再推服务器好不好**」
+
+我这一整天把生产当测试环境（同一天直推 8 次）。现在这条**做成了机器闸**，不靠记性：
+
+```bash
+pnpm smoke            # 本地起真服务 + 调真 API（deploy 会自动先跑这个）
+ALYSIA_DEPLOY_HOST=root@<host> pnpm deploy:dry   # 空跑：前置检查 + smoke + config 漂移
+ALYSIA_DEPLOY_HOST=root@<host> pnpm deploy       # 真部署（内部**强制**先跑 smoke，不过不许推）
 ```
+
+- `scripts/smoke-local.mjs` 做什么：
+  1. **先重建 dist** —— 否则测的是旧产物，比没闸更危险（给人假的安全感）
+  2. 生成**临时配置**：**删掉整个 `platforms`**（⚠️ 同一 QQ AppID 两处在线会**互踢**，SOP 红线）、
+     端口 6187、数据目录隔离到 `.tmp/smoke/`（不碰本地开发库）
+  3. 起真服务 → 等 `/api/health` → **调 `POST /api/memory/read`**
+  4. 断言组装结果**含**必须的块、**不含**被产品否决的措辞
+  5. 杀进程；任一步失败 ⇒ 退出码非 0 ⇒ 部署中止
+- 唯一例外 `--skip-smoke`：会**大声警告**（只该用于"生产已烧起来、必须紧急回滚"）
 
 - **host 只在环境变量里**，绝不写进仓库（本仓 PUBLIC，已发生两次泄露事故）
 - 脚本 `scripts/deploy.mjs` 拦的三个坑，都是**不报错**的那种：

@@ -97,6 +97,21 @@ async function waitHealth(timeoutMs = 90_000) {
   const env = loadEnv();
   if (!existsSync(join(SERVER_DIR, 'dist', 'bootstrap.js'))) die('缺 packages/server/dist —— 先 `pnpm -r build`');
 
+  // ★★ 必须先重建：smoke 起的是 `dist/bootstrap.js`，测的是**编译产物**。
+  //    改了 src 不重建 ⇒ 这个闸会**验旧代码**（比没有闸更危险：它给你一个假的安全感）。
+  if (!process.argv.includes('--no-build')) {
+    log('重建（core + server 的 dist 必须是最新的）');
+    const b = spawn(process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm', ['-r', '--filter', '@alysia/core', '--filter', '@alysia/server', 'build'], {
+      cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'], shell: process.platform === 'win32',
+    });
+    let bout = '';
+    b.stdout.on('data', (d) => { bout += d.toString(); });
+    b.stderr.on('data', (d) => { bout += d.toString(); });
+    const code = await new Promise((res) => b.on('close', res));
+    if (code !== 0) { console.error(bout.slice(-1500)); die('重建失败 —— 不许推生产'); }
+    say('✓ dist 已重建（测的是当前源码，不是旧产物）');
+  }
+
   const token = env.ALYSIA_WEBUI_TOKEN || '';
   if (!token) die('.env 里没有 ALYSIA_WEBUI_TOKEN');
 
@@ -151,10 +166,48 @@ async function waitHealth(timeoutMs = 90_000) {
   }
 
   if (WITH_LIFE) {
-    log('验生活推送的第二段契约（静态）');
+    log('调真模型：生活推送第二段的 JSON 契约（worth/why/say）');
     const lifeDist = readFileSync(join(SERVER_DIR, 'dist', 'prompts', 'life.js'), 'utf8');
     if (!lifeDist.includes('"worth"')) die('LIFE_RETELL_PROMPT 丢了 worth 字段');
-    say('✓ LIFE_RETELL_PROMPT 含 worth/why/say 契约');
+    say('✓ prompt 里含 worth/why/say 契约');
+
+    const { pathToFileURL } = await import('node:url');
+    const { LIFE_RETELL_PROMPT } = await import(
+      pathToFileURL(join(SERVER_DIR, 'dist', 'prompts', 'life.js')).href
+    );
+    const base = (env.OPENAI_BASE_URL || '').replace(/\/v1\/?$/, '');
+    const key = env.OPENAI_API_KEY || '';
+    if (!base || !key) die('.env 缺 OPENAI_BASE_URL / OPENAI_API_KEY（--life 要真模型）');
+    const userMsg = [
+      '【此刻时间】14:00',
+      '【你刚做的事】新米倒进缸里，按了按米面，指腹上沾了几粒。',
+      '【你和轻月】亲密度 82/100（亲近），他今天跟你说过话',
+      '判断这件事值不值得占用轻月一次注意力；值得就用一句话讲给他，不值得就 worth=false。只输出 JSON。',
+    ].join('\n\n');
+    const resp = await fetch(`${base}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+      body: JSON.stringify({
+        model: env.CHAT_MODEL || 'deepseek-v4-flash',
+        messages: [{ role: 'system', content: LIFE_RETELL_PROMPT }, { role: 'user', content: userMsg }],
+        temperature: 0.85, max_tokens: 2048, response_format: { type: 'json_object' },
+      }),
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (!resp.ok) die(`转述模型调用 HTTP ${resp.status}`);
+    const jr = await resp.json();
+    const txt = (jr.choices?.[0]?.message?.content ?? '').trim();
+    let parsed = null;
+    try { parsed = JSON.parse(txt); } catch { /* 下面统一报 */ }
+    if (!parsed) die(`转述返回不是合法 JSON：${txt.slice(0, 120) || '(空)'}`);
+    if (typeof parsed.worth !== 'boolean') die(`转述 JSON 缺 worth 布尔：${txt.slice(0, 120)}`);
+    say(`✓ worth=${parsed.worth} · why=${String(parsed.why ?? '').slice(0, 30)}`);
+    if (parsed.worth) {
+      const sayText = String(parsed.say ?? '').trim();
+      if (!sayText) die('worth=true 但 say 为空');
+      if (sayText.length > 70) die(`say 超长（${sayText.length} 字 > 70）：${sayText.slice(0, 40)}`);
+      say(`✓ say（${sayText.length} 字）「${sayText}」`);
+    }
   }
 
   cleanup();
