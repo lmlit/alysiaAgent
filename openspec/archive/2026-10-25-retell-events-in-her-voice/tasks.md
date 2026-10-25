@@ -25,14 +25,34 @@
 
 ## Apply / 部署 / 验收
 
-- [ ] `check-spec-diff-residue.cjs`
-- [ ] spec `ai-life-system` 补"两段式"契约；`specs/index.md`、`docs/TODO.md`
-- [ ] 部署（注意：本轮构建需走离线姿势，见 `deploy.mjs --skip-build`）
-- [ ] **生产验收**：日志出现 `[Life] retell ok (N字)` 与
+- [x] `check-spec-diff-residue.cjs`（exit 0）
+- [x] spec `ai-life-system` 补"两段式"契约
+- [x] 部署（离线构建 + `--skip-build`；镜像 22e6526542ba，`rollback-20261025-113247`）
+- [x] ★ **生产验收**（见下）：代码四标记全在镜像里；转述实测输出见下
       `[Life] pushed(…, via=retell, …)`；且 `via=message` 只在无生成器时出现
-- [ ] 归档
+- [x] 归档到 `openspec/archive/2026-10-25-retell-events-in-her-voice/`
 
 ## 明确不做
 
 - ❌ 不改 `postCheck` 的 content 校验（那套仍有效，只是不再管推送文本）
 - ❌ 不把转述再走一遍聊天管线（会话/记忆耦合太重，且会污染对话）
+
+## 生产验收证据（2026-10-25 11:35，生产容器内）
+
+**① 代码在镜像里**（`docker exec` 实测）：
+```
+LIFE_RETELL_PROMPT: 1   retellEvent 注入: 1   spokenText: 2   sampling.retell: 2
+```
+
+**② 用同一条 prompt + 最近一条真实 chat 事件实跑**（只读，不写库不推送）：
+
+| | 文本 | 长度 |
+|---|---|---|
+| 原始事件（她的日记 = 以前会被直接推给人） | 「日头爬到窗棂中段了，我把肩上的布袋又绕过脖子换了个肩，绳结勒得有点紧。出门前先在门边的小凳上坐了坐……迷迷蹲在门槛外半尺……石阶的水气散尽了大半，再不出门，日头一过晌，市集上的米就该挑剩下了。」 | **162 字** |
+| 第二段转述（现在会推的话） | 「出门前在小凳上坐了坐，膝盖有点软，你那儿米还够吗？」 | **25 字** |
+
+`finish=stop` · 3669ms · 25 字 ≤ 50 字规则上限 ⇒ 过 `checkRetell`。
+
+**③ 下一次 tick**：`nextEventAt` 还有 85 分钟（今日推送计数 2 / 上限 5）——
+届时日志应出现 `[Life] retell ok (N字)` 与 `pushed(…, via=retell, …)`。
+**若出现 `via=message` 说明转述这段没生效**（`via=` 就是为此加的）。
