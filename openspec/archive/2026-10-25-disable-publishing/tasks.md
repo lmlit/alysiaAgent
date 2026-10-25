@@ -1,4 +1,4 @@
-﻿# Tasks: disable-publishing
+# Tasks: disable-publishing
 
 > 关的是**投递机制**（工具+项目+runner），**不是**日记内容。见 proposal.md
 
@@ -14,9 +14,9 @@
 - [x] 全量 **170 文件 / 1977 用例**
 
 ## 部署
-- [ ] `pnpm deploy`（smoke 闸）
-- [ ] 部署后核对生产启动日志：出现「已关闭」+ 无「已注册页面查询工具」
-- [ ] 归档
+- [x] `pnpm deploy`（smoke 闸；`rollback-20261025-182610`）
+- [x] 部署后核对生产：日志「页面/博客发布能力：**已关闭**」；「页面查询工具」那行**消失**（此前每次启动都有）
+- [x] 归档到 `openspec/archive/2026-10-25-disable-publishing/`
 
 ## 明确不做
 - ❌ 不删 `config.projects`（那是宿主侧真实配置）
