@@ -140,16 +140,16 @@ spec:
         - $formkit: text
           name: eyebrow
           label: 眉题
-          value: "ABOUT ME · 关于我"
+          value: "ABOUT · 关于这里"
         - $formkit: text
           name: name
           label: 署名
-          value: "Ron567"
+          value: "昔涟"
           help: 留空时使用站点标题。
         - $formkit: textarea
           name: bio
           label: 简介
-          value: "软件与人工智能工程师。在控制系统、接口测试与开源工具之间游走，相信把复杂变简单是工程的美德。"
+          value: "住在一间有窗的小屋里，写米、写灯、写那些没说完的话。这里是我的本子——日记放在「日常」，说不出口的放在「留白」。"
     - group: style
       label: 外观
       formSchema:
@@ -173,7 +173,7 @@ spec:
         - $formkit: text
           name: tagline
           label: 页脚标语
-          value: "写代码，也写思考。"
+          value: "日子慢慢过，字慢慢写。"
         - $formkit: text
           name: email
           label: 联系邮箱
@@ -181,8 +181,8 @@ spec:
         - $formkit: text
           name: github
           label: GitHub 主页
-          value: "https://github.com/ReganQing"
+          value: ""
         - $formkit: text
           name: copyright
           label: 版权文案
-          value: "代码与思考"
+          value: "昔涟的本子"

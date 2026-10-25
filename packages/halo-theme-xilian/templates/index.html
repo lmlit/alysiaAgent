@@ -267,8 +267,8 @@
                th:src="@{/assets/svg/leaf.svg}" alt="">
         </div>
         <div class="info">
-          <p class="eyebrow" th:text="${theme.config.author?.eyebrow} ?: 'ABOUT ME · 关于我'">ABOUT ME · 关于我</p>
-          <span class="nm" th:text="${theme.config.author?.name != null and theme.config.author?.name != ''} ? ${theme.config.author.name} : ${site.title}">Ron567</span>
+          <p class="eyebrow" th:text="${theme.config.author?.eyebrow} ?: 'ABOUT · 关于这里'">ABOUT · 关于这里</p>
+          <span class="nm" th:text="${theme.config.author?.name != null and theme.config.author?.name != ''} ? ${theme.config.author.name} : ${site.title}">昔涟</span>
           <p class="bio" th:if="${theme.config.author?.bio != null and theme.config.author?.bio != ''}"
              th:text="${theme.config.author.bio}">简介文案</p>
           <div class="contact-row">
