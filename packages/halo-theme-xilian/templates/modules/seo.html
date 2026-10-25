@@ -1,0 +1,42 @@
+<!-- description / robots / favicon 由 Halo 注入；此处只提供主题负责的标签。 -->
+<th:block xmlns:th="https://www.thymeleaf.org" th:fragment="head(title, path, description, image, type)"
+          th:with="origin=${#strings.endsWith(site.url, '/') ? #strings.substring(site.url, 0, #strings.length(site.url) - 1) : site.url},
+                   canonical=${path == null ? null : (#strings.startsWith(path, 'http://') or #strings.startsWith(path, 'https://') ? path : origin + (#strings.startsWith(path, '/') ? path : '/' + path))},
+                   cover=${#strings.isEmpty(image) ? null : (#strings.startsWith(image, '//') ? 'https:' + image : (#strings.startsWith(image, 'http://') or #strings.startsWith(image, 'https://') ? image : origin + (#strings.startsWith(image, '/') ? image : '/' + image)))}">
+  <title th:text="${title}">页面标题</title>
+  <th:block th:if="${theme.config.seo?.enable_metadata == null or theme.config.seo.enable_metadata}">
+    <link th:if="${canonical != null}" rel="canonical" th:href="${canonical}">
+    <meta property="og:type" th:content="${type}">
+    <meta property="og:site_name" th:content="${site.title}">
+    <meta property="og:title" th:content="${title}">
+    <meta th:if="${canonical != null}" property="og:url" th:content="${canonical}">
+    <meta th:if="${!#strings.isEmpty(description)}" property="og:description" th:content="${description}">
+    <meta th:if="${cover != null}" property="og:image" th:content="${cover}">
+    <meta name="twitter:card" th:content="${cover == null ? 'summary' : 'summary_large_image'}">
+    <meta name="twitter:title" th:content="${title}">
+    <meta th:if="${!#strings.isEmpty(description)}" name="twitter:description" th:content="${description}">
+    <meta th:if="${cover != null}" name="twitter:image" th:content="${cover}">
+    <meta th:if="${type == 'article' and post.spec.publishTime != null}" property="article:published_time" th:content="${post.spec.publishTime}">
+    <meta th:if="${type == 'article' and post.status.lastModifyTime != null}" property="article:modified_time" th:content="${post.status.lastModifyTime}">
+  </th:block>
+  <th:block th:if="${type == 'article' and (theme.config.seo?.enable_structured_data == null or theme.config.seo.enable_structured_data)}">
+    <script type="application/ld+json" th:inline="javascript">
+      {
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        "headline": [[${post.spec.title}]],
+        "url": [[${canonical}]],
+        "mainEntityOfPage": [[${canonical}]],
+        "description": [[${description}]],
+        "image": [[${cover}]],
+        "datePublished": [[${post.spec.publishTime?.toString()}]],
+        "dateModified": [[${post.status.lastModifyTime?.toString()}]],
+        "author": {
+          "@type": "Person",
+          "name": [[${post.owner.displayName}]],
+          "url": [[${#strings.startsWith(post.owner.permalink, 'http') ? post.owner.permalink : origin + post.owner.permalink}]]
+        }
+      }
+    </script>
+  </th:block>
+</th:block>

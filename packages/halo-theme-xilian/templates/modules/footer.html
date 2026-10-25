@@ -1,0 +1,36 @@
+<footer class="footer" xmlns:th="https://www.thymeleaf.org" th:fragment="footer">
+  <div class="watermark" th:text="${site.title}">站点名称</div>
+  <div class="content-inner">
+    <div class="top-line"></div>
+    <div class="footer-head">
+      <span class="name" th:text="${site.title}">站点名称</span>
+      <span class="tag" th:if="${theme.config.footer.tagline != null and theme.config.footer.tagline != ''}"
+            th:text="${theme.config.footer.tagline}">写代码，也写思考。</span>
+    </div>
+    <div class="contact-row">
+      <a class="contact-pill" th:if="${!#strings.isEmpty(theme.config.basic?.personal_home)}"
+         th:href="${theme.config.basic.personal_home}">个人主页</a>
+      <a class="contact-pill"
+         th:if="${theme.config.footer.email != null and theme.config.footer.email != ''}"
+         th:href="'mailto:' + ${theme.config.footer.email}"
+         th:text="${theme.config.footer.email}">邮箱</a>
+      <a class="contact-pill" target="_blank" rel="noopener"
+         th:if="${theme.config.footer.github != null and theme.config.footer.github != ''}"
+         th:href="${theme.config.footer.github}">GitHub</a>
+      <a class="contact-pill" th:href="@{/archives}">文章归档</a>
+      <a class="contact-pill"
+         th:if="${theme.config.basic?.show_console == null or theme.config.basic?.show_console}"
+         th:href="@{${theme.config.basic?.console_path != null and theme.config.basic?.console_path != '' ? theme.config.basic.console_path : '/console'}}">控制台</a>
+    </div>
+    <div class="bottom-bar">
+      <span>
+        © <th:block th:text="${#dates.format(#dates.createNow(), 'yyyy')}"></th:block>
+        <th:block th:text="${site.title}"></th:block>
+        <span th:if="${theme.config.footer.copyright != null and theme.config.footer.copyright != ''}">
+          · <th:block th:text="${theme.config.footer.copyright}"></th:block>
+        </span>
+      </span>
+      <span>Powered by <a href="https://www.halo.run" target="_blank" rel="noopener">Halo</a> · 主题「绿野」</span>
+    </div>
+  </div>
+</footer>

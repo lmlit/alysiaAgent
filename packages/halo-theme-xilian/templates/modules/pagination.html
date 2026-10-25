@@ -1,0 +1,9 @@
+<!-- 分页组件：依赖变量 posts（UrlContextListResult，含 prevUrl/nextUrl） -->
+<div class="pagination" xmlns:th="https://www.thymeleaf.org" th:fragment="pagination"
+     th:if="${posts.totalPages > 1}">
+  <a class="page-btn" th:classappend="${posts.hasPrevious()} ? '' : 'disabled'"
+     th:href="${posts.hasPrevious()} ? @{${posts.prevUrl}} : 'javascript:void(0)'">← 上一页</a>
+  <span class="page-info" th:text="${posts.page} +' / '+ ${posts.totalPages}">1 / 1</span>
+  <a class="page-btn" th:classappend="${posts.hasNext()} ? '' : 'disabled'"
+     th:href="${posts.hasNext()} ? @{${posts.nextUrl}} : 'javascript:void(0)'">下一页 →</a>
+</div>

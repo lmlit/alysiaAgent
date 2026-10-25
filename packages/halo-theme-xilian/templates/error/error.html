@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="https://www.thymeleaf.org"
+      th:replace="~{layout :: html(head=~{::head}, content=~{::content})}">
+<th:block th:fragment="head">
+  <title th:text="|${error.title ?: '页面走丢了'} - ${site.title}|">页面走丢了</title>
+  <meta name="robots" content="noindex">
+</th:block>
+<th:block th:fragment="content">
+  <div class="error-wrap">
+    <span class="code" th:text="${error.status ?: 404}">404</span>
+    <h1 class="msg" th:text="${error.title ?: '页面走丢了'}">页面走丢了</h1>
+    <p class="hint" th:text="${error.detail ?: '你要找的页面不存在，或者已被移走。回到首页，继续在这片绿野里逛逛吧。'}">
+      你要找的页面不存在，或者已被移走。
+    </p>
+    <div class="cta-row">
+      <a class="cta-primary" th:href="@{/}">回到首页</a>
+      <a class="secondary-link" th:href="@{/archives}">浏览文章归档 ↓</a>
+    </div>
+  </div>
+</th:block>
+</html>

@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="https://www.thymeleaf.org"
+      th:replace="~{layout :: html(head=~{::head}, content=~{::content})}">
+<th:block th:fragment="head">
+  <th:block th:replace="~{modules/seo :: head(title=|${singlePage.spec.title} - ${site.title}|, path=${singlePage.status.permalink}, description=${singlePage.status.excerpt}, image=${singlePage.spec.cover ?: site.logo}, type='website')}"></th:block>
+</th:block>
+<th:block th:fragment="content">
+  <div class="container">
+    <header class="post-hero">
+      <p class="eyebrow">PAGE · 页面</p>
+      <h1 class="headline" th:text="${singlePage.spec.title}">页面标题</h1>
+    </header>
+    <article class="post-panel">
+      <div class="post-content" th:utext="${singlePage.content.content}">页面内容</div>
+    </article>
+    <section class="comment-panel" th:if="${haloCommentEnabled}">
+      <h2 class="panel-title">评论</h2>
+      <halo:comment group="content.halo.run" kind="SinglePage" th:attr="name=${singlePage.metadata.name}" />
+    </section>
+  </div>
+</th:block>
+</html>

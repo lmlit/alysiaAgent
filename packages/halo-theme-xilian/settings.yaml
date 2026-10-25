@@ -1,0 +1,188 @@
+apiVersion: v1alpha1
+kind: Setting
+metadata:
+  name: theme-xilian-setting
+spec:
+  forms:
+    - group: basic
+      label: 基础
+      formSchema:
+        - $formkit: text
+          name: brand_sub
+          label: 品牌副标题
+          value: "月下 · 日常"
+          help: 导航栏 Logo 名称下方的小字，建议英文短语。
+        - $formkit: attachment
+          name: avatar
+          label: 站长头像
+          value: ""
+          help: 用于「关于我」页面、作者页与文章作者信息。留空时使用山峰图标徽章。
+        - $formkit: text
+          name: search_url
+          label: 搜索页链接
+          value: ""
+          help: 填写后导航栏显示搜索图标按钮（例如安装搜索插件后填 /search）。留空则不显示。
+        - $formkit: text
+          name: personal_home
+          label: 个人主页链接
+          value: ""
+          help: 填写完整地址后，在导航和页脚显示个人主页入口。
+        - $formkit: checkbox
+          name: show_console
+          label: 显示控制台入口
+          value: true
+          help: 在导航栏和页脚显示「控制台」按钮，指向站点后台。关闭后不再对访客暴露后台地址。
+        - $formkit: text
+          name: console_path
+          label: 控制台路径
+          value: "/console"
+          help: 控制台入口指向的地址，默认 /console。若修改过站点后台路径（halo.console.* 相关配置），请同步修改此处。
+    - group: seo
+      label: SEO
+      formSchema:
+        - $formkit: checkbox
+          name: enable_metadata
+          label: 输出规范链接和社交分享标签
+          value: true
+          help: 已由插件生成 canonical、Open Graph、Twitter Card 时关闭，避免重复。
+        - $formkit: checkbox
+          name: enable_structured_data
+          label: 输出文章结构化数据
+          value: true
+          help: 输出 BlogPosting JSON-LD；已由插件提供时关闭。站点描述和文章摘要仍由 Halo 管理。
+    - group: hero
+      label: 首页 Hero
+      formSchema:
+        - $formkit: checkbox
+          name: enable
+          label: 显示 Hero 区域
+          value: true
+        - $formkit: text
+          name: eyebrow
+          label: 眉题
+          value: "LIFE · WORDS · 生活与文字"
+        - $formkit: text
+          name: title
+          label: 主标题
+          value: "把日子过成能写下的一句话"
+        - $formkit: textarea
+          name: subtitle
+          label: 副标题
+          value: "清晨的米、夜里的灯，还有那些没说完的话。"
+        - $formkit: attachment
+          name: image
+          label: 横幅图
+          value: ""
+          help: Hero 区域底部的意象图，建议宽幅深色图片，留空则不显示。
+        - $formkit: text
+          name: cta_text
+          label: 主按钮文案
+          value: "读读我写的"
+        - $formkit: text
+          name: cta_anchor
+          label: 主按钮目标
+          value: "#posts"
+          help: 可填页内锚点（如 #posts）或完整链接。
+        - $formkit: checkbox
+          name: show_stats
+          label: 显示数据徽章行
+          value: false
+          help: 在 CTA 按钮下方展示 文章 / 分类 / 标签 数量徽章，数字使用琥珀色点缀。
+        - $formkit: text
+          name: stat_visits
+          label: 访问量徽章文案
+          value: ""
+          help: 显示在徽章行末尾（如 12.5k）。站点无统计接入时建议留空隐藏。
+    - group: featured
+      label: 精选专题
+      formSchema:
+        - $formkit: checkbox
+          name: enable
+          label: 显示精选专题
+          value: false
+        - $formkit: text
+          name: eyebrow
+          label: 眉题
+          value: "FEATURED · 随手记"
+        - $formkit: text
+          name: title
+          label: 标题
+          value: "值得停下来读的几篇"
+        - $formkit: textarea
+          name: desc
+          label: 描述
+          value: "自动挑选最近三篇带封面的文章，作为首页的精选入口。"
+          help: 精选卡片自动取最近 3 篇设置了封面的文章。
+    - group: posts
+      label: 日记流
+      formSchema:
+        - $formkit: select
+          name: layout
+          label: 列表布局
+          value: "diary"
+          options:
+            - {label: "日记流（日期在左，推荐）", value: "diary"}
+            - {label: "双列网格卡", value: "grid"}
+            - {label: "经典纵向列表", value: "list"}
+          help: 日记流隐藏标题与封面，只留日期与开头几行，适合按天记录的写作。
+        - $formkit: checkbox
+          name: show_visit
+          label: 显示文章浏览量
+          value: true
+          help: 在文章卡片（首页、归档、分类、标签、作者页）显示浏览次数，统计由 Halo 内置计数器提供。关闭后不显示。
+    - group: author
+      label: 首页作者卡片
+      formSchema:
+        - $formkit: checkbox
+          name: enable
+          label: 显示作者卡片
+          value: true
+        - $formkit: text
+          name: eyebrow
+          label: 眉题
+          value: "ABOUT ME · 关于我"
+        - $formkit: text
+          name: name
+          label: 署名
+          value: "Ron567"
+          help: 留空时使用站点标题。
+        - $formkit: textarea
+          name: bio
+          label: 简介
+          value: "软件与人工智能工程师。在控制系统、接口测试与开源工具之间游走，相信把复杂变简单是工程的美德。"
+    - group: style
+      label: 外观
+      formSchema:
+        - $formkit: color
+          name: accent_color
+          label: 主题强调色
+          value: "#4F7A74"
+        - $formkit: checkbox
+          name: weather
+          label: 启用天气背景特效
+          value: true
+          help: 导航栏出现晴 / 雨 / 雪切换按钮，Canvas 粒子背景，用户选择保存在浏览器本地。
+        - $formkit: checkbox
+          name: webfont
+          label: 加载在线衬线字体
+          value: false
+          help: 加载 Google Fonts 的 Noto Serif SC / Noto Sans SC / Source Serif 4。国内访问缓慢时可关闭，自动回退系统字体。
+    - group: footer
+      label: 页脚
+      formSchema:
+        - $formkit: text
+          name: tagline
+          label: 页脚标语
+          value: "写代码，也写思考。"
+        - $formkit: text
+          name: email
+          label: 联系邮箱
+          value: ""
+        - $formkit: text
+          name: github
+          label: GitHub 主页
+          value: "https://github.com/ReganQing"
+        - $formkit: text
+          name: copyright
+          label: 版权文案
+          value: "代码与思考"

@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="https://www.thymeleaf.org"
+      th:replace="~{layout :: html(head=~{::head}, content=~{::content})}">
+<th:block th:fragment="head">
+  <th:block th:replace="~{modules/seo :: head(title=|${post.spec.title} - ${site.title}|, path=${post.status.permalink}, description=${post.status.excerpt}, image=${post.spec.cover ?: site.logo}, type='article')}"></th:block>
+</th:block>
+<th:block th:fragment="content">
+  <div class="container">
+
+    <!-- ===================== 文章头 ===================== -->
+    <header class="post-hero">
+      <p class="eyebrow" th:if="${!#lists.isEmpty(post.categories)}"
+         th:text="${post.categories[0].spec.displayName}">分类</p>
+      <h1 class="headline" th:text="${post.spec.title}">文章标题</h1>
+      <div class="post-meta-bar">
+        <span th:if="${post.spec.publishTime != null}"
+              th:text="${#dates.format(new java.util.Date(post.spec.publishTime.toEpochMilli()), 'yyyy-MM-dd')}">2026-01-01</span>
+        <span class="sep">·</span>
+        <span th:text="${post.owner.displayName}">作者</span>
+        <span class="sep" th:if="${post.stats != null}">·</span>
+        <span th:if="${post.stats != null}" th:text="|${post.stats.visit} 次阅读|">0 次阅读</span>
+        <span class="sep">·</span>
+        <span class="reading-time" hidden>
+          <svg class="reading-time-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          <span class="reading-time-text"></span>
+        </span>
+      </div>
+      <img class="post-cover"
+           th:if="${post.spec.cover != null and post.spec.cover != ''}"
+           th:src="${post.spec.cover}" th:alt="${post.spec.title}" decoding="async" fetchpriority="high">
+    </header>
+
+    <!-- ===================== 正文 ===================== -->
+    <article class="post-panel">
+      <div class="post-content" th:utext="${post.content.content}">正文内容</div>
+
+      <div class="post-tags-row" th:if="${!#lists.isEmpty(post.tags)}">
+        <span class="label">标签</span>
+        <a class="tag-pill" th:each="tag : ${post.tags}"
+           th:href="@{${tag.status.permalink}}"
+           th:text="'# ' + ${tag.spec.displayName}"># 标签</a>
+      </div>
+
+      <!-- 作者信息条 -->
+      <div class="author-bar">
+        <img class="avatar" th:if="${theme.config.basic.avatar != null and theme.config.basic.avatar != ''}"
+             th:src="${theme.config.basic.avatar}" alt="头像">
+        <span class="avatar-badge" th:unless="${theme.config.basic.avatar != null and theme.config.basic.avatar != ''}">
+          <img th:src="@{/assets/svg/mountain.svg}" alt="">
+        </span>
+        <div class="info">
+          <span class="nm" th:text="${post.owner.displayName}">作者</span>
+          <span class="bio" th:if="${post.owner.bio != null and post.owner.bio != ''}"
+                th:text="${post.owner.bio}">作者简介</span>
+        </div>
+      </div>
+
+      <!-- 上下篇 -->
+      <div class="post-nav" th:with="cursor = ${postFinder.cursor(post.metadata.name)}">
+        <a class="post-nav-card" th:if="${cursor.hasPrevious()}"
+           th:href="@{${cursor.previous.status.permalink}}">
+          <span class="hint">← 上一篇</span>
+          <span class="ttl" th:text="${cursor.previous.spec.title}">上一篇文章</span>
+        </a>
+        <span th:unless="${cursor.hasPrevious()}"></span>
+        <a class="post-nav-card next" th:if="${cursor.hasNext()}"
+           th:href="@{${cursor.next.status.permalink}}">
+          <span class="hint">下一篇 →</span>
+          <span class="ttl" th:text="${cursor.next.spec.title}">下一篇文章</span>
+        </a>
+      </div>
+    </article>
+
+    <!-- ===================== 评论 ===================== -->
+    <section class="comment-panel" th:if="${haloCommentEnabled}">
+      <h2 class="panel-title">评论</h2>
+      <halo:comment group="content.halo.run" kind="Post" th:attr="name=${post.metadata.name}" />
+    </section>
+
+  </div>
+</th:block>
+</html>

@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="https://www.thymeleaf.org"
+      th:replace="~{layout :: html(head=~{::head}, content=~{::content})}">
+<th:block th:fragment="head">
+  <th:block th:replace="~{modules/seo :: head(title=|${singlePage.spec.title} - ${site.title}|, path=${singlePage.status.permalink}, description=${singlePage.status.excerpt}, image=${singlePage.spec.cover ?: site.logo}, type='website')}"></th:block>
+</th:block>
+<th:block th:fragment="content">
+  <div class="container">
+
+    <!-- 关于我版式：眉题 + 大标题 + 圆形玻璃徽章 -->
+    <header class="about-hero">
+      <p class="eyebrow">ABOUT · 关于我</p>
+      <h1 class="title" th:text="${singlePage.spec.title}">我是谁</h1>
+      <div class="portrait">
+        <img class="photo"
+             th:if="${theme.config.basic.avatar != null and theme.config.basic.avatar != ''}"
+             th:src="${theme.config.basic.avatar}" alt="头像">
+        <th:block th:unless="${theme.config.basic.avatar != null and theme.config.basic.avatar != ''}">
+          <img class="badge" th:src="@{/assets/svg/mountain.svg}" alt="">
+          <span class="cap" th:text="|${site.title} · ${theme.config.basic.brand_sub}|">Ron567 · SOFTWARE &amp; AI</span>
+        </th:block>
+      </div>
+    </header>
+
+    <article class="post-panel about-content">
+      <div class="post-content" th:utext="${singlePage.content.content}">关于内容</div>
+    </article>
+
+    <section class="comment-panel" th:if="${haloCommentEnabled}">
+      <h2 class="panel-title">评论</h2>
+      <halo:comment group="content.halo.run" kind="SinglePage" th:attr="name=${singlePage.metadata.name}" />
+    </section>
+
+  </div>
+</th:block>
+</html>

@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="https://www.thymeleaf.org"
+      th:replace="~{layout :: html(head=~{::head}, content=~{::content})}">
+<th:block th:fragment="head">
+  <th:block th:replace="~{modules/seo :: head(title=${tag.spec.displayName + (posts.page > 1 ? ' - 第 ' + posts.page + ' 页' : '') + ' - ' + site.title}, path=${tag.status.permalink + (posts.page > 1 ? '/page/' + posts.page : '')}, description=${site.seo.description}, image=${tag.spec.cover ?: site.logo}, type='website')}"></th:block>
+</th:block>
+<th:block th:fragment="content">
+  <div class="container">
+    <header class="post-hero" style="padding-bottom:10px;">
+      <p class="eyebrow">TAG · 标签</p>
+      <h1 class="headline" th:text="'# ' + ${tag.spec.displayName}"># 标签名</h1>
+    </header>
+
+    <div class="section" style="padding-top:20px;">
+      <th:block th:if="${#lists.isEmpty(posts.items)}">
+        <div class="empty-tip">该标签下暂无文章。</div>
+      </th:block>
+      <div class="post-list">
+        <th:block th:each="post : ${posts.items}">
+          <th:block th:replace="~{modules/post-item :: post-item}"></th:block>
+        </th:block>
+      </div>
+      <th:block th:replace="~{modules/pagination :: pagination}"></th:block>
+    </div>
+  </div>
+</th:block>
+</html>

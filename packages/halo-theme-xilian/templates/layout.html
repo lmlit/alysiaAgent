@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-color-scheme="dark" xmlns:th="https://www.thymeleaf.org" th:fragment="html (head, content)">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title th:if="${head == null}" th:text="${site.title}">站点标题</title>
+  <th:block th:if="${theme.config.style.webfont == null or theme.config.style.webfont}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@300;400;500&amp;family=Noto+Sans+SC:wght@300;400;500&amp;family=Source+Serif+4:ital,wght@0,400;0,500;1,400;1,500&amp;display=swap" rel="stylesheet">
+  </th:block>
+  <link rel="stylesheet" th:href="@{/assets/css/style.css}">
+  <!-- 脚本未加载或未执行时保持内容可见；main.js 初始化后再启用滚动显现。 -->
+  <style>html:not(.reveal-ready) .reveal{opacity:1;transform:none;transition:none;}</style>
+  <style th:if="${theme.config.style.accent_color != null and theme.config.style.accent_color != ''}"
+        th:inline="text">:root{--green:[[${theme.config.style.accent_color}]];}</style>
+  <th:block th:if="${head != null}">
+    <th:block th:replace="${head}"></th:block>
+  </th:block>
+</head>
+<body>
+  <!-- 装饰雾光 -->
+  <div class="fog fog-1"></div>
+  <div class="fog fog-2"></div>
+  <div class="fog fog-3"></div>
+
+  <div class="content">
+    <th:block th:replace="~{modules/header :: header}"></th:block>
+    <th:block th:replace="${content}"></th:block>
+    <th:block th:replace="~{modules/footer :: footer}"></th:block>
+  </div>
+
+  <button type="button" class="to-top" id="to-top" aria-label="返回顶部" title="返回顶部">
+    <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>
+  </button>
+
+  <!-- 注入系统设置的页脚代码（统计等） -->
+  <halo:footer />
+
+  <script th:src="@{/assets/js/main.js}" defer></script>
+  <script th:if="${theme.config.style.weather == null or theme.config.style.weather}" th:src="@{/assets/js/weather.js}" defer></script>
+</body>
+</html>

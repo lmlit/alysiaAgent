@@ -1,0 +1,12 @@
+本主题是「绿野 Luye」(theme-luye) 的派生作品。
+
+原作者：Ron567  <https://github.com/ReganQing>
+原项目：https://github.com/ReganQing/Luye  （GPL-3.0）
+原设计参考：Ron567 个人主页 aboutme
+
+依 GPL-3.0，本派生作品同样以 GPL-3.0 发布，LICENSE 文件随附。
+修改内容：
+  - 配色系统（深绿玻璃拟态 → 纸质淡墨）、字体栈与首屏注释
+  - 主题名/设置组名/默认文案改为「昔涟」语境
+  - 删去原商店 app-id 标注
+未修改：模板结构、JavaScript 行为、目录结构。

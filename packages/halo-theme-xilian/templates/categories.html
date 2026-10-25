@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="https://www.thymeleaf.org"
+      th:replace="~{layout :: html(head=~{::head}, content=~{::content})}">
+<th:block th:fragment="head">
+  <th:block th:replace="~{modules/seo :: head(title=|文章分类 - ${site.title}|, path=${site.routes.categoriesUri}, description=${site.seo.description}, image=${site.logo}, type='website')}"></th:block>
+</th:block>
+<th:block th:fragment="content">
+  <div class="container">
+    <header class="post-hero" style="padding-bottom:10px;">
+      <p class="eyebrow">CATEGORIES · 分类</p>
+      <h1 class="headline">按分类浏览</h1>
+    </header>
+
+    <div class="section" style="padding-top:20px;">
+      <th:block th:if="${#lists.isEmpty(categories)}">
+        <div class="empty-tip">还没有创建分类。</div>
+      </th:block>
+      <div class="card-grid">
+        <a class="glass-card reveal" th:each="category, iterStat : ${categories}"
+           th:href="@{${category.status.permalink}}">
+          <div class="card-top">
+            <span class="idx" th:text="${#numbers.formatInteger(iterStat.count, 2)}">01</span>
+            <img class="leaf" th:src="@{/assets/svg/leaf-2.svg}" alt="">
+          </div>
+          <h3 class="card-title" th:text="${category.spec.displayName}">分类名</h3>
+          <p class="card-desc" th:if="${category.spec.description != null and category.spec.description != ''}"
+             th:text="${category.spec.description}">分类描述</p>
+          <span class="card-tag" th:text="|${category.postCount ?: 0} 篇文章|">0 篇文章</span>
+        </a>
+      </div>
+    </div>
+  </div>
+</th:block>
+</html>

@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="https://www.thymeleaf.org"
+      th:replace="~{layout :: html(head=~{::head}, content=~{::content})}">
+<th:block th:fragment="head">
+  <th:block th:replace="~{modules/seo :: head(title=${author.spec.displayName + (posts.page > 1 ? ' - 第 ' + posts.page + ' 页' : '') + ' - ' + site.title}, path=${'/authors/' + author.metadata.name + (posts.page > 1 ? '/page/' + posts.page : '')}, description=${author.spec.bio}, image=${author.spec.avatar ?: site.logo}, type='profile')}"></th:block>
+</th:block>
+<th:block th:fragment="content">
+  <div class="container">
+    <header class="about-hero" style="padding-top:80px;">
+      <p class="eyebrow">AUTHOR · 作者</p>
+      <h1 class="title" th:text="${author.spec.displayName}">作者名</h1>
+      <div class="portrait">
+        <img class="photo" th:if="${author.spec.avatar != null and author.spec.avatar != ''}"
+             th:src="${author.spec.avatar}" alt="头像">
+        <th:block th:unless="${author.spec.avatar != null and author.spec.avatar != ''}">
+          <img class="badge" th:src="@{/assets/svg/mountain.svg}" alt="">
+          <span class="cap" th:text="${author.spec.displayName}">作者名</span>
+        </th:block>
+      </div>
+      <p class="post-meta-bar" th:if="${author.spec.bio != null and author.spec.bio != ''}">
+        <span th:text="${author.spec.bio}">作者简介</span>
+      </p>
+    </header>
+
+    <div class="section" style="padding-top:40px;">
+      <th:block th:if="${#lists.isEmpty(posts.items)}">
+        <div class="empty-tip">该作者暂无文章。</div>
+      </th:block>
+      <div class="post-list">
+        <th:block th:each="post : ${posts.items}">
+          <th:block th:replace="~{modules/post-item :: post-item}"></th:block>
+        </th:block>
+      </div>
+      <th:block th:replace="~{modules/pagination :: pagination}"></th:block>
+    </div>
+  </div>
+</th:block>
+</html>

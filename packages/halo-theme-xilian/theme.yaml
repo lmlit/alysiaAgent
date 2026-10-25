@@ -1,0 +1,27 @@
+apiVersion: theme.halo.run/v1alpha1
+kind: Theme
+metadata:
+  name: theme-xilian
+spec:
+  displayName: 昔涟 · 纸笺
+  author:
+    name: alysiaAgent
+    website: https://github.com/lmlit
+  description: 纸质淡墨风格 —— 为「昔涟」的日记体博客准备的主题。派生自 GPL-3.0 的「绿野 Luye」（作者 Ron567），改了配色、字体节奏与默认文案。
+  logo: logo.png
+  homepage: ""
+  repo: ""
+  issues: ""
+  settingName: theme-xilian-setting
+  configMapName: theme-xilian-configMap
+  customTemplates:
+    page:
+      - name: 关于我
+        description: 眉题 + 大标题 + 圆形头像徽章 + 正文
+        screenshot: ""
+        file: page_about.html
+  version: 0.3.0
+  requires: 2.20.0
+  license:
+    - name: GPL-3.0
+      url: https://www.gnu.org/licenses/gpl-3.0.html

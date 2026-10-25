@@ -1,0 +1,13 @@
+<!-- 文章浏览量徽章：参数 post -->
+<!-- Halo 内置 Counter 统计，post.stats.visit 为 null 表示该文章暂无统计记录 -->
+<span class="visit-badge" xmlns:th="https://www.thymeleaf.org"
+      th:fragment="visit-badge(post)"
+      th:if="${post != null and post.stats != null and post.stats.visit != null}"
+      th:title="|${post.stats.visit} 次阅读|">
+  <svg class="visit-icon" aria-hidden="true" focusable="false" viewBox="0 0 24 24"
+       fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12z"/>
+    <circle cx="12" cy="12" r="2.6"/>
+  </svg>
+  <span class="visit-num" th:text="${post.stats.visit}">0</span>
+</span>

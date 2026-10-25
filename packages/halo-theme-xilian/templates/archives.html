@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="https://www.thymeleaf.org"
+      th:replace="~{layout :: html(head=~{::head}, content=~{::content})}">
+<th:block th:fragment="head" th:with="archivePath=${#strings.substringBefore(archives.nextUrl, '/page/')}, archivePeriod=${#strings.substringAfter(archivePath, site.routes.archivesUri)}">
+  <th:block th:replace="~{modules/seo :: head(title=${'文章归档' + archivePeriod + (archives.page > 1 ? ' - 第 ' + archives.page + ' 页' : '') + ' - ' + site.title}, path=${archivePath + (archives.page > 1 ? '/page/' + archives.page : '')}, description=${site.seo.description}, image=${site.logo}, type='website')}"></th:block>
+</th:block>
+<th:block th:fragment="content">
+  <div class="container">
+    <header class="post-hero" style="padding-bottom:10px;">
+      <p class="eyebrow">ARCHIVES · 归档</p>
+      <h1 class="headline">时间线</h1>
+      <p class="post-meta-bar" th:if="${archives.total != null}">
+        <span th:text="|共 ${archives.total} 篇文章|">共 0 篇文章</span>
+      </p>
+    </header>
+
+    <div class="section" style="padding-top:20px;">
+      <th:block th:if="${#lists.isEmpty(archives.items)}">
+        <div class="empty-tip">暂无归档。</div>
+      </th:block>
+      <th:block th:each="archive : ${archives.items}">
+        <h2 class="archive-year" th:text="${archive.year}">2026</h2>
+        <div class="post-list">
+          <th:block th:each="month : ${archive.months}">
+            <th:block th:each="post : ${month.posts}">
+              <th:block th:replace="~{modules/post-item :: post-item}"></th:block>
+            </th:block>
+          </th:block>
+        </div>
+      </th:block>
+      <th:block th:replace="~{modules/pagination :: pagination}" th:with="posts = ${archives}"></th:block>
+    </div>
+  </div>
+</th:block>
+</html>

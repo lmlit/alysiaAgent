@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="https://www.thymeleaf.org"
+      th:replace="~{layout :: html(head=~{::head}, content=~{::content})}">
+<th:block th:fragment="head">
+  <th:block th:replace="~{modules/seo :: head(title=|文章标签 - ${site.title}|, path=${site.routes.tagsUri}, description=${site.seo.description}, image=${site.logo}, type='website')}"></th:block>
+</th:block>
+<th:block th:fragment="content">
+  <div class="container">
+    <header class="post-hero" style="padding-bottom:10px;">
+      <p class="eyebrow">TAGS · 标签</p>
+      <h1 class="headline">按标签浏览</h1>
+    </header>
+
+    <div class="section" style="padding-top:20px;">
+      <th:block th:if="${#lists.isEmpty(tags)}">
+        <div class="empty-tip">还没有创建标签。</div>
+      </th:block>
+      <div class="card-grid">
+        <a class="glass-card reveal" th:each="tag : ${tags}"
+           th:href="@{${tag.status.permalink}}">
+          <div class="card-top">
+            <span class="idx">#</span>
+            <img class="leaf" th:src="@{/assets/svg/leaf-3.svg}" alt="">
+          </div>
+          <h3 class="card-title" th:text="${tag.spec.displayName}">标签名</h3>
+          <span class="card-tag" th:text="|${tag.postCount ?: 0} 篇文章|">0 篇文章</span>
+        </a>
+      </div>
+    </div>
+  </div>
+</th:block>
+</html>
