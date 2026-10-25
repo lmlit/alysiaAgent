@@ -1,4 +1,4 @@
-﻿# Tasks: her-records-one-table
+# Tasks: her-records-one-table
 
 ## 存储合并
 - [x] `database.ts`：新表 `ai_life_records`（kind/visibility/date/content/mood/mood_value）
@@ -33,6 +33,6 @@
       ⇒ 种子脚本必须 `INSERT OR REPLACE`（否则会误判"迁移没生效"）
 
 ## 部署
-- [ ] `pnpm deploy`（smoke 闸）
-- [ ] 部署后核对生产：`ai_life_records` 应含 5 篇 diary(shared) + 1 条 reflection(private)
-- [ ] 归档
+- [x] `pnpm deploy`（smoke 闸；镜像 rollback 点 `rollback-20261025-175252`）
+- [x] 部署后核对生产：**5 篇 diary(shared) + 1 条 reflection(private)**，legacy 5 篇冻结未删
+- [x] 归档到 `openspec/archive/2026-10-25-her-records-one-table/`
