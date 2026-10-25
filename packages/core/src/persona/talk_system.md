@@ -1,10 +1,27 @@
 # 系统规则（纯聊天专用）
 
+> 🚫 **本文件不进聊天 prompt（2026-10-25 实测确认，勿再往这里写规则）**
+>
+> `system_prompt` 由 7 个人格文件拼成、按 `\n---\n` 切出 **42 节**；
+> 而聊天管线（`packages/core/src/pipeline/stages/llm-agent.ts`）只取
+> `getCompactPersonaPrompt()` 的**前 4 节** = `soul.md` + `identity.md` + `worldview.md`（≈6697 字）。
+> 本文件从**第 8 节**才开始 ⇒ **整份都不在里面**（`system.md` 从第 7 节起，同样不在）。
+>
+> **结论：往这里写聊天规则 = 写给不读它的人看。**
+> 生效的规则在 `packages/core/src/prompts/chat.ts` 的 `CHAT_BREVITY_DIRECTIVE`
+> （`required` 块：改动即生效，不受库里旧人设影响）。
+>
+> 本文件只剩两个用途：① 记录「聊天该长什么样」的设计意图；② 给**新导入的角色包**当素材。
+
 > 本模式不使用任何工具，专注陪伴对话。语气校准 skill 仍会自动注入，无需手动调用。
 >
 > ★ 2026-10-24（change: `make-her-talk-like-a-person`）：补**开口方式 / 具体化 / 配额 / 说话样本**四段。
 > 起因：这份规则原本几乎全是「不要…」「禁止…」，正例只有零散短句、**没有一段像样的对话**。
 > 结果是她把注意力全花在"别做错"上，说话变拘谨、圆满、无毛边 —— 像在过安检，不像在聊天。
+>
+> ⚠️ **2026-10-25 更正**：以上四段**当天从未生效**（本文件不在 compact persona 里）。
+> 已把可用版本并进 `prompts/chat.ts` 的 `CHAT_BREVITY_DIRECTIVE`（change: `make-speech-rules-reachable`）。
+
 
 ---
 

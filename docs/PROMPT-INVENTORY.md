@@ -102,6 +102,14 @@
 
 ## 4. 同一事实的多处实现（**想加第四处之前先看这里**）
 
+> 🚫 **2026-10-25 实测更正（change: `make-speech-rules-reachable`）—— 关于 §1 的"静态人格层"**：
+> `system_prompt` 共 **42 节**，而聊天只注入 `getCompactPersonaPrompt()` 的**前 4 节**
+> （`soul.md` + `identity.md` + `worldview.md`，≈**6697 字**）。
+> **`system.md`（第 7 节起）与 `talk_system.md`（第 8 节起）都不在聊天 prompt 里。**
+> 聊天规则真正生效的位置是 `packages/core/src/prompts/chat.ts` 的 `CHAT_BREVITY_DIRECTIVE`（`required` 块）。
+> ★ 教训：2026-10-24 我写过一轮规则进 `talk_system.md`，并"验证"了 DB 的 `system_prompt` 含这些字
+> —— 那只证明**库里那一列有字**，不证明**模型看得到**。**验收要验组装出来的 prompt。**
+
 | 事实 | 实现 A | 实现 B | 差异带来的后果 |
 |---|---|---|---|
 | **亲密度** | `context-facts.ts` `collectContextFacts()`：**唯一出处**（含档位） | `life.relationshipBlock()` / `proactive.contextSnippet()`：**只排版** | ✅ **已收敛**（change: `converge-context-facts`，2026-10-24）。此前问候只有裸数字 `62/100`，看不出"冷了几天" |

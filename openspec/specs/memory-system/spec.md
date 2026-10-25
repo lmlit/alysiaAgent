@@ -849,6 +849,26 @@ request body 相同还不够 —— 两条链路若在**URL 拼接 / 请求头 /
 追加 `未给 worldbookScope ⇒ 世界书不注入`。此前它与"库里确实没条目"**同形**（都是 `注入 0 条`），
 而前者是调用方漏参数（可以改），后者是配置缺口（不该改代码）。
 
+**契约 9：人格的注入面是「前 4 节」，写在这之外的规则**不会生效**（2026-10-25，change: `make-speech-rules-reachable`）。**
+
+| 事实 | 值（2026-10-25 生产实测） |
+|---|---|
+| `system_prompt` 按 `\n---\n` 切出的节数 | **42 节** |
+| 聊天实际注入（`getCompactPersonaPrompt()`） | **前 4 节** = `soul.md` + `identity.md` + `worldview.md` ≈ **6697 字** |
+| `system.md` | 第 **7** 节起 ⇒ **不注入** |
+| `talk_system.md` | 第 **8** 节起 ⇒ **不注入** |
+
+★ **踩过的事故**：2026-10-24 把四段说话规则写进 `talk_system.md`，然后"验证"了
+`persona.system_prompt` 里含这些文字就宣布上线 —— 但那只证明**库里那一列有字**，
+不证明**模型看得到**。实际**一个字都没进过聊天 prompt**。
+⇒ **验收必须验"组装出来的 prompt"，不能验"DB 里的列"。**
+
+★ 结论：**聊天规则放 `packages/core/src/prompts/chat.ts`**（`required` 块、改动即生效、
+不受库里旧人设影响）；`talk_system.md` / `system.md` 只剩两个用途——设计说明与**新角色包素材**，
+且 `talk_system.md` 顶部已**自报**这件事（守卫：`speech-rules-reachable.test.ts`）。
+
+★ 不要把规则写进这两个 md，除非同时改 `getCompactPersonaPrompt()` 的 4 节上限 ——
+而那会让每轮多烧 ≈2.3k 字符（`system.md` 与 `soul.md` 还大量重叠）。
 **契约 8：块的事实集中在一张注册表上（2026-10-25，change: `assembler-block-registry`；P8 第 2 步）。**
 
 `packages/core/src/memory/block-registry.ts` 的 `CHAT_BLOCKS` / `CODE_BLOCKS` 是唯一出处，
