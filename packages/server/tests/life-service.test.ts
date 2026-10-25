@@ -1621,3 +1621,65 @@ describe('LifeService — 表态时钟（第二根轴）', () => {
     expect(qqOff.sendProactive).toHaveBeenCalled();
   });
 });
+// ═══════════════════════════════════════════════════════════════════════════
+// ★ 2026-10-25（change: `her-records-one-table`）：私密日记（不加滤镜的那本）
+//   守三件事：① 写了才存在 ② 只有她自己那两处能读到（生活生成/反思）
+//            ③ **绝不进聊天**（这条由「不注入 chat 组装」的既有测试覆盖）
+// ═══════════════════════════════════════════════════════════════════════════
+describe('LifeService — 私密日记', () => {
+  const yesterdayKey = () => {
+    const d = new Date(Date.now() - 86_400_000);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
+
+  it('★ 注入了生成器 → 写进记录表（kind=diary, visibility=private, 日期=昨天）', async () => {
+    freezeTime(14);
+    vi.spyOn(Math, 'random').mockReturnValue(0.1);
+    // ⚠️ 私密日记按设计"一天什么都没有就不写"（硬写就是编）——
+    //   所以这里必须给素材，否则它会在 `events.length === 0` 处正确早退。
+    const { memoryManager, qqOff } = makeMocks({
+      listLifeEvents: vi.fn().mockReturnValue([{ content: '晌午在灶前煮了粥', createdAt: new Date().toISOString() }]),
+    });
+    memoryManager.saveHerRecord = vi.fn();
+    const svc = new LifeService(memoryManager as any, qqOff as any, {
+      ownerOpenid: 'openid-1',
+      cooldownHours: 0,
+      generateEvent: async () => '{"content":"在阳台看书","type":"internal"}',
+      generatePrivateDiary: async () => '今天有点烦，他一句话把我噎住了，但我不想说。',
+    });
+    await svc.tick();
+    expect(memoryManager.saveHerRecord).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'diary', visibility: 'private', date: yesterdayKey() }),
+    );
+  });
+
+  it('没注入生成器 → 不写（其余功能不受影响）', async () => {
+    freezeTime(14);
+    vi.spyOn(Math, 'random').mockReturnValue(0.1);
+    const { memoryManager, qqOff } = makeMocks();
+    memoryManager.saveHerRecord = vi.fn();
+    const svc = new LifeService(memoryManager as any, qqOff as any, {
+      ownerOpenid: 'openid-1',
+      generateEvent: async () => '{"content":"在阳台看书","type":"internal"}',
+    });
+    await svc.tick();
+    expect(memoryManager.saveHerRecord).not.toHaveBeenCalled();
+  });
+
+  it('★★ 回读：私密日记会进**生活事件生成**的 context（日记之所以是日记）', async () => {
+    freezeTime(14);
+    vi.spyOn(Math, 'random').mockReturnValue(0.1);
+    const { memoryManager, qqOff } = makeMocks();
+    memoryManager.listHerRecords = vi.fn().mockReturnValue([
+      { kind: 'diary', visibility: 'private', date: '2026-08-05', content: '昨天他说那句，我其实有点在意。', mood: '', moodValue: 0, createdAt: '' },
+    ]);
+    let seenCtx = '';
+    const svc = new LifeService(memoryManager as any, qqOff as any, {
+      ownerOpenid: 'openid-1',
+      generateEvent: async (ctx: string) => { seenCtx = ctx; return '{"content":"在阳台看书","type":"internal"}'; },
+    });
+    await svc.tick();
+    expect(seenCtx).toContain('【你最近写下的】');
+    expect(seenCtx).toContain('我其实有点在意');
+  });
+});

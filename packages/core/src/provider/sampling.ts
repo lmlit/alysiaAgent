@@ -36,6 +36,11 @@ export interface SamplingConfig {
      * 是已知隐患；新槽不留同样的坑。
      */
     retell: SamplingSlot;
+    /**
+     * ★ 2026-10-25（change: `her-records-one-table`）：**私密日记**（不加滤镜的那本）。
+     * 温度略高（她在这里可以说难听的话）；`max_tokens` 必须显式给（KI-1：推理与正文共用预算）。
+     */
+    privateDiary: SamplingSlot;
   };
   proactive: { personalize: SamplingSlot };
   /** 画像事实提取（SessionEndProcessor → ProfileExtractor，**返回 JSON**） */
@@ -86,6 +91,8 @@ export const DEFAULT_SAMPLING: SamplingConfig = {
     //     `finish=length` + content 0 字（就是 KI-1 那个形态，会话摘要曾因它 22 天 100% 失败）。
     //     改 2048 后 5/5 稳定（output 320–355、reasoning 299–334，余量充足）。
     retell: { temperature: 0.85, max_tokens: 2048 },
+    // ★ 2026-10-25（her-records-one-table）：私密日记（不加滤镜）。温度偏高是她可以说难听话。
+    privateDiary: { temperature: 0.9, max_tokens: 2048 },
   },
   proactive: {
     personalize: { temperature: 0.7, max_tokens: 256 }, // 问候/关怀文案
@@ -143,6 +150,7 @@ export function mergeSampling(override?: DeepPartial<SamplingConfig>): SamplingC
       generateEvent: mergeSlot(DEFAULT_SAMPLING.life.generateEvent, override.life?.generateEvent),
       generateSummary: mergeSlot(DEFAULT_SAMPLING.life.generateSummary, override.life?.generateSummary),
       retell: mergeSlot(DEFAULT_SAMPLING.life.retell, override.life?.retell),
+      privateDiary: mergeSlot(DEFAULT_SAMPLING.life.privateDiary, override.life?.privateDiary),
     },
     proactive: { personalize: mergeSlot(DEFAULT_SAMPLING.proactive.personalize, override.proactive?.personalize) },
     profile: {

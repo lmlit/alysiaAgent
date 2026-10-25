@@ -963,6 +963,32 @@ export class MemoryManager {
     return this.lifeStore.getLastDiaryTail();
   }
 
+  // ── ★ 2026-10-25 她的**叙述记录**（change: `her-records-one-table`）────────
+  //   公开日记 / 私密日记 / 反思正文 = 同一类（某一天的一段第一人称叙述），
+  //   读者与生命周期由 kind + visibility 声明。日记的旧方法已改为走这张表。
+
+  /** 写一条记录（私密日记、反思正文都走它） */
+  saveHerRecord(r: {
+    kind: 'diary' | 'reflection';
+    visibility: 'shared' | 'private' | 'system';
+    date: string;
+    content: string;
+    mood?: string;
+    moodValue?: number;
+  }): void {
+    this.lifeStore.saveRecord(r);
+  }
+
+  /** 最近的记录（**回读**用它） */
+  listHerRecords(q: { kind?: 'diary' | 'reflection'; visibility?: 'shared' | 'private' | 'system'; limit?: number } = {}) {
+    return this.lifeStore.listRecords(q);
+  }
+
+  /** 是否已经写过某天的某类记录（跨天去重） */
+  hasHerRecord(kind: 'diary' | 'reflection', visibility: 'shared' | 'private' | 'system', date: string): boolean {
+    return this.lifeStore.listRecords({ kind, visibility, limit: 1 }).some(r => r.date === date);
+  }
+
   // ── ★ 2026-10-21 信（change: add-letters）────────────────────────────────
 
   /** 写一封信（"想写才写" —— 是否写由调用方判断） */
@@ -1764,9 +1790,18 @@ export class MemoryManager {
       }]).length > 0;
     }
 
-    // ③ 反思文本存 ai_life_state（覆盖更新——只保留最新反思）
+    // ③ ★ 2026-10-25（change: `her-records-one-table`）：反思正文进**叙述记录表**，
+    //   从"每天覆盖、**没人读**"变成"逐日累积、可回读"。
+    //   在此之前它写在 `ai_life_state.reflection`：一天覆盖一天，且**没有任何出口**
+    //   （无 API、无页面、不进 prompt）—— 跑了 11 天全是白写。
     if (input.reflection?.trim()) {
-      this.lifeStore.updateState({ reflection: input.reflection.trim().slice(0, 300) });
+      const today = new Date().toISOString().slice(0, 10);
+      this.lifeStore.saveRecord({
+        kind: 'reflection',
+        visibility: 'private',
+        date: today,
+        content: input.reflection.trim().slice(0, 600),
+      });
       reflectionSaved = true;
     }
 

@@ -7,7 +7,7 @@
  */
 import { readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { dirname } from 'path';
-import { logger, parseLLMJson } from '@alysia/core';
+import { logger, parseLLMJson, warnThrottled } from '@alysia/core';
 import { formatLocalTime, localDateKey, localDateKeyFromISO } from '@alysia/core/memory';
 import type { PushChannel } from './push.js';
 // ★ 2026-10-24（converge-context-facts）：事实层（档位/idle/心情/今天的事）的唯一出处
@@ -86,6 +86,12 @@ export interface LifeOpts {
    * 缺失则日记功能整体关闭（降级为不写日记）。
    */
   generateDiary?: (context: string) => Promise<string>;
+  /**
+   * ★ 2026-10-25（change: her-records-one-table）：**私密日记**（不加滤镜的那本）。
+   * 与 generateDiary 的区别：那本是给他看的，这本**只有她自己**（以及他偶尔翻）。
+   * 缺省 => 不写私密本（其余功能不受影响）。
+   */
+  generatePrivateDiary?: (context: string) => Promise<string>;
   /**
    * ★ 2026-10-21（change: `add-letters`）：**信**（不按日，想写才写）。
    *
@@ -170,6 +176,8 @@ interface LifeState {
   reflectionDate: string | null;
   /** ★ 2026-10-21（add-daily-diary）：上次写日记的日期 key（跨天触发，失败不置位可重试） */
   diaryDate?: string | null;
+  /** ★ 2026-10-25：私密日记的跨天去重（与 diaryDate 分开，一本失败不影响另一本） */
+  privateDiaryDate?: string | null;
   /** ★ 2026-10-21（add-letters）：上次处理信件的 ISO 周 key（含"这周没话说"） */
   letterWeek?: string | null;
   /** ★ 2026-10-20（tie-intimacy-to-speech）：上一轮解析出的亲密度档位 —— 迟滞的基准 */
@@ -257,6 +265,7 @@ export class LifeService {
         moodNoteAnalyzedAt: s.moodNoteAnalyzedAt ?? 0,
         reflectionDate: s.reflectionDate ?? null,
         diaryDate: s.diaryDate ?? null,
+    privateDiaryDate: s.privateDiaryDate ?? null,
         letterWeek: s.letterWeek ?? null,
         // ★ 2026-10-20（tie-intimacy-to-speech）：档位迟滞与「问一次」去重
         intimacyTier: s.intimacyTier,
@@ -516,6 +525,8 @@ export class LifeService {
 
     // ★ 2026-10-21（add-daily-diary）：跨天写日记——写的是**刚过去的那一天**
     await this.maybeDailyDiary(now);
+    // ★ 2026-10-25：私密那本（不加滤镜）。独立 try/catch，一本失败不影响另一本
+    await this.maybePrivateDiary(now);
 
     // ★ 2026-10-21（add-letters）：每周问一次"有没有想说的话"（可以回答 NONE）
     await this.maybeWeeklyLetter(now);
@@ -828,6 +839,28 @@ export class LifeService {
     return null;
   }
 
+  /**
+   * ★ 2026-10-25（change: `her-records-one-table`）：**私密日记回读**。
+   *
+   * 「日记」与「日志」的分界就在这一步：写下来的东西要能被**她自己**再读到。
+   * 这里只给生活事件生成与反思用（她自己），**不进聊天、不进推送、不进博客**。
+   *
+   * @param limit 最多几篇（默认 2；每篇截 80 字，防挤占生活上下文）
+   */
+  private buildPrivateDiaryBlock(limit = 2): string {
+    try {
+      const rows = this.memoryManager.listHerRecords?.({ kind: 'diary', visibility: 'private', limit }) ?? [];
+      if (rows.length === 0) return '';
+      return rows
+        .map((r: any) => `- ${r.date}: ${String(r.content).replace(/\s+/g, ' ').slice(0, 80)}`)
+        .join('\n');
+    } catch (err: any) {
+      // 读不到就这一轮不注入（别让私密本读失败拖垮生活生成），但要留痕
+      warnThrottled('LifeService.privateDiaryRead', `[Life] 私密日记回读失败（本轮不注入）: ${err?.message ?? err}`);
+      return '';
+    }
+  }
+
   /** ★ 8-30 锁续期：模型建议 0.5-8h 钳制；缺失 → 时段保底（白天 1h / 夜间 2h） */
   private intervalMs(evt: { next_in_hours?: number }): number {
     const hours = evt.next_in_hours;
@@ -1054,6 +1087,10 @@ export class LifeService {
     //   "从上次事件到现在"的时间（不再只写此刻瞬间）；8h 内 internal 同时承担延续候选
     const lastEventBlock = this.buildLastEventBlock(windowIds);
 
+    // ★ 2026-10-25（change: `her-records-one-table`）：私密日记的**回读**材料。
+    //   她自己写下的、不加滤镜的那本 —— 昨天的情绪该影响今天的日子。
+    const privateDiaryBlock = this.buildPrivateDiaryBlock(2);
+
     // ★ 8-29 世界观底色:统一字段(与聊天 persona 注入同一数据源)
     const worldviewBlock = this.memoryManager.getWorldviewBlock?.() ?? '';
 
@@ -1103,6 +1140,11 @@ export class LifeService {
       `【今天的生活】${todayBlock || '（还没有特别的事）'}`,
       `【你的人设背景】${wbBlock || '（暂无）'}`,
       `【在场角色】${presenceBlock}`,
+      // ★ 2026-10-25（change: `her-records-one-table`）：**私密日记回读**。
+      //   这是"日记"之所以是日记的那一半：她自己写下的东西，会进她自己的生活生成。
+      //   ⚠️ 只取最近 2 篇、每篇截 80 字（不然会挤掉真正的生活上下文）。
+      //   ⚠️ 绝不进聊天 prompt / 推送 —— 那边的她不该"引经据典"地讲自己的私密本。
+      privateDiaryBlock ? `【你最近写下的】${privateDiaryBlock}` : '',
       // ★ 8-29 独立人格:移除【轻月最近】(她的生活不围绕轻月)——轻月只在 chat 分享/偶发想念中出现
       // 【你惦记的事】(未完成的 intent):她的愿望驱动生活,不是随机开新
       pendingIntentBlock ? `【你惦记的事】${pendingIntentBlock}——这些是你自己惦记的事,可以自然地推进它们。` : '',
@@ -1570,6 +1612,55 @@ export class LifeService {
       logger.info(`[Diary] ${date}: ${text.slice(0, 40)}… (${text.length}字)`);
     } catch (err: any) {
       logger.warn(`[Diary] daily diary failed: ${err.message}`);
+    }
+  }
+
+  /**
+   * ★ 2026-10-25（change: `her-records-one-table`）：**私密日记** —— 不加滤镜的那本。
+   *
+   * 与公开日记（`maybeDailyDiary`）的关系：
+   * - **同一天、同一批素材**，但**两次独立调用**（一本失败不影响另一本）
+   * - 公开那本"有话要说"，这本"**没人看，可以难看**"
+   * - 写完**会被回读**：进次日生活事件生成 + 次日反思（`buildPrivateDiaryBlock`）
+   *   —— 这是它区别于"日志文件"的地方
+   * - **绝不进聊天 / 推送 / 博客**
+   */
+  private async maybePrivateDiary(now: Date): Promise<void> {
+    const today = localDateKey(now);
+    if (this.state.privateDiaryDate === today) return;
+    if (!this.opts.generatePrivateDiary) return;
+
+    const events = this.memoryManager.listLifeEvents(1) as any[];
+    const snapshot = this.memoryManager.getLifeSnapshot?.() ?? {};
+    const summaries = (this.memoryManager.listLifeSummaries?.(3) ?? [])
+      .map((s: any) => `- ${s.date}: ${s.summary}`).join('\n');
+    if (events.length === 0 && !summaries) return; // 一天什么都没有就不写 —— 硬写就是编
+
+    const ctx = [
+      `【今天的事】${events.slice(-10).map((e: any) => `- ${e.content.slice(0, 80)}`).join('\n') || '（今天没有特别的事）'}`,
+      summaries ? `【近三天】\n${summaries}` : '',
+      `【心情】${snapshot.mood || '（无）'} / ${snapshot.moodNote || '（无氛围描述）'}`,
+      // 连续性：这本也要能接上上一篇（不然每天都是孤立的 120 字）
+      this.buildPrivateDiaryBlock(2) ? `【你最近写下的】\n${this.buildPrivateDiaryBlock(2)}` : '',
+    ].filter(Boolean).join('\n');
+
+    try {
+      const text = String(await this.opts.generatePrivateDiary(ctx)).trim();
+      if (!text) { logger.warn('[PrivateDiary] empty response, will retry next tick'); return; }
+      const date = localDateKey(new Date(now.getTime() - 86_400_000));
+      this.memoryManager.saveHerRecord({
+        kind: 'diary',
+        visibility: 'private',
+        date,
+        content: text,
+        mood: String(snapshot.mood ?? ''),
+        moodValue: Number(snapshot.moodValue ?? 0),
+      });
+      this.state.privateDiaryDate = today;
+      this.saveState();
+      logger.info(`[PrivateDiary] ${date}: ${text.length}字（只有她自己会读到）`);
+    } catch (err: any) {
+      logger.warn(`[PrivateDiary] failed: ${err?.message ?? err}`);
     }
   }
 

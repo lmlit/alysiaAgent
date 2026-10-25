@@ -1,6 +1,6 @@
 export { logger, startDailyLogCleanup } from './utils/logger.js';
 // ★ 2026-10-02 observe-zero-row-writes：写入影响行数观测（只观测不拦截，看 KI-11）
-export { traceZeroRows } from './utils/write-trace.js';
+export { traceZeroRows, warnThrottled } from './utils/write-trace.js';
 // ★ 2026-10-19（change: watch-for-stuck-work）：看门狗把发现交给她 → 下一次组装提示词时注入
 export { setSelfNotices, getSelfNotices, clearSelfNotices, renderSelfNoticeBlock } from './memory/self-notice.js';
 export type { SelfNotice } from './memory/self-notice.js';

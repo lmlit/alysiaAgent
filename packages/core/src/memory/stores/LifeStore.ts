@@ -126,19 +126,80 @@ export class LifeStore {
     return rows.reverse(); // 旧 → 新
   }
 
-  // ── ★ 2026-10-21 她的日记（change: add-daily-diary）────────────────────────
-  //   与 daily_summaries 分开：那个喂 prompt，这个给人看（博客独立栏目）
+  // ── ★ 2026-10-25 她的**叙述记录**（change: `her-records-one-table`）─────────
+  //   日记(公开) / 日记(私密) / 反思正文 = 同一类："某一天、一段她自己写的叙述"。
+  //   读者与生命周期由 `kind` + `visibility` 两个字段声明，不再各占一张表。
 
-  /** 写一篇日记（同一天重复写会覆盖 —— 宁可覆盖也不要两篇打架） */
-  saveDiary(d: { date: string; content: string; mood?: string; moodValue?: number }): void {
+  /** 写一条记录（同 kind+visibility+date 覆盖 —— 宁可覆盖也不要两篇打架） */
+  saveRecord(r: {
+    kind: 'diary' | 'reflection';
+    visibility: 'shared' | 'private' | 'system';
+    date: string;
+    content: string;
+    mood?: string;
+    moodValue?: number;
+  }): void {
     this.db.prepare(`
-      INSERT OR REPLACE INTO ai_life_diaries (date, content, mood, mood_value, created_at)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(d.date, d.content, d.mood ?? '', d.moodValue ?? 0, new Date().toISOString());
+      INSERT INTO ai_life_records (id, kind, visibility, date, content, mood, mood_value, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(kind, visibility, date) DO UPDATE SET
+        content = excluded.content, mood = excluded.mood,
+        mood_value = excluded.mood_value, created_at = excluded.created_at
+    `).run(
+      `rec-${r.kind}-${r.visibility}-${r.date}`,
+      r.kind, r.visibility, r.date, r.content,
+      r.mood ?? '', r.moodValue ?? 0, new Date().toISOString(),
+    );
+  }
+
+  /** 最近的记录（**回读**用它；按日期倒序） */
+  listRecords(q: {
+    kind?: 'diary' | 'reflection';
+    visibility?: 'shared' | 'private' | 'system';
+    limit?: number;
+  } = {}): Array<{ kind: string; visibility: string; date: string; content: string; mood: string; moodValue: number; createdAt: string }> {
+    const where: string[] = [];
+    const args: unknown[] = [];
+    if (q.kind) { where.push('kind = ?'); args.push(q.kind); }
+    if (q.visibility) { where.push('visibility = ?'); args.push(q.visibility); }
+    const sql = `SELECT kind, visibility, date, content, mood, mood_value, created_at FROM ai_life_records`
+      + (where.length ? ` WHERE ${where.join(' AND ')}` : '')
+      + ' ORDER BY date DESC LIMIT ?';
+    args.push(q.limit ?? 30);
+    const rows = this.db.prepare(sql).all(...args) as Array<Record<string, unknown>>;
+    return rows.map(r => ({
+      kind: String(r.kind), visibility: String(r.visibility),
+      date: String(r.date), content: String(r.content),
+      mood: (r.mood as string) ?? '', moodValue: Number(r.mood_value ?? 0),
+      createdAt: (r.created_at as string) ?? '',
+    }));
+  }
+
+  /** 最近一篇的**最后一句**（新日记要接上它，否则每天都是孤立的 300 字） */
+  lastRecordTail(kind: 'diary' | 'reflection', visibility: 'shared' | 'private' | 'system'): string {
+    const row = this.db.prepare(
+      'SELECT content FROM ai_life_records WHERE kind = ? AND visibility = ? ORDER BY date DESC LIMIT 1',
+    ).get(kind, visibility) as { content: string } | undefined;
+    const content = row?.content;
+    if (!content) return '';
+    const sentences = content.trim().split(/(?<=[。！？…])/).filter(Boolean);
+    return sentences.length > 0 ? sentences[sentences.length - 1].trim() : content.slice(-80);
+  }
+
+  // ── 兼容层：公开日记改读写 `ai_life_records`（新表空时回落旧表）───────────
+
+  /** 写一篇日记（同一天重复写会覆盖） */
+  saveDiary(d: { date: string; content: string; mood?: string; moodValue?: number }): void {
+    this.saveRecord({ kind: 'diary', visibility: 'shared', date: d.date, content: d.content, mood: d.mood, moodValue: d.moodValue });
   }
 
   /** 按日期倒序列出（供博客导出 / 控制台查看） */
   listDiaries(limit: number = 30): Array<{ date: string; content: string; mood: string; moodValue: number; createdAt: string }> {
+    const fresh = this.listRecords({ kind: 'diary', visibility: 'shared', limit });
+    if (fresh.length > 0) {
+      return fresh.map(r => ({ date: r.date, content: r.content, mood: r.mood, moodValue: r.moodValue, createdAt: r.createdAt }));
+    }
+    // 迁移前的老数据回落（迁移是幂等 INSERT OR IGNORE，正常情况下这里用不到）
     const rows = this.db.prepare(
       'SELECT date, content, mood, mood_value, created_at FROM ai_life_diaries ORDER BY date DESC LIMIT ?'
     ).all(limit) as Array<Record<string, unknown>>;
@@ -152,20 +213,25 @@ export class LifeStore {
   }
 
   getDiary(date: string): { date: string; content: string; mood: string } | null {
-    const row = this.db.prepare('SELECT date, content, mood FROM ai_life_diaries WHERE date = ?').get(date) as
+    const row = this.db.prepare(
+      "SELECT date, content, mood FROM ai_life_records WHERE kind = 'diary' AND visibility = 'shared' AND date = ?",
+    ).get(date) as { date: string; content: string; mood: string } | undefined;
+    if (row) return row;
+    const legacy = this.db.prepare('SELECT date, content, mood FROM ai_life_diaries WHERE date = ?').get(date) as
       | { date: string; content: string; mood: string }
       | undefined;
-    return row ?? null;
+    return legacy ?? null;
   }
 
-  /** 最近一篇日记的**最后一句**（新日记要接上它，否则每天都是孤立的 300 字） */
   getLastDiaryTail(): string {
-    const row = this.db.prepare(
-      'SELECT content FROM ai_life_diaries ORDER BY date DESC LIMIT 1'
-    ).get() as { content: string } | undefined;
-    if (!row?.content) return '';
-    const sentences = row.content.trim().split(/(?<=[。！？…])/).filter(Boolean);
-    return sentences.length > 0 ? sentences[sentences.length - 1].trim() : row.content.slice(-80);
+    return this.lastRecordTail('diary', 'shared') || (() => {
+      const row = this.db.prepare(
+        'SELECT content FROM ai_life_diaries ORDER BY date DESC LIMIT 1'
+      ).get() as { content: string } | undefined;
+      if (!row?.content) return '';
+      const sentences = row.content.trim().split(/(?<=[。！？…])/).filter(Boolean);
+      return sentences.length > 0 ? sentences[sentences.length - 1].trim() : row.content.slice(-80);
+    })();
   }
 
   // ── ★ 2026-10-21 信（change: add-letters）────────────────────────────────

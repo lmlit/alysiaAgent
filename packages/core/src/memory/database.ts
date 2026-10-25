@@ -212,6 +212,32 @@ export function initializeDatabase(db: Database.Database): void {
       created_at      TEXT NOT NULL
     );
 
+    -- ★ 2026-10-25（change: 」her-records-one-table」）：**她的叙述记录**统一到这张表。
+    --
+    --   为什么合并：」日记(公开)」 / 」日记(私密)」 / 」反思正文」 是**同一类东西** ——
+    --   "某一天、一段她自己写的第一人称叙述"，只有**读者**和**生命周期**不同。
+    --   之前它们散在 」ai_life_diaries」（一天一篇、进博客）和 」ai_life_state.reflection」
+    --   （每天覆盖、**没有任何人读**）里，于是"反思"写了 11 天全是白写。
+    --
+    --   ⚠️ **不收进来**的三类（语义不同，硬塞会把四种东西压成一种）：
+    --     · 」facts」 / 」character_facts」 —— 结构化断言，要可查询/去重/TTL
+    --     · 」mood_note」 —— "当前状态"，不是记录
+    --     · 」intent」 —— 待办，会被投递逻辑消费
+    CREATE TABLE IF NOT EXISTS ai_life_records (
+      id          TEXT PRIMARY KEY,
+      kind        TEXT NOT NULL,             -- 'diary' | 'reflection'
+      visibility  TEXT NOT NULL,             -- 'shared'(进博客) | 'private'(只有她和你) | 'system'
+      date        TEXT NOT NULL,             -- YYYY-MM-DD（写的是"那一天"）
+      content     TEXT NOT NULL,
+      mood        TEXT,
+      mood_value  REAL,
+      created_at  TEXT NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_life_records_uniq
+      ON ai_life_records (kind, visibility, date);   -- 一天一篇，重写覆盖
+    CREATE INDEX IF NOT EXISTS idx_life_records_recent
+      ON ai_life_records (kind, visibility, date DESC);
+
     -- ★ 2026-10-21（change: add-letters）：**信** —— 不按日，她**想写才写**。
     --   与日记的区别：日记是每天的交待；信是有话要说时才写的一封，可以直接对他说。
     --   week 列是"哪一段时间的信"（ISO 周 key），用于"一周一封信"的触发去重。
@@ -480,6 +506,30 @@ export function initializeDatabase(db: Database.Database): void {
   // 8) ai_life_state.reflection（★ 8-31 每日反思闭环 life-reflection-loop：LLM 生成的行为反思）
   addColumnIfMissing(db, 'ai_life_state', 'reflection',
     `ALTER TABLE ai_life_state ADD COLUMN reflection TEXT DEFAULT ''`);
+
+  // 9) ★ 2026-10-25（change: `her-records-one-table`）：把散落的叙述搬到 ai_life_records。
+  //    幂等：`INSERT OR IGNORE` + 唯一索引 (kind, visibility, date)，重复执行不会写重。
+  //    · 旧 `ai_life_diaries` → kind='diary', visibility='shared'
+  //    · `ai_life_state.reflection`（每天被覆盖的那条）→ kind='reflection', visibility='private'
+  //      它此前**没有任何人读**，搬进来之后才可能被回读（这才是做这件事的理由）。
+  try {
+    db.exec(`
+      INSERT OR IGNORE INTO ai_life_records (id, kind, visibility, date, content, mood, mood_value, created_at)
+      SELECT 'rec-diary-' || date, 'diary', 'shared', date, content, mood, mood_value, created_at
+      FROM ai_life_diaries WHERE content IS NOT NULL AND content <> ''
+    `);
+    db.exec(`
+      INSERT OR IGNORE INTO ai_life_records (id, kind, visibility, date, content, mood, mood_value, created_at)
+      SELECT 'rec-reflect-' || substr(updated_at, 1, 10), 'reflection', 'private',
+             substr(updated_at, 1, 10), reflection, '', 0, updated_at
+      FROM ai_life_state
+      WHERE reflection IS NOT NULL AND reflection <> '' AND updated_at IS NOT NULL
+    `);
+  } catch (err: any) {
+    // 迁移失败不该拦启动（旧数据仍在原表，读路径有回落）；但必须留痕
+    // eslint-disable-next-line no-console
+    console.warn(`[DB] ai_life_records 迁移跳过：${err?.message ?? err}`);
+  }
 
   // Seed default singleton rows
   const now = new Date().toISOString();

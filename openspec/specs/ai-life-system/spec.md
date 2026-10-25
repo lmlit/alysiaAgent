@@ -775,6 +775,26 @@ await memoryManager.ingest({
 `life.generateEvent` 至今没有，KI-1 在案）。
 ⚠️ 转述**不经过**聊天管线（`CHAT_BREVITY_DIRECTIVE`）：两条链路 prompt 独立，
 约束口径需人工保持一致（像发微信 / 短 / 不写动作）。
+**★ 2026-10-25 她的叙述记录合并成一张表 + **回读**（change: `her-records-one-table`）**
+
+公开日记 / 私密日记 / 反思正文是**同一类**："某一天、一段她自己写的第一人称叙述"，
+只有**读者**与**生命周期**不同 ⇒ 合并到 `ai_life_records`：
+
+| 收进来 | kind | visibility | 读者 |
+|---|---|---|---|
+| 公开日记（原 `ai_life_diaries`） | `diary` | `shared` | 博客（你） |
+| **私密日记（新）** | `diary` | `private` | **只有她**（以及你偶尔翻） |
+| 反思正文（原 `ai_life_state.reflection`） | `reflection` | `private` | 她（回读） |
+
+**不合并**（语义不同）：`facts`/`character_facts`（可查询断言，要 TTL）、
+`mood_note`（当前状态）、`intent`（待办）。
+
+★★ **回读是日记的定义性条件**：写下来但没人读的只是日志文件。
+私密日记进**生活事件生成**与**反思**的 context（`buildPrivateDiaryBlock`，最近 2 篇、每篇 ≤80 字）；
+**绝不进聊天 prompt / 推送 / 博客** —— 否则它立刻变成表演（她会为观众写）。
+
+⚠️ 迁移幂等：启动时 `INSERT OR IGNORE`；旧表**冻结不删**，读路径先查新表、空则回落旧表。
+⚠️ 反思此前"每天覆盖 + 无任何出口"（跑了 11 天全白写）；现在是**逐日累积**。
 **★ 2026-10-25 推送门的两个缺口（change: `worth-telling-and-silence-clock`）**
 
 **① 「值不值得说」——从"能不能发"到"值不值得发"。**

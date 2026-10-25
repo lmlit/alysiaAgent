@@ -22,6 +22,7 @@ import {
   LIFE_REFLECTION_PROMPT,
   LIFE_DECLINE_PROMPT,
   LIFE_DIARY_PROMPT,
+  LIFE_PRIVATE_DIARY_PROMPT,
   LIFE_LETTER_PROMPT,
 } from '../prompts/life.js';
 import type { ProactiveService } from '../proactive.js';
@@ -200,6 +201,26 @@ export const lifeModule: Module = {
           sampling: { ...DEFAULT_SAMPLING.life.generateSummary },
         });
         return resp.role === 'assistant' ? resp.completionText.trim() : '';
+      },
+
+      // ★ 2026-10-25（change: her-records-one-table）：**私密日记** —— 不加滤镜的那本。
+      //   独立 sessionId（日志/成本可分开看）+ 独立采样槽（温度略高）。
+      //   ⚠️ 采样槽必须带 max_tokens（KI-1：推理与正文共用预算，512 会偶发空响应）。
+      generatePrivateDiary: async (context: string) => {
+        const started = Date.now();
+        const resp = await core.providerManager.textChatWithFallback({
+          prompt: context,
+          sessionId: 'life-private-diary',
+          systemPrompt: LIFE_PRIVATE_DIARY_PROMPT,
+          sampling: { ...DEFAULT_SAMPLING.life.privateDiary, ...(config.sampling?.life?.privateDiary ?? {}) },
+        });
+        const u = resp.usage;
+        const text = resp.role === 'assistant' ? (resp.completionText ?? '').trim() : '';
+        logger.info(
+          `[PrivateDiary] LLM: finish=${resp.finishReason ?? '?'} tokens=${u ? `${u.input}+${u.output}` : '?'}` +
+          ` content=${text.length}字 (${Date.now() - started}ms)`,
+        );
+        return text;
       },
 
       // ★ 2026-10-21（add-letters）：信（想写才写；允许回 NONE = 这周没话说）
