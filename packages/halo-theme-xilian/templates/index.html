@@ -104,8 +104,7 @@
     <div class="container cat-strip-inner">
       <span class="cat-strip-label">栏目</span>
       <a class="cat-chip" th:each="cat : ${categoryFinder.list(1, 20).items}"
-         th:href="@{${cat.status.permalink}}"
-         th:text="${cat.spec.displayName} + (cat.status.visiblePostCount != null ? ' · ' + cat.status.visiblePostCount : '')">日常 · 5</a>
+         th:href="@{${cat.status.permalink}}"><span th:text="${cat.spec.displayName}">栏目</span> · <span th:text="${cat.status.visiblePostCount}">0</span></a>
     </div>
   </nav>
 

@@ -20,7 +20,7 @@ spec:
         description: 眉题 + 大标题 + 圆形头像徽章 + 正文
         screenshot: ""
         file: page_about.html
-  version: 0.7.2
+  version: 0.7.3
   requires: 2.20.0
   license:
     - name: GPL-3.0
