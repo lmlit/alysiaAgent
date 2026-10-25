@@ -18,7 +18,7 @@
          th:if="${theme.config.hero.cta_text != null and theme.config.hero.cta_text != ''}"
          th:href="${theme.config.hero.cta_anchor != null and theme.config.hero.cta_anchor != ''} ? ${theme.config.hero.cta_anchor} : '#posts'"
          th:text="${theme.config.hero.cta_text}">看看我的文章</a>
-      <a class="secondary-link" th:href="@{/archives}">浏览全部文章 ↓</a>
+      <a class="secondary-link" th:href="@{/archives}">看看以前的 ↓</a>
     </div>
 
     <!-- 数据徽章行（1.1.0 新增） -->
@@ -48,7 +48,7 @@
       </th:block>
     </div>
 
-    <p class="scroll-hint">向下，进入我的世界</p>
+    <p class="scroll-hint">往下，是从前的日子</p>
     <img class="hero-img"
          th:if="${theme.config.hero.image != null and theme.config.hero.image != ''}"
          th:src="${theme.config.hero.image}" alt="横幅意象图">
@@ -113,8 +113,8 @@
            th:with="postLayout = ${theme.config.posts?.layout} ?: 'grid'">
     <div class="container">
       <div class="section-head reveal">
-        <p class="eyebrow">WRITING · 技术随笔</p>
-        <h2 class="title">写下来，才算想明白</h2>
+        <p class="eyebrow">WRITING · 日子</p>
+        <h2 class="title">写下来，才算过了一遍</h2>
       </div>
 
       <th:block th:if="${#lists.isEmpty(posts.items)}">
