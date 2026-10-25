@@ -18,7 +18,12 @@
       <th:block th:if="${#lists.isEmpty(posts.items)}">
         <div class="empty-tip">该分类下暂无文章。</div>
       </th:block>
-      <div class="post-list">
+      
+      <div class="empty-note" th:if="${#lists.isEmpty(posts.items)}">
+        <p>这里还空着。</p>
+        <p class="sub">有些话还没写下来——等写下来，就会出现在这里。</p>
+      </div>
+<div class="post-list">
         <th:block th:each="post : ${posts.items}">
           <th:block th:replace="~{modules/post-item :: post-item}"></th:block>
         </th:block>

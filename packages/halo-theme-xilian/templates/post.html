@@ -21,8 +21,6 @@
       <div class="post-meta-bar">
         <span th:if="${post.spec.publishTime != null}"
               th:text="${#dates.format(new java.util.Date(post.spec.publishTime.toEpochMilli()), 'yyyy-MM-dd')}">2026-01-01</span>
-        <span class="sep">·</span>
-        <span th:text="${post.owner.displayName}">作者</span>
         <span class="sep" th:if="${post.stats != null}">·</span>
         <span th:if="${post.stats != null}" th:text="|${post.stats.visit} 次阅读|">0 次阅读</span>
         <span class="sep">·</span>
@@ -55,14 +53,16 @@
           <img th:src="@{/assets/svg/mountain.svg}" alt="">
         </span>
         <div class="info">
-          <span class="nm" th:text="${post.owner.displayName}">作者</span>
-          <span class="bio" th:if="${post.owner.bio != null and post.owner.bio != ''}"
-                th:text="${post.owner.bio}">作者简介</span>
+          <span class="nm" th:text="${theme.config.author?.name} ?: '昔涟'">昔涟</span>
+          <span class="bio" th:if="${theme.config.author?.bio != null and theme.config.author?.bio != ''}"
+                th:text="${theme.config.author.bio}">简介</span>
         </div>
       </div>
 
       <!-- 上下篇 -->
-      <div class="post-nav" th:with="cursor = ${postFinder.cursor(post.metadata.name)}">
+          <a class="back-to-daily" th:href="@{/categories/daily}">← 回日常</a>
+
+    <div class="post-nav" th:with="cursor = ${postFinder.cursor(post.metadata.name)}">
         <a class="post-nav-card" th:if="${cursor.hasPrevious()}"
            th:href="@{${cursor.previous.status.permalink}}">
           <span class="hint">← 上一篇</span>
