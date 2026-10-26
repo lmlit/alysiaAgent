@@ -83,11 +83,13 @@ ALYSIA_DEPLOY_HOST=root@<host> pnpm deploy       # 真部署（内部**强制**�
 ## Current State
 
 **记忆系统核心 + 架构重构 + Feature Flag + AI 主动生活系统 + 模块化内核 + dsh 通道全部完成。**
-测试基线：**1911**（**162** 个测试文件，★ 2026-10-25 实测全绿；原写 1743 已过期，
+测试基线：**1998**（**171** 个测试文件，★ 2026-10-26 实测全绿；原写 1911 已过期，
 分 package 的数字以 `docs/HANDOFF.md` 顶部为准 —— 本行只是快照）
 + **E2E 5/5**（真实 API）。⚠️ 跑测试**必须用 Node 24**（`E:\nodejs24\node.exe`），
 PATH 上的 node 是 v20，而 better-sqlite3 是给 24 编的 —— 否则 401 条全挂（`NODE_MODULE_VERSION` 不匹配）。
-★ 2026-10-02 起**编程模式由 dsh 承接，四层通道（人格 / 记忆读 / 记忆写 / 结算）全通**。
+★ 2026-10-02 起**编程模式由 dsh 承接**。⚠️ **2026-10-24 起只保留「读」**：
+`alysia-adapter.config.bridge: false` 已切掉 `ingest` 与会话结算（写），
+`recall_memory` 与 `{{alysia_persona}}` 人格注入保留。
 
 ### Tech Stack
 - TypeScript + better-sqlite3 (WAL) + LanceDB (嵌入式向量库)
@@ -213,7 +215,7 @@ src/
    但 **`tapIndex` 没废弃**（dsh 文档称它是"逃生口"）；
    **真问题是桌面端 UI 不走 `renderIndex()` ⇒ `tapIndex` 在桌面端不执行**，
    入口脚本进不了页面。**已修**为 `webserver/index-inject` 行。
-   **剩**：4 个面板页（世界书/生活模板、记忆旋钮、审计）+ `install_bundle` 真机验收。
+   **剩**：3 个面板页（世界书/生活模板、记忆旋钮、审计）+ `install_bundle` 真机验收。
    ⚠️ 装 bundle 前**必须先 `npm run build`**（`main` 指向 `dist/`，而 `dist/` 是 gitignored）
 
 ## 环境变量 (.env)
@@ -247,7 +249,7 @@ source .env && npx vitest run
 - **Backlog**: `openspec/specs/index.md` 📌 Backlog 节（doc 声明 impl 未接的登记）
 - **总索引**: `docs/README.md`（所有文档入口 + A–H 分类 + 每篇 status/时效）
 - **待办总表**: `docs/TODO.md`（唯一在办入口；不新建编号，沿用 KI-xx / change 名）
-- **静默失败族**: `docs/SILENT-FAILURE.md`（根因与修复顺序，族内 6 条未清）
+- **静默失败族**: `docs/SILENT-FAILURE.md`（根因与修复顺序；族内**4 条在办**：KI-1/2/11/25）
 - Web 契约: `docs/Web-API-Design.md`（新增/修改 core 方法必须对照）
 - 部署 SOP: `docs/Docker-Deployment.md`（版本更新流程）
 - 历史归档: `openspec/archive/`（已完成 change + legacy 迁移文档）

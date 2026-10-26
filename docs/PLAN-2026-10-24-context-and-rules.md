@@ -45,8 +45,8 @@
 | **P12** | 隐私模式三档**从没兑现**：eadonly 只挡注入、不挡学习（画像照提取 ⇒ 下次对话照样被引用）；//privacy 命令从未注册；reset 是内联赋值（命名方法是死代码，且任何会话结束都清） | ✅ **2026-10-25 已归档**（ulfill-privacy-mode）：eadonly 打 skip_profile、补 /privacy 命令、reset 按 privacySessionId 收口 | [rchive/2026-10-25-fulfill-privacy-mode](../openspec/archive/2026-10-25-fulfill-privacy-mode/proposal.md) |
 | **P4** | `{{alysia_life}}` 在 dsh 里**恒为空**（注册了，回调固定 `return undefined`） | 🧑 待定（**严重度已下调**，见 §2.5） | spec §2.3 / §4 |
 | **P5** | 生活事件上下文**不含任何用户画像**（是否设计意图待确认） | 🧑 **待澄清**——可能是**故意的** | 本文 §2.3 |
-| **P6** | 「沉默 → 少说话」缺一条**表态时钟**驱动的衰减帽（whale 有，我们是档位驱动） | 🧑 待拍板（数值别照抄，见 §2.4） | 本文 §2.4 |
-| **P7** | `unify-memory-eligibility` T1–T6 **已实现未提交**（分支 `feat/unify-memory-eligibility`） | 🤖 推动归档（**不新开**） | [TODO.md](TODO.md) B 节 |
+| **P6** | 「沉默 → 少说话」缺一条**表态时钟**驱动的衰减帽 | ✅ **2026-10-25 已落地**（`worth-telling-and-silence-clock`：`silenceCap(3/7)` + 三处 `min`；数值保守起点、日志可调） | [`archive/2026-10-25-worth-telling-and-silence-clock`](../openspec/archive/2026-10-25-worth-telling-and-silence-clock/proposal.md) |
+| **P7** | `unify-memory-eligibility` 代码已在 `feat/dsh-bridge-cut`（`9fd017e`） | ✅ 代码已并入当前分支；只剩「合 master」（2026-10-26 处理） | [TODO.md](TODO.md) |
 
 > 📖 **现状底账**：[`PROMPT-INVENTORY.md`](PROMPT-INVENTORY.md) —— 17 条链路各注入了什么、
 > 两张块表逐块、静默断点 6 条。**改任何一条链路前先看它**，别再造第四份同一事实。
@@ -126,7 +126,10 @@ if (idleDays >= decayThreshold) { ... }                                 // :1486
 2. 分三档 → 每档换成第一人称处境（我们现在只有 `distant` 档的「问一次」，见 `life.ts:391`）
 3. 「他回来了」转折（**已有**，`life.ts:397`；whale 也有，同一手法）
 
-**待拍板**：要不要加第二根轴？加的话先定"什么算表态"（跨端表态看不见，这是硬约束）。
+**✅ 2026-10-25 已落地**（`worth-telling-and-silence-clock`）：`silenceCap(idleDays, quiet=3, mute=7)`
+是纯函数（放 `context-facts.ts`），`life` 推送门三处取 `min(配置, 档位 cap, 沉默 cap)`，
+沿用「只降不升」；**不动亲密度衰减速率**（那是另一件事）。数值是保守起点、不照抄 whale，
+每次真正生效都打日志，攒数据后再调。下面保留立项时的论证。
 
 ---
 

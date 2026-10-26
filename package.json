@@ -10,6 +10,7 @@
     "dev:server": "pnpm --filter @alysia/server dev",
     "dev:console": "pnpm --filter @alysia/console dev",
     "build:console": "pnpm --filter @alysia/console build",
+    "check:bare-catch": "node scripts/check-bare-catch.cjs",
     "smoke": "node scripts/smoke-local.mjs",
     "chat": "node scripts/chat-local.mjs",
     "dev:diary": "node scripts/dev-private-diary.mjs",

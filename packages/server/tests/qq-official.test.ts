@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
-import { parseStickerMarks } from '../src/adapters/qq-official.js';
+import { describe, it, expect, vi } from 'vitest';
+import { logger } from '@alysia/core/utils/logger';
+import { QQOfficialAgentAdapter, parseStickerMarks } from '../src/adapters/qq-official.js';
 
 describe('parseStickerMarks — 表情包标记协议解析', () => {
   it('单标记：提取名字并从正文移除', () => {
@@ -54,5 +55,36 @@ describe('parseStickerMarks — 表情包标记协议解析', () => {
     const { text, marks } = parseStickerMarks('开心 [表情包:开心] 又 ［表情包:害羞］');
     expect(marks).toEqual(['开心', '害羞']);
     expect(text).toBe('开心 又');
+  });
+});
+
+// ★ 2026-10-26（KI-5 / change: harden-silent-failures）：坏帧以前是裸 catch {}
+//   —— "消息没来"与"消息被静默丢掉"完全同形。现在必须 warn（限频），且不能抛。
+describe('handleFramePayload — 坏帧必须留痕（KI-5）', () => {
+  const makeAdapter = (): QQOfficialAgentAdapter =>
+    new QQOfficialAgentAdapter({ appId: 'test', appSecret: 'test' } as any);
+
+  it('非法 JSON：不抛、warn 一次、带阶段与字节数', () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    const raw = '{not json';
+    const adapter = makeAdapter();
+
+    expect(() => (adapter as any).handleFramePayload(raw, '测试')).not.toThrow();
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    const line = String(warn.mock.calls[0][0]);
+    expect(line).toContain('测试帧解析失败');
+    expect(line).toContain(`${Buffer.byteLength(raw)} bytes`);
+    warn.mockRestore();
+  });
+
+  it('连续坏帧：前 3 次逐条，第 4 次起限频（防坏流刷屏）', () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    const adapter = makeAdapter();
+
+    for (let i = 0; i < 4; i++) (adapter as any).handleFramePayload('bad', '网关');
+
+    expect(warn).toHaveBeenCalledTimes(3);
+    warn.mockRestore();
   });
 });

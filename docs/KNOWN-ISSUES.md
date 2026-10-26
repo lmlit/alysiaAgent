@@ -126,8 +126,15 @@
 - **建议方向**：改用共用解析器 `parseLLMJson` + 失败 `logger.warn`
   （项目已有该工具，`SessionEndProcessor` / `ProfileExtractor` 都已切过去）。
 
-### KI-5 🟡 裸 `catch {}`：**存储层已清点完，其余待清**
+### KI-5 ✅ 裸 `catch {}`：**已清零**（2026-10-26）
 
+> ✅ **2026-10-26 结项**（change: `harden-silent-failures`）：最后 **2 处**（QQ 适配器的
+> 握手尾随帧 / 网关帧）收敛为 `handleFramePayload()` —— 坏帧不抛、warn（阶段 + 字节数 +
+> 累计次数）、前 3 次逐条之后每 100 次一条。并加机器闸 `scripts/check-bare-catch.cjs`
+> （真·空 catch ⇒ exit 1，已接 pre-commit）。
+> ⚠️ 本册下面写的「4 处」是 10-18 的存量：`ProfileExtractor` / `CronProcessor` 早已改成
+> error + 返回失败状态，实际只剩 QQ 这 2 处。历史记录保留在下面，别按旧数字重开。
+>
 > ★ **2026-10-02 更新（存储层审计 + change: `fix-migration-and-logger-silent-failure`）**：
 > 「全仓清点」在**存储/迁移/日志层**已经做完，清单如下。**不再是一条"未知数量"的债。**
 
@@ -171,6 +178,7 @@
 | 🆕 `persona/loader.ts` 三个读函数（**原表漏收，见上文更正**） | ✅ **2026-10-16 已销**（`soul.md` 等读不到 → 带 EACCES/ENOENT 真原因 warn，按文件名限频） | — |
 
 - **建议方向**：上面 9 条按同一手法处理——**能改探测式的改探测式，改不了的至少喊一次**。
+- ✅ **2026-10-26 清零**：最后 2 处（QQ 适配器）已改 warn + 限频；机器闸见 `scripts/check-bare-catch.cjs`。
   合并成第二刀（`fix-store-write-trace`），与下一条 KI-11 一起做。
 
 ---
@@ -790,6 +798,10 @@
 
 ### KI-25 🟡 dsh 事件去重键取 `event.seq`，撞上 `INSERT OR REPLACE` —— **触发条件未证实**
 
+> ★ **2026-10-26 状态补充**：`alysia-adapter.config.bridge: false`（2026-10-24，`cut-dsh-memory-bridge`）
+> 之后 **ingest 已关**，这条触发路径**休眠**。不是修好了 —— 是暂时不会发生；
+> **重开写通道前必须先取证**（`seq` 跨重启是否重数），再决定换不换键。
+>
 > **核验结论：机制成立（KI-12 已登记），但「seq 会重数」这一**前提尚无证据**。**
 
 - **现象**：`index.ts:244` 用 `id: \`dsh-${sid}-${event.seq}\`` 做去重键。
@@ -821,7 +833,7 @@
 
 ---
 
-### KI-26 🟠 「没有历史摘要 + 消息全部早于 24h」⇒ 那批消息**永远进不了摘要**
+### KI-26 ✅ 「没有历史摘要 + 消息全部早于 24h」⇒ 那批消息**永远进不了摘要**（2026-10-16 已修）
 
 > **发现方式**：2026-10-16 跑真实 e2e 时，`cron.test.ts` / `real-api.test.ts`
 > 各挂 1 条（`basics` 没被重写、**facts 一条没提出来**）。核实后确认

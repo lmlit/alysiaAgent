@@ -263,9 +263,7 @@ export class QQOfficialAgentAdapter implements Platform {
             if (headerEnd < handshakeBuffer.length) {
               const trailing = handshakeBuffer.subarray(headerEnd);
               logger.debug(`[QQ Official] handshake: ${trailing.length} trailing bytes after header`);
-              this.parseFrame(trailing, (payload) => {
-                try { const msg: QQGatewayPayload = JSON.parse(payload); this.handleGatewayMessage(msg); } catch {}
-              });
+              this.parseFrame(trailing, (payload) => this.handleFramePayload(payload, '握手尾随'));
             }
           } else {
             const bodyStart = text.indexOf('\r\n\r\n') + 4;
@@ -279,12 +277,7 @@ export class QQOfficialAgentAdapter implements Platform {
       }
 
       // WebSocket 帧解析
-      this.parseFrame(data, (payload) => {
-        try {
-          const msg: QQGatewayPayload = JSON.parse(payload);
-          this.handleGatewayMessage(msg).catch(err => logger.error('[QQ Official] gateway error:', err));
-        } catch {}
-      });
+      this.parseFrame(data, (payload) => this.handleFramePayload(payload, '网关'));
     });
 
     socket.on('close', () => {
@@ -358,6 +351,36 @@ export class QQOfficialAgentAdapter implements Platform {
   }
 
   private frameBuffer = Buffer.alloc(0);
+  /** ★ KI-5：帧解析失败累计（用于限频 warn，避免坏流刷屏把真信号埋掉） */
+  private frameParseFailures = 0;
+
+  /**
+   * ★ 2026-10-26（KI-5 / change: `harden-silent-failures`）：帧载荷解析**必须留痕**。
+   *
+   * 以前两处都是裸 `catch {}` —— QQ 网关改字段、发出半截 JSON、或某类事件结构变化时，
+   * 整帧被**静默丢弃**：症状是「Bot 在线，但某些消息永不触发」，日志里零行可查
+   * （与 KI-5 同族：错误被降级成"没有发生"）。
+   *
+   * 三条底线：
+   *   ① 坏帧**不能抛** —— 抛出去会打断 socket，把"一帧坏"升级成"整条连接断"；
+   *   ② 必须 warn，带**阶段 / 字节数 / 次数**，否则"没消息"与"消息被丢"同形；
+   *   ③ **限频**：前 3 次逐条，之后每 100 次一条。
+   */
+  private handleFramePayload(raw: string, stage: string): void {
+    try {
+      const msg: QQGatewayPayload = JSON.parse(raw);
+      this.handleGatewayMessage(msg).catch(err => logger.error('[QQ Official] gateway error:', err));
+    } catch (err) {
+      this.frameParseFailures += 1;
+      const n = this.frameParseFailures;
+      if (n <= 3 || n % 100 === 0) {
+        const reason = err instanceof Error ? err.message : String(err);
+        logger.warn(
+          `[QQ Official] ${stage}帧解析失败（第 ${n} 次，${Buffer.byteLength(raw)} bytes）：${reason}`,
+        );
+      }
+    }
+  }
 
   private parseFrame(chunk: Buffer, onMessage: (text: string) => void): void {
     this.frameBuffer = Buffer.concat([this.frameBuffer, chunk]);

@@ -56,13 +56,13 @@ KI-4 / 12 / 13 / 14 / 15 / 16 / 17 / 19 / 20 / 21 / 22 / 23 / 24，以及 KI-6�
 3. **事务化 + 如实返回受影响行数**（KI-13/17）：doc 与 chunk 同事务；
    `summary_status` 默认改 `'failed'`（漏传会**可见且可补**）。
 
-### 4.2 还开着（6 条）
+### 4.2 状态（4 条在办 + 2 条已销）
 
 | 条目 | 形态 | 现场证据 | 修它需要什么 |
 |---|---|---|---|
-| **KI-5** | 吞 | 全仓仅剩 **4 处**裸 `catch {}`：`ProfileExtractor.ts:150`、`CronProcessor.ts:81`、`qq-official.ts:267`、`qq-official.ts:286` | 逐个判定"该 rethrow 还是该 warn"，**不需要数据** |
-| **KI-26** | 缺 | `summaryAnchor()` 取「最后摘要时间，无则 24h 前」⇒ 无摘要且消息全早于 24h 时，那批消息**永远不会被摘要** | 改锚点兜底 + 一条 warn，**不需要数据** |
-| **KI-25** | 空转 | 去重键 `dsh-${sid}-${event.seq}`（`dsh-adapter/src/index.ts:379`），前提是 `seq` 跨重启稳定 | 先取证：**重启后 seq 是否重数**（一条日志即可） |
+| ~~**KI-5**~~ ✅ | 吞 | **2026-10-26 清零**：最后 2 处（`qq-official.ts` 帧解析）已改 warn + 限频；机器闸 `scripts/check-bare-catch.cjs` 已接 pre-commit | 已完成（`harden-silent-failures`） |
+| ~~**KI-26**~~ ✅ | 缺 | **2026-10-16 已修**：无摘要时下界改为「最早事件 −1ms」，不设时间上限（`fix-summary-anchor-floor`） | 已完成 |
+| **KI-25** | 空转 | 去重键 `dsh-${sid}-${event.seq}`（`dsh-adapter/src/index.ts`），前提是 `seq` 跨重启稳定；⚠️ `bridge:false` 后 ingest 已关 ⇒ **休眠** | 重开写通道前先取证：**重启后 seq 是否重数** |
 | **KI-11** | 空转 | 55 个写入点仅 3 处检查 `.changes`；观测 `[WriteTrace]` 已上线 | 等线上分布 → `tune-zero-row-checks` |
 | **KI-1** | 吞 | `life.generateEvent` 无 `max_tokens`；reasoning 与 content 抢同一预算 | 等 `[LLM]` / `[LLM:memory]` 数据 |
 | **KI-2** | 吞 | `proactive.personalize: 256` / `vision.describe: 200` 未实测 | 同上，并入 KI-1 的 change |

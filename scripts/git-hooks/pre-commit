@@ -102,4 +102,18 @@ if [ -n "$STAGED_MEM" ]; then
   fi
 fi
 
+# ── ④ 裸 catch 不许再写（★ 2026-10-26，change: harden-silent-failures，KI-5）──
+# 判据是「块内既无代码也无注释」。注释说明过的 best-effort 不拦（那是有意的降级）。
+# 扫全量而非仅暂存：这个检查很快，而且存量一旦回潮应当立刻可见。
+if command -v node >/dev/null 2>&1; then
+  if ! node "$REPO/scripts/check-bare-catch.cjs" >&2; then
+    echo "" >&2
+    echo "✗ pre-commit 拦截：出现裸 catch {}（错误会被降级成「没有发生」）。" >&2
+    echo "  改法：能抛就抛；不能抛就 warn + 计数/跳过，或写明为什么可以忽略。" >&2
+    echo "  判据见 docs/SILENT-FAILURE.md §2 / §7。" >&2
+    echo "" >&2
+    exit 1
+  fi
+fi
+
 exit 0
