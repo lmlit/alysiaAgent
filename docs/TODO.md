@@ -85,7 +85,7 @@
 
 | 日期 | 条目 | 依据 |
 |---|---|---|
-| 10-26 | **KI-5** 最后 2 处裸 catch（QQ 适配器）+ `check-bare-catch` 机器闸 | [`harden-silent-failures`](../openspec/changes/harden-silent-failures/proposal.md) |
+| 10-26 | **KI-5** 最后 2 处裸 catch（QQ 适配器）+ `check-bare-catch` 机器闸 | [`harden-silent-failures`](../openspec/archive/2026-10-26-harden-silent-failures/proposal.md) |
 | 10-26 | **KI-26** 摘要锚点（早已修，本次销账） | [`fix-summary-anchor-floor`](../openspec/archive/2026-10-16-fix-summary-anchor-floor/proposal.md) |
 | 10-26 | **P6** 表态时钟 / 值得说 | [`worth-telling-and-silence-clock`](../openspec/archive/2026-10-25-worth-telling-and-silence-clock/proposal.md) |
 | 10-26 | **P7** 记忆资格收口（代码在 HEAD，只剩合 master） | [`unify-memory-eligibility`](../openspec/archive/2026-10-21-unify-memory-eligibility/proposal.md) |
