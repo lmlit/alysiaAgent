@@ -426,7 +426,6 @@ export class ProactiveService {
         payload: { content, role: 'assistant' },
         importance: 0.3,
         created_at: new Date().toISOString(),
-        processed: 0,
       }).catch(err => logger.warn(`[Proactive] writeback failed: ${err.message}`));
     } catch (err: any) {
       logger.warn(`[Proactive] writeback failed: ${err.message}`);

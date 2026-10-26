@@ -61,7 +61,6 @@ describe('★ C2 当前态：`basics` 只能由 active && 未过期 的事实派
     };
 
     const cron = new CronProcessor(
-      { getUnprocessed: () => [], markProcessed: () => {} } as any,
       {} as any,
       { listActive: () => [] } as any,
       store,
@@ -94,7 +93,6 @@ describe('★ C2 当前态：`basics` 只能由 active && 未过期 的事实派
     const complete = vi.fn(async () => '重写后的 basics');
     const warn = vi.spyOn(console, 'warn');
     const cron = new CronProcessor(
-      { getUnprocessed: () => [], markProcessed: () => {} } as any,
       {} as any,
       { listActive: () => [] } as any,
       store,
@@ -128,7 +126,6 @@ describe('★ C2 纠正候选池只放当前事实（E3）', () => {
       payload: { role: 'user', content },
       importance: 0.5,
       created_at: NOW(),
-      processed: 0,
     } as MemoryEvent;
   }
 
@@ -137,7 +134,7 @@ describe('★ C2 纠正候选池只放当前事实（E3）', () => {
     const seen: ProfileFact[][] = [];
 
     const processor = new RealtimeProcessor(
-      { markProcessed: () => {} } as any,
+      {} as any,
       { match: async () => [] } as any,
       { processSignal: async () => null, apply: () => {} } as any,
       store,

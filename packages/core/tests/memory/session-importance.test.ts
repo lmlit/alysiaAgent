@@ -41,7 +41,6 @@ const ev = (id: string, content: string): MemoryEvent => ({
   payload: { content, role: 'user' },
   importance: 0,
   created_at: new Date().toISOString(),
-  processed: 0,
 });
 
 describe('parseImportantMoments', () => {

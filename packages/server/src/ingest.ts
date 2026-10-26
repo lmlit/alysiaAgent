@@ -181,7 +181,6 @@ export function normalizeIngestEvent(e: MemoryEvent): MemoryEvent {
     ...e,
     payload: payload as MemoryEvent['payload'],
     importance: typeof e.importance === 'number' ? e.importance : 0.5,
-    processed: 0,
     created_at: e.created_at || new Date().toISOString(),
   };
 }

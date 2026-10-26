@@ -415,6 +415,11 @@ MIME 需覆盖 `woff2`（自托管字体）与 `txt`（Next RSC payload）。
    靠**固定边长**（表情包是正方形，`width = height`）防布局跳动。
 4. **`prefers-reduced-motion` 下照常轮换、但不做淡入** ——
    该偏好的语义是"减少**动效**"，不是"禁止**内容**变化"。
+   ★ 2026-10-26（`apply-decisions-2026-10-26`）：这条偏好**全局生效** ——
+   `globals.css` 在 `prefers-reduced-motion: reduce` 下把 4 个动画 token
+   （`--animate-breathe/float/shimmer/drift`，共 17 处使用：float 6 / drift 6 /
+   shimmer 3 / breathe 2）置为 `none`，并把 animation 时长压到 0.01ms、迭代 1 次。
+   只关动效，不改布局、不隐藏内容。
 5. **可观测**：`data-sticker={current ?? 'loading'}`（不标出来分不清"图还没到"和"本来就没有图"）。
 6. **贴纸走 `/api/stickers/file/:name`**（见 §3）—— **不要用响应里的 `path`**。
 

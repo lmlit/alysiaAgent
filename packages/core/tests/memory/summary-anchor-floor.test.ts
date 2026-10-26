@@ -63,7 +63,6 @@ function makeEvent(id: string, sessionId: string, content: string, ageMs: number
     payload: { role: 'user', content },
     importance: 0.6,
     created_at: new Date(Date.now() - ageMs).toISOString(),
-    processed: 0,
   };
 }
 

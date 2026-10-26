@@ -17,7 +17,7 @@ describe('mergeSampling', () => {
     expect(s.profile.deepRewrite).toEqual({ temperature: 0.3, max_tokens: 2048 });
     // ★ 9-25 fix-session-summary-silent-failure：曾是 max_tokens 512 —— 太小，
     //   摘要要返回 6 字段 JSON（含逐字摘句），中文下必然触顶截断 → 线上 22 天 100% 失败。
-    expect(s.session.summary).toEqual({ temperature: 0.3, max_tokens: 2048, response_format: 'json_object' });
+    expect(s.session.summary).toEqual({ temperature: 0.3, max_tokens: 4096, response_format: 'json_object' });
   });
 
   it('deep-merges only provided fields (undefined/null skipped)', () => {

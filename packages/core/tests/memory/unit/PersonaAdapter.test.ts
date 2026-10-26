@@ -26,7 +26,6 @@ describe('PersonaAdapter', () => {
     payload: { role: 'user', content },
     importance: 0.5,
     created_at: new Date().toISOString(),
-    processed: 0,
   });
 
   beforeEach(() => {

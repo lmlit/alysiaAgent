@@ -40,11 +40,11 @@
 | **P2** | 亲密度「无互动衰减」在默认旋钮下**永不触发**（可见窗口 7 天 < 阈值 8 天）—— ★ 查实：**是 `07c9016`（08-07）那次"旋钮接线"修复把它弄坏的**（阈值 3 → 8，窗口一直是 7） | ✅ **已归档**（2026-10-24）：1868 全过 + 反向自检变红 | [`archive/2026-10-24-prove-intimacy-decay-reachable`](../openspec/archive/2026-10-24-prove-intimacy-decay-reachable/proposal.md) |
 | **P3** | 「最后一条真人消息」有**两份判据**，其中一份不排除 `synthetic`/`skip_profile` | ✅ 已收敛（同一方法 `idleSinceLastUserMessage()`） | 同上 |
 | **P8** | **组装器/事实层切面化**：抽事实层 / 块注册表 / 体裁表 / 通用装配器。四步各自独立收益 | 👤 已拍板 · **第 1+3 步已完成并归档**（`converge-context-facts`：事实层收敛 + 问候补档位/idle）；**第 2 步已归档**（`assembler-block-registry`）；**剩第 4 步**（`genres`） | [`archive/2026-10-24-converge-context-facts`](../openspec/archive/2026-10-24-converge-context-facts/proposal.md) |
-| **P9** | `pipelineMode` **有字段、有读者、没有写者** ⇒ `assembleCode` 在生产链路**不可达**（"编程模式组装"只存在于单测里） | 🧑 待拍板：接线 / 标死 / 删 | 本文 §2.7 |
+| **P9** | `pipelineMode` **有字段、有读者、没有写者** ⇒ `assembleCode` 在生产链路**不可达**（"编程模式组装"只存在于单测里） | ✅ **2026-10-26 标死**：保留 `assembleCode`（`POST /api/memory/read {mode:'code'}` 仍可达），`CLAUDE.md` 改为“仅 API/测试可达”；不接线、不删 | [`apply-decisions-2026-10-26`](../openspec/archive/2026-10-26-apply-decisions-2026-10-26/proposal.md) |
 | **P10** | 人格实际有 **3.5 份**：`proactive.ts:45` 有一行**未登记的内联人格**（`label-dual-persona-sources` 只覆盖了 2 份） | ✅ **已归档**（2026-10-24）：身份/语气改取 DB，体裁约束留常量 | [`archive/2026-10-24-unify-greeting-persona-source`](../openspec/archive/2026-10-24-unify-greeting-persona-source/proposal.md) |
 | **P12** | 隐私模式三档**从没兑现**：eadonly 只挡注入、不挡学习（画像照提取 ⇒ 下次对话照样被引用）；//privacy 命令从未注册；reset 是内联赋值（命名方法是死代码，且任何会话结束都清） | ✅ **2026-10-25 已归档**（ulfill-privacy-mode）：eadonly 打 skip_profile、补 /privacy 命令、reset 按 privacySessionId 收口 | [rchive/2026-10-25-fulfill-privacy-mode](../openspec/archive/2026-10-25-fulfill-privacy-mode/proposal.md) |
-| **P4** | `{{alysia_life}}` 在 dsh 里**恒为空**（注册了，回调固定 `return undefined`） | 🧑 待定（**严重度已下调**，见 §2.5） | spec §2.3 / §4 |
-| **P5** | 生活事件上下文**不含任何用户画像**（是否设计意图待确认） | 🧑 **待澄清**——可能是**故意的** | 本文 §2.3 |
+| **P4** | `{{alysia_life}}` 在 dsh 里**恒为空**（注册了，回调固定 `return undefined`） | ✅ **2026-10-26 删除**：仓内无模板引用，生活注入走 `alysia:memory`；dsh-adapter §2.3 已改 | [`apply-decisions-2026-10-26`](../openspec/archive/2026-10-26-apply-decisions-2026-10-26/proposal.md) |
+| **P5** | 生活事件上下文**不含任何用户画像**（是否设计意图待确认） | ✅ **2026-10-26 定案**：**刻意不注入**（独立人格），写进 `ai-life-system` §19；要改需单独评审 | 同上 |
 | **P6** | 「沉默 → 少说话」缺一条**表态时钟**驱动的衰减帽 | ✅ **2026-10-25 已落地**（`worth-telling-and-silence-clock`：`silenceCap(3/7)` + 三处 `min`；数值保守起点、日志可调） | [`archive/2026-10-25-worth-telling-and-silence-clock`](../openspec/archive/2026-10-25-worth-telling-and-silence-clock/proposal.md) |
 | **P7** | `unify-memory-eligibility` 代码已在 `feat/dsh-bridge-cut`（`9fd017e`） | ✅ 代码已并入当前分支；只剩「合 master」（2026-10-26 处理） | [TODO.md](TODO.md) |
 

@@ -30,7 +30,6 @@ function evt(id: string, content = '今天聊了点私事'): MemoryEvent {
     payload: { role: 'user', content },
     importance: 0.5,
     created_at: new Date().toISOString(),
-    processed: 0,
   };
 }
 

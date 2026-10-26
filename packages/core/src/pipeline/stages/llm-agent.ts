@@ -362,7 +362,6 @@ export class LLMAgentStage implements Stage {
         payload: { content: replyText.trim(), role: 'assistant' },
         importance: 0.3,
         created_at: new Date().toISOString(),
-        processed: 0,
       }).catch(err => logger.error('LLMAgent writeback failed:', err));
     }
   }

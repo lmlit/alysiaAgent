@@ -20,7 +20,6 @@ export interface MemoryEvent {
   payload: Record<string, unknown>;
   importance: number;
   created_at: string;
-  processed: number; // bitmask: 1=profile, 2=summary, 4=persona, 8=knowledge
   /** ★ 8-28 视角标记（memory-character-perspective）：'interaction'(与用户互动) | 'self'(昔涟自己的生活) */
   perspective?: 'interaction' | 'self';
   /**
@@ -262,9 +261,6 @@ export const FACT_TTL_BY_CATEGORY: Record<ProfileFactCategory, number> = {
 /** ★ 8-28 过期确认窗口：valid_until 在过去 N 天内且 active → 待确认（超窗口自动 expired） */
 export const FACT_CONFIRM_WINDOW_MS = 3 * 86_400_000;
 
-// Bitmask constants for MemoryEvent.processed
-export const PROCESSED_NONE     = 0;
-export const PROCESSED_PROFILE  = 1 << 0;  // 1
-export const PROCESSED_SUMMARY  = 1 << 1;  // 2
-export const PROCESSED_PERSONA  = 1 << 2;  // 4
-export const PROCESSED_KNOWLEDGE = 1 << 3; // 8
+// ★ 2026-10-26（retire-processed-bitmask，KI-27）：`PROCESSED_*` 位掩码已删除。
+//   它只写不读（唯一读者 `getUnprocessed` 只被 compaction 自己调用），是"看起来在工作"的典型。
+//   真实状态在 `summary_status` / `facts_status`/`archived` —— 不需要第二套。

@@ -83,7 +83,7 @@ ALYSIA_DEPLOY_HOST=root@<host> pnpm deploy       # 真部署（内部**强制**�
 ## Current State
 
 **记忆系统核心 + 架构重构 + Feature Flag + AI 主动生活系统 + 模块化内核 + dsh 通道全部完成。**
-测试基线：**1998**（**171** 个测试文件，★ 2026-10-26 实测全绿；原写 1911 已过期，
+测试基线：**1985**（**170** 个测试文件，★ 2026-10-26 实测全绿；原写 1911 已过期，
 分 package 的数字以 `docs/HANDOFF.md` 顶部为准 —— 本行只是快照）
 + **E2E 5/5**（真实 API）。⚠️ 跑测试**必须用 Node 24**（`E:\nodejs24\node.exe`），
 PATH 上的 node 是 v20，而 better-sqlite3 是给 24 编的 —— 否则 401 条全挂（`NODE_MODULE_VERSION` 不匹配）。
@@ -105,7 +105,8 @@ PATH 上的 node 是 v20，而 better-sqlite3 是给 24 编的 —— 否则 401
 - `codeMode` / `shell` / `filesystem` / `streaming` flags
 - 服务端: `features: { codeMode: false }` — 仅聊天工具
 - 桌面端: `features: { codeMode: true }` — 全量工具 + CodeContextStore
-- `MessageEvent.pipelineMode` — 'chat'|'code' 控制 Prompt 组装模式
+- `MessageEvent.pipelineMode` — 'chat'|'code' 选组装表；⚠️ **生产链路没有写者**（恒 `'chat'`），
+  `code` 仅单测 / `POST /api/memory/read {mode:'code'}` 可达（2026-10-26 标死，不接线）
 
 ### 文件结构（core）
 ```
@@ -116,7 +117,7 @@ src/
 ├── options.ts                  # ★ 2026-10-01：构造选项（从 index.ts 抽出，解 modules/ 循环依赖）
 ├── index.ts                    # AlysiaCore 统一入口（公开面逐字不变）
 └── memory/
-├── types.ts                    # 所有类型 + 位掩码常量
+├── types.ts                    # 所有类型（`processed` 位掩码已于 2026-10-26 删除）
 ├── database.ts                 # 表 schema + 默认行种子
 ├── MemoryManager.ts            # 统一入口 (ingest/read/assemble/onSessionEnd/cron + 8 个生活方法)
 ├── PromptAssembler.ts          # 双模式 System Prompt (chat ≤3200, code ≤2450 tokens)
@@ -192,7 +193,7 @@ src/
 3. **可观测性** `add-ops-health-report` —— ✅ **2026-10-16 前置评估已完成**
    （`scripts/log-profile.cjs`：本机样本单一来源 QQ 占 84%、关键信号 `SessionEnd` 仅 0.2%
    ⇒ **按日志行数比例做监控必然无效**；且**前置（日志源头分级/限频）尚未完成**）。
-   **实现仍待拍板**——用户原话「日报算了，后面迭代再处理」
+   **2026-10-26 决定：不做**（要做先清日志源头分级/限频，见 `docs/TODO.md` C 段）。
 4. ~~**文档卫生** `clean-spec-diff-residue`~~ ✅ **2026-10-16 已清理归档**：
    真值 **55 行**（不是 5 行、也不是 ~42 行），其中 15 行在代码块内
    （提示词模板 + ASCII 树 `+│`）。全部纯剥行首 `+`、内容零改动。
@@ -209,7 +210,8 @@ src/
    provider 的 `[LLM]` 行与 `[Life] event LLM` 行会打出 `finish=` / `reasoning=` / `content=N字`。
    **下一步是采数据再决策**（`finish=length` + 空内容 ⇒ 加 `max_tokens`），
    **不要再凭感觉填数字**
-7. **dsh 侧** `build-alysia-console-plugin` **进行中**。★ 2026-10-16 更正原表述：
+7. **dsh 侧** `build-alysia-console-plugin` **2026-10-26 冻结**（dsh 已降权；面板 1/2 在，剩 3 个面板不做了）。
+   下面是 2026-10-16 的更正记录，保留以免下次重犯：
    不是"踩在已废弃的 `.agent-presets` / `tapIndex` 上"——
    `.agent-presets` 确实废弃（本包早已不用，走 `dsh.bundle.patch`），
    但 **`tapIndex` 没废弃**（dsh 文档称它是"逃生口"）；

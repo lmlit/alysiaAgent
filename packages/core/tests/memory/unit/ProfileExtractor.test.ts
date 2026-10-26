@@ -22,7 +22,6 @@ describe('ProfileExtractor', () => {
     payload: { role: 'user', content },
     importance: 0.6,
     created_at: new Date().toISOString(),
-    processed: 0,
   });
 
   it('should extract facts from events', async () => {
@@ -202,7 +201,7 @@ describe('ProfileExtractor — 8-28 分类容错映射（profile-extractor-categ
   const makeEvent = (content: string): MemoryEvent => ({
     id: 'evt-fix', session_id: 'sess-fix', source: 'chat' as const, type: 'message' as const,
     payload: { role: 'user', content }, importance: 0.6,
-    created_at: new Date().toISOString(), processed: 0,
+    created_at: new Date().toISOString(),
   });
 
   it('LLM 输出 location → 映射 identity', async () => {

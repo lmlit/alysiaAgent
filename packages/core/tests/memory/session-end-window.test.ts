@@ -45,7 +45,7 @@ function makeMM() {
 const msg = (id: string, at: Date): MemoryEvent => ({
   id, session_id: SID, source: 'chat', type: 'message',
   payload: { role: 'user', content: `内容 ${id}` },
-  importance: 0, created_at: at.toISOString(), processed: 0,
+  importance: 0, created_at: at.toISOString(),
 });
 
 /** 直接插一条历史摘要行（本测试要精确控制 ended_at = 锚点） */

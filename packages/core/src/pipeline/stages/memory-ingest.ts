@@ -70,7 +70,6 @@ export class MemoryIngestStage implements Stage {
       },
       importance: 0,
       created_at: new Date().toISOString(),
-      processed: 0,
     };
 
     await this.memoryManager.ingest(memoryEvent);

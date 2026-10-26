@@ -56,6 +56,8 @@ describe('提示词块的措辞', () => {
     expect(block).toContain('有一件没做完就断了')
     expect(block).toContain('不是别人转给你的任务')
     expect(block).toMatch(/别说工程术语/)
+    // ★ 2026-10-26：她可以自己权衡 —— 卡着活就说一声，不必硬提（看门狗提醒的"硬度"）
+    expect(block).toMatch(/挡着你手上的活/)
   })
 })
 

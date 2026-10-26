@@ -126,16 +126,14 @@ describe('normalizeIngestEvent', () => {
     const e = { id: 'a', session_id: 'dsh:s', source: 'chat', type: 'message', payload: {} } as unknown as MemoryEvent;
     const out = normalizeIngestEvent(e);
     expect(out.importance).toBe(0.5);
-    expect(out.processed).toBe(0);
     expect(typeof out.created_at).toBe('string');
     expect(Number.isNaN(Date.parse(out.created_at))).toBe(false);
   });
 
   it('已有值不覆盖', () => {
-    const e = valid({ importance: 0.9, processed: 3, created_at: '2026-01-01T00:00:00Z' }) as unknown as MemoryEvent;
+    const e = valid({ importance: 0.9, created_at: '2026-01-01T00:00:00Z' }) as unknown as MemoryEvent;
     const out = normalizeIngestEvent(e);
     expect(out.importance).toBe(0.9);
-    expect(out.processed).toBe(0); // processed 恒归零：新喂入的事件必须重新走处理
     expect(out.created_at).toBe('2026-01-01T00:00:00Z');
   });
 

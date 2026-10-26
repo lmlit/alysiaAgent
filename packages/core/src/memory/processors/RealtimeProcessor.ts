@@ -1,6 +1,5 @@
 // src/memory/processors/RealtimeProcessor.ts
 import type { MemoryEvent } from '../types.js';
-import { PROCESSED_PROFILE, PROCESSED_PERSONA, PROCESSED_KNOWLEDGE } from '../types.js';
 import { logger } from '../../utils/logger.js';
 // ★ add-memory-channel-field：hint 渠道派生
 import { channelOfSession } from '../../utils/channel.js';
@@ -30,7 +29,6 @@ let skippedNoVectorStore = 0;
  *   2. Persona scan (detect preference signals and adjust persona)
  *   3. Correction detection (快路径：用户纠正立即生效)
  *   4. Embed generation (async, stored in vector store if available)
- *   5. Mark event as processed (PROFILE | PERSONA | KNOWLEDGE)
  */
 export class RealtimeProcessor {
   constructor(
@@ -74,7 +72,6 @@ export class RealtimeProcessor {
       if (isMachineOrigin(facts.origin)) {
         warnThrottled('realtime-synthetic', describeSkip(facts));
       }
-      this.eventStore.markProcessed(event.id, PROCESSED_KNOWLEDGE);
       return;
     }
 
@@ -148,11 +145,8 @@ export class RealtimeProcessor {
       }
     }
 
-    // 6. Mark event as processed —— ★ 位掩码**如实反映做过什么**（KI-27 的方向）：
-    //    没做画像就不置画像位，否则"未处理"这个概念会继续说谎。
-    let flags = PROCESSED_KNOWLEDGE;
-    if (facts.ok) flags |= PROCESSED_PROFILE;
-    if (persona.ok) flags |= PROCESSED_PERSONA;
-    this.eventStore.markProcessed(event.id, flags);
+    // ★ 2026-10-26（retire-processed-bitmask，KI-27）：不再写 `processed` 位。
+    //   "做过什么"由 `facts_status` / `summary_status` / `archived` 表达；
+    //   位掩码只写不读，已删除。
   }
 }

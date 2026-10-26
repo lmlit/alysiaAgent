@@ -33,7 +33,7 @@ describe('EventStore.getLastUserMessageAt', () => {
   const ev = (over: Partial<MemoryEvent>): MemoryEvent => ({
     id: 'e1', session_id: 's1', source: 'chat', type: 'message',
     payload: { role: 'user', content: 'hi' }, importance: 0.5,
-    created_at: '2026-10-01T10:00:00.000Z', processed: 0, ...over,
+    created_at: '2026-10-01T10:00:00.000Z', ...over,
   });
 
   it('空库 → null', () => {

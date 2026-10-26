@@ -19,7 +19,7 @@ import type { MemoryEvent, Conversation } from '../../src/memory/types.js';
 const evt = (id: string, sid: string): MemoryEvent => ({
   id, session_id: sid, source: 'chat', type: 'message',
   payload: { role: 'user', content: 'hi' },
-  importance: 0.5, created_at: '2026-10-16T10:00:00.000Z', processed: 0,
+  importance: 0.5, created_at: '2026-10-16T10:00:00.000Z',
 });
 
 const conv = (id: string, sid: string): Conversation => ({
@@ -98,10 +98,11 @@ describe('★ 渠道写入与回填', () => {
     const db = open();
     try {
       // 模拟"加列之前就已存在的行"：直接写空 channel
-      db.prepare(`INSERT INTO events (id, session_id, source, type, payload, importance, created_at, processed, channel)
-        VALUES (?,?,?,?,?,?,?,?,?)`).run('old1', 'dsh:session-old', 'chat', 'message', '{}', 0.5, '2026-10-01T00:00:00.000Z', 0, '');
-      db.prepare(`INSERT INTO events (id, session_id, source, type, payload, importance, created_at, processed, channel)
-        VALUES (?,?,?,?,?,?,?,?,?)`).run('old2', 'qq-official-1:old', 'chat', 'message', '{}', 0.5, '2026-10-01T00:00:00.000Z', 0, '');
+      // ★ 2026-10-26（KI-27）：events 表不再有 processed 列。
+      db.prepare(`INSERT INTO events (id, session_id, source, type, payload, importance, created_at, channel)
+        VALUES (?,?,?,?,?,?,?,?)`).run('old1', 'dsh:session-old', 'chat', 'message', '{}', 0.5, '2026-10-01T00:00:00.000Z', '');
+      db.prepare(`INSERT INTO events (id, session_id, source, type, payload, importance, created_at, channel)
+        VALUES (?,?,?,?,?,?,?,?)`).run('old2', 'qq-official-1:old', 'chat', 'message', '{}', 0.5, '2026-10-01T00:00:00.000Z', '');
 
       initializeDatabase(db); // 再跑一次迁移 = 回填
 

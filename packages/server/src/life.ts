@@ -1031,7 +1031,6 @@ export class LifeService {
         payload: { content, role: 'assistant' },
         importance: 0.3,
         created_at: new Date().toISOString(),
-        processed: 0,
         perspective: 'self',
       });
       logger.debug('[Life] written back to memory (assistant, perspective=self)');

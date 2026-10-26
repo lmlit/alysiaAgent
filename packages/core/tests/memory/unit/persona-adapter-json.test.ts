@@ -32,7 +32,6 @@ const evt = (content: string = '别那么正式'): MemoryEvent => ({
   payload: { role: 'user', content },
   importance: 0.6,
   created_at: new Date().toISOString(),
-  processed: 0,
 });
 
 /** 让 LLM 返回指定原文 */

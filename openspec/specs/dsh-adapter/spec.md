@@ -75,12 +75,13 @@
   排查入口：`[alysia] GET /api/persona/prompt → HTTP 401` 这类限频 warn
   （⚠️ 该 warn 能否看见取决于有没有装 exporter，见 §2.7.4）。
 
-### 2.3 生活事件 variable
+### 2.3 生活事件 variable —— **已删除**（2026-10-26，P4）
 
-- `systemPrompt.variable('alysia_life', provider)` 注册 `{{alysia_life}}`
-- **严格校验**:模板引用未注册/未提供值的变量 → assembly 直接 throw;不引用即安全。
-- ⚠️ **`alysia_life` 至今仍是骨架**（生活事件注入未做）。要做的话走 §2.2 那套
-  「缓存 + 预热」模式（同 reason:provider 同步）,或调 `memory.getLifeEventInjection()`。
+- ~~`systemPrompt.variable('alysia_life', provider)` 注册 `{{alysia_life}}`~~
+- **2026-10-26 起不再注册**：该变量回调固定 `return undefined`，而仓里**没有任何模板引用它**；
+  生活注入本来就走 §2.2 的 `alysia:memory` context 块（`/api/memory/read` 内含
+  `getLifeEventInjection()`）。保留一个"声称存在却永远为空"的入口只会误导下一个人。
+- 严格校验的约束不变：模板引用未注册变量会让 assembly throw —— 所以删变量前已确认无引用。
 
 ### 2.4 工具注册(替代 ToolRegistry)
 

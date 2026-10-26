@@ -95,7 +95,10 @@ export const DEFAULT_SAMPLING: SamplingConfig = {
     privateDiary: { temperature: 0.9, max_tokens: 2048 },
   },
   proactive: {
-    personalize: { temperature: 0.7, max_tokens: 256 }, // 问候/关怀文案
+    // ★ 2026-10-26（apply-budget-defaults）：原 256 —— 生产实测 reasoning 吃满 256、
+    //   `finish=length` + 空内容 ⇒ **主动问候发出空消息**（用户可见）。
+    //   服务器 2026-10-16 已带外改成 1024；本次把它收进仓库默认，新部署不再退回 256。
+    personalize: { temperature: 0.7, max_tokens: 1024 },
   },
   profile: {
     // ★ 2026-10-01 fix-profile-extract-empty-response：原 1024 —— **对推理模型太小**。
@@ -120,7 +123,10 @@ export const DEFAULT_SAMPLING: SamplingConfig = {
     //   截断即 JSON.parse 失败（线上 22 天 100% 失败的根因之一；8-28 加入
     //   character_perspective 字段后成功率从 55% 直接掉到 0%，就是被这 512 卡死）。
     //   提到 2048，并开 JSON 模式——从源头消除 markdown 围栏。
-    summary: { temperature: 0.3, max_tokens: 2048, response_format: 'json_object' },
+    //   ★ 2026-10-26（apply-budget-defaults）：生产 2026-10-16 实测 reasoning 占 1912–1973，
+    //   2048 只剩不到 80 tokens 给 JSON ⇒ 截断后重试才成功。服务器已带外改 4096，
+    //   本次收进仓库默认，避免新部署再退回 2048。
+    summary: { temperature: 0.3, max_tokens: 4096, response_format: 'json_object' },
   },
 };
 

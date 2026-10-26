@@ -10,7 +10,7 @@
  */
 
 import type { Context } from './types.ts'
-import type { AssembleContext, SessionEvent } from './types.ts'
+import type { SessionEvent } from './types.ts'
 import { createRecallMemoryTool } from './recall-memory.ts'
 import { createPublishPageTool } from './publish-page.ts'
 import { AlysiaClient } from './alysia-client.ts'
@@ -179,13 +179,11 @@ export function apply(ctx: Context, config: Config = {}): void {
     text: (): string => memoryContext,
   }), 'alysia-adapter.memory-context()')
 
-  // ── 3. 生活事件 variable 骨架({{alysia_life}})──
-  // dsh 对模板变量严格校验:section 未引用即安全;二期 provider 调
-  // memory.getLifeEventInjection() 返回今日事件文本。
-  ctx.effect(() => ctx.systemPrompt.variable(
-    'alysia_life',
-    (_context: AssembleContext): string | undefined => undefined,
-  ), 'alysia-adapter.life-variable()')
+  // ── 3. （已删）生活事件 variable `{{alysia_life}}` ──
+  // ★ 2026-10-26（clarify-context-contracts，P4）：这个变量注册了却固定返回
+  //   `undefined`，而仓里没有任何模板引用它；生活注入本来就走 `alysia:memory`
+  //   上下文块（`/api/memory/read` 内含 `getLifeEventInjection()`）。
+  //   "声称存在却永远为空"的入口比没有更坏 —— 下一个读 spec 的人会误诊成"注入没做"。
 
   // ── 4. recall_memory 工具（实时、按需的准确路径）──
   ctx.effect(() => ctx.tools.register(createRecallMemoryTool(client)), 'alysia-adapter.recall-memory()')

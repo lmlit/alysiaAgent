@@ -27,7 +27,7 @@ const llmReturning = (payload: string): ILLMService => ({ complete: async () => 
 const evt = (sid: string): MemoryEvent => ({
   id: 'evt-1', session_id: sid, source: 'chat', type: 'message',
   payload: { role: 'user', content: '我们在写记忆系统' },
-  importance: 0.6, created_at: '2026-10-16T10:00:00.000Z', processed: 0,
+  importance: 0.6, created_at: '2026-10-16T10:00:00.000Z',
 });
 
 describe('★ facts / character_facts 的渠道', () => {

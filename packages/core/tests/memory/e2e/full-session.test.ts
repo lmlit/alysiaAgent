@@ -76,7 +76,6 @@ function makeEvent(overrides: Partial<MemoryEvent> & { payload?: Record<string, 
     payload: { role: 'user', content: '测试消息' },
     importance: 0.5,
     created_at: new Date().toISOString(),
-    processed: 0,
     ...overrides,
   };
 }

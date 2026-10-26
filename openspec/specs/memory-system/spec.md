@@ -1870,3 +1870,24 @@ CLI `/clear`、`/new`、上下文压缩钩子、Web `extractProfile` 都已按�
   ——单次反馈不固化,达到证据门槛的稳定变化才"成为她现在的样子"
 - 已固化参数豁免 24h 回归（稳定演化保留,不再拉回默认）
 - PromptAssembler 注入【你的稳定变化】块（带证据）;getPersonaSnapshot 加 overlayNotes
+
+## 11. 预算默认值与位掩码退役（2026-10-26，change: `apply-decisions-2026-10-26`）
+
+### 11.1 两个预算进默认值（`provider/sampling.ts`）
+
+- `proactive.personalize.max_tokens` 256 → **1024**：生产实测 reasoning 吃满 256 →
+  `finish=length` + 空内容 ⇒ 主动问候发空消息。
+- `session.summary.max_tokens` 2048 → **4096**：生产实测 reasoning 1912–1973，
+  JSON 只剩不到 80 tokens ⇒ 截断。
+- 这两个值是 2026-10-16 服务器带外改过的；本 change 收进仓库默认，**新部署不再退回旧值**。
+  证据见 `record-out-of-band-server-config-change` 与服务器 CHANGELOG。
+- 未动 `life.generateSummary` / `profile.deepRewrite`（同族，等 `[LLM]` 数据，见 KI-1/2）。
+
+### 11.2 `processed` 位掩码退役（KI-27，B 案）
+
+- 删除 `PROCESSED_*`、`EventStore.getUnprocessed/markProcessed`、`CronProcessor.compactOldEvents`。
+- 原因：位掩码只写不读（唯一读者 `getUnprocessed` 只被 compaction 调用），
+  是“看起来在工作”的典型。
+- **判据唯一化**：`conversations.summary_status` / `facts_status` / `events.archived`。
+- 旧库的 `processed` 列与索引保留但**无人读写**（避免破坏性迁移）；新库不再创建。
+- 任何“这条学过没有”的新逻辑**禁止**再引入第二套状态。

@@ -116,3 +116,23 @@
     scrollbar-width: none;
   }
 }
+
+/* ★ 2026-10-26（console-a11y-motion）：17 处持续动画（float 6 / drift 6 /
+   shimmer 3 / breathe 2）在系统开启「减少动态效果」时必须停下。
+   只改动画 token，不动布局与过渡尺度的其余设计。 */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --animate-breathe: none;
+    --animate-float: none;
+    --animate-shimmer: none;
+    --animate-drift: none;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+}

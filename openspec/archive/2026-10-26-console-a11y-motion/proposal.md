@@ -4,7 +4,8 @@
 
 - **日期**: 2026-09-24
 - **类型**: MODIFY（可访问性修复）
-- **状态**: pending（**登记在案，暂不实现**——用户 2026-09-24 明确「先记下来，先把前端能跑了」）
+- **状态**: applied（**2026-10-26 实现**：`globals.css` 在 `prefers-reduced-motion: reduce` 下
+  关掉 4 个动画 token 并把 animation 压到 0.01ms；随 `apply-decisions-2026-10-26` 一起归档）
 - **影响 spec**: `alysia-console`（§2 设计系统补可访问性约束）
 - **发现于**: change `adopt-nextjs-console` 实施期间（impeccable 设计 hook 告警 → 人工核查）
 

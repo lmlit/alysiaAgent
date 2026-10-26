@@ -38,7 +38,6 @@ describe('EventStore.getBySession — 时间窗语义', () => {
         payload: { role: 'user', content: `消息 ${i}` },
         importance: 0,
         created_at: t.toISOString(),
-        processed: 0,
       } as MemoryEvent);
     }
     return times;
@@ -111,7 +110,7 @@ describe('EventStore.getBySession — 时间窗语义', () => {
     store.insert({
       id: 'other-1', session_id: 'sess-other', source: 'chat', type: 'message',
       payload: { role: 'user', content: 'x' }, importance: 0,
-      created_at: '2026-01-01T00:00:30Z', processed: 0,
+      created_at: '2026-01-01T00:00:30Z',
     } as MemoryEvent);
     const got = store.getBySession(SID, { limit: 100 });
     expect(got.every(e => e.session_id === SID)).toBe(true);
@@ -142,7 +141,7 @@ describe('EventStore.getBySession — until（历史窗口上界）', () => {
       store.insert({
         id: `e-${i}`, session_id: SID, source: 'chat', type: 'message',
         payload: { role: 'user', content: `消息 ${i}` }, importance: 0,
-        created_at: t.toISOString(), processed: 0,
+        created_at: t.toISOString(),
       } as MemoryEvent);
     }
     return times;

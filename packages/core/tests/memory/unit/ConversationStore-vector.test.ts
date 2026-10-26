@@ -144,7 +144,7 @@ describe('SessionEndProcessor — vectorOutcome 四态（KI-15）', () => {
   const ev = {
     id: 'e1', session_id: 's1', source: 'chat', type: 'message',
     payload: { content: '你好', role: 'user' }, importance: 0,
-    created_at: '2026-10-16T10:00:00.000Z', processed: 0,
+    created_at: '2026-10-16T10:00:00.000Z',
   };
 
   /** 造一个只关心「向量那本账」的处理器 */
@@ -156,7 +156,7 @@ describe('SessionEndProcessor — vectorOutcome 四态（KI-15）', () => {
     llm?: string;
   }) {
     return new SessionEndProcessor(
-      { getBySession: () => [ev], markProcessed: () => {}, updateImportance: () => {} } as any,
+      { getBySession: () => [ev], updateImportance: () => {} } as any,
       { insert: async () => opts.insertReturns, updateSummaryResult: async () => 'stored', updateFactsStatus: () => ({ rows: 1 }), incrementFactsAttempts: () => {} } as any,
       { addFacts: () => {}, addCharacterFacts: () => {} } as any,
       {} as any, {} as any,

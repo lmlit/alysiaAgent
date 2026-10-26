@@ -1,6 +1,5 @@
 // src/memory/processors/SessionEndProcessor.ts
 import type { MemoryEvent, Conversation } from '../types.js';
-import { PROCESSED_SUMMARY } from '../types.js';
 import { logger } from '../../utils/logger.js';
 import { parseLLMJson } from '../../utils/llm-json.js';
 // ★ KI-19 残余：并发互斥失败要留痕（限频）；id 唯一后缀用 randomUUID
@@ -103,7 +102,6 @@ interface SummaryData {
  *   3. Insert Conversation record + embed vector
  *   4. Extract profile facts from session events and merge into ProfileStore
  *   5. Confirm persona adjustments (apply any pending hints)
- *   6. Mark all session events as PROCESSED_SUMMARY
  *
  * ★ 9-25 fix-session-summary-silent-failure：第 2 步失败时**不再写占位符**——
  *   改为落一条 `summary_status='failed'` 的行（summary 空、无向量），失败因此**可见且可补**。
@@ -224,7 +222,7 @@ export class SessionEndProcessor {
 
     // 3. Insert Conversation + embed vector
     //    摘要失败时**仍然插行**：保留 message_count / 时间 / 事件关联，
-    //    这样失败窗口不会随 PROCESSED_SUMMARY 标记一起消失，后续可回填。
+    //    这样失败窗口不会随状态标记一起消失，后续可回填（`summary_status='failed'`）。
     const now = new Date().toISOString();
     // ★ 2026-10-16 fix-summary-window-late-events（spec §5.4.1 **契约 4**）：
     //   窗口**右边界取数据边界，不取墙钟**。
@@ -333,10 +331,8 @@ export class SessionEndProcessor {
     // 5. Confirm persona adjustments (check for pending adaptations)
     await this.confirmPersona(events);
 
-    // 6. Mark all events as PROCESSED_SUMMARY
-    for (const event of events) {
-      this.eventStore.markProcessed(event.id, PROCESSED_SUMMARY);
-    }
+    // ★ 2026-10-26（retire-processed-bitmask，KI-27）：不再标记 `PROCESSED_SUMMARY`。
+    //   "这一窗摘过没有"由 `conversations.summary_status` + 锚点表达，位掩码已删除。
 
     return ok
       ? { summary: 'ok', facts: factsOutcome, vector: vectorOutcome }

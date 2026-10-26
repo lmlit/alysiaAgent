@@ -79,7 +79,6 @@ describe('MemoryManager', () => {
       payload: { role: 'user', content: '我是后端工程师' },
       importance: 0.6,
       created_at: new Date().toISOString(),
-      processed: 0,
     };
 
     await manager.ingest(event);
@@ -363,7 +362,7 @@ describe('MemoryManager', () => {
     await manager.ingest({
       id: 'evt-1', session_id: 'sess-1', source: 'chat', type: 'message',
       payload: { role: 'user', content: 'hello' }, importance: 0.3,
-      created_at: new Date().toISOString(), processed: 0,
+      created_at: new Date().toISOString(),
     });
 
     await manager.onSessionEnd('sess-1');
@@ -414,7 +413,7 @@ describe('MemoryManager — 8-28 视角与角色事实（memory-character-perspe
 
   it('ingest 默认 perspective=interaction；显式 self 透传入库', async () => {
     await mm.ingest({ id: 'e1', session_id: 's1', source: 'chat', type: 'message', payload: { content: 'hi', role: 'user' }, importance: 0, created_at: new Date().toISOString(), processed: 0 } as any);
-    await mm.ingest({ id: 'e2', session_id: 's1', source: 'chat', type: 'message', payload: { content: '在阳台看书', role: 'assistant' }, importance: 0, created_at: new Date().toISOString(), processed: 0, perspective: 'self' } as any);
+    await mm.ingest({ id: 'e2', session_id: 's1', source: 'chat', type: 'message', payload: { content: '在阳台看书', role: 'assistant' }, importance: 0, created_at: new Date().toISOString(), perspective: 'self' } as any);
     const rows = db.prepare('SELECT id, perspective FROM events ORDER BY id').all() as Array<{ id: string; perspective: string }>;
     expect(rows).toEqual([
       { id: 'e1', perspective: 'interaction' },

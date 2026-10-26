@@ -4,7 +4,7 @@
 
 - **日期**: 2026-10-16
 - **类型**: NEW（素材选择策略 + 管理入口）
-- **状态**: **pending（已立案，未动手）**
+- **状态**: **pending（2026-10-26 决定先不做）**：三个判据（场景分组 / 启停落点 / 冷却作用域）未定前不动手
 - **影响 spec**: `alysia-console` §7.2（大尺寸形象 = 表情包轮换）、`sticker-protocol`（frozen，可能需解冻）
 - **来源**: 从 [`improve-sticker-system`](../../archive/2026-10-16-improve-sticker-system/proposal.md) 拆出。
   那个 change 的**首版只做了「渲染」**（计划明确收窄），其余三项在此立案。

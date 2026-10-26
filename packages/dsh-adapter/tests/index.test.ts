@@ -80,12 +80,10 @@ describe('alysia-adapter 插件', () => {
     expect(input.text({})).toBe('')
   })
 
-  it('apply 注册生活事件 variable(alysia_life)', () => {
+  it('★ 不再注册恒空的 {{alysia_life}}（P4：空入口会误导下一个人）', () => {
     const { ctx, variable } = makeMockCtx()
     apply(ctx)
-    expect(variable).toHaveBeenCalledTimes(1)
-    expect(variable.mock.calls[0][0]).toBe('alysia_life')
-    expect(variable.mock.calls[0][1]({})).toBeUndefined()
+    expect(variable.mock.calls.map(c => c[0])).not.toContain('alysia_life')
   })
 
   // ★ 反向守卫：人设变量**必须**由 host 行注册，不能落回 preset 插件。

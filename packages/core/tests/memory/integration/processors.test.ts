@@ -18,12 +18,6 @@ import type { MemoryEvent } from '../../../src/memory/types';
 import type { ILLMService } from '../../../src/memory/interfaces/ILLMService';
 import type { IEmbedService } from '../../../src/memory/interfaces/IEmbedService';
 import type { IVectorStore } from '../../../src/memory/interfaces/IVectorStore';
-import {
-  PROCESSED_PROFILE,
-  PROCESSED_SUMMARY,
-  PROCESSED_PERSONA,
-  PROCESSED_KNOWLEDGE,
-} from '../../../src/memory/types';
 
 // ── Mock services ──────────────────────────────────────────────────────────
 
@@ -72,7 +66,6 @@ const makeEvent = (overrides: Partial<MemoryEvent> & { payload?: Record<string, 
   payload: { role: 'user', content: '测试消息' },
   importance: 0.5,
   created_at: new Date().toISOString(),
-  processed: 0,
   ...overrides,
 });
 
@@ -146,12 +139,8 @@ describe('RealtimeProcessor', () => {
 
     await processor.process(event);
 
-    // Check event was marked with profile, persona, and knowledge bits
-    const processed = eventStore.getById(event.id);
-    expect(processed).not.toBeNull();
-    expect(processed!.processed & PROCESSED_PROFILE).toBe(PROCESSED_PROFILE);
-    expect(processed!.processed & PROCESSED_PERSONA).toBe(PROCESSED_PERSONA);
-    expect(processed!.processed & PROCESSED_KNOWLEDGE).toBe(PROCESSED_KNOWLEDGE);
+    // 事件仍在（★ 2026-10-26：位掩码已删，行为由下游事实/世界书命中验证）
+    expect(eventStore.getById(event.id)).not.toBeNull();
 
     // Check worldbook entry was triggered (hit_count incremented)
     const wbEntry = worldbookStore.getById('wb-1');
@@ -165,11 +154,7 @@ describe('RealtimeProcessor', () => {
 
     await processor.process(event);
 
-    const processed = eventStore.getById(event.id);
-    expect(processed).not.toBeNull();
-    expect(processed!.processed & PROCESSED_PROFILE).toBe(PROCESSED_PROFILE);
-    expect(processed!.processed & PROCESSED_PERSONA).toBe(PROCESSED_PERSONA);
-    expect(processed!.processed & PROCESSED_KNOWLEDGE).toBe(PROCESSED_KNOWLEDGE);
+    expect(eventStore.getById(event.id)).not.toBeNull();
   });
 
   it('should handle null vectorStore gracefully', async () => {
@@ -188,9 +173,7 @@ describe('RealtimeProcessor', () => {
     // Should not throw when vectorStore is null
     await expect(processorWithoutVector.process(event)).resolves.toBeUndefined();
 
-    const processed = eventStore.getById(event.id);
-    expect(processed).not.toBeNull();
-    expect(processed!.processed & PROCESSED_KNOWLEDGE).toBe(PROCESSED_KNOWLEDGE);
+    expect(eventStore.getById(event.id)).not.toBeNull();
   });
 
   it('should handle persona adapter returning null (no adjustment)', async () => {
@@ -283,12 +266,6 @@ describe('SessionEndProcessor', () => {
 
     await processor.process(sessionId);
 
-    // All events should be marked with PROCESSED_SUMMARY
-    for (const id of ['e1', 'e2', 'e3']) {
-      const evt = eventStore.getById(id);
-      expect(evt!.processed & PROCESSED_SUMMARY).toBe(PROCESSED_SUMMARY);
-    }
-
     // Conversation should be created
     const conversations = conversationStore.getBySession(sessionId);
     expect(conversations.length).toBeGreaterThanOrEqual(1);
@@ -350,9 +327,6 @@ describe('SessionEndProcessor', () => {
     // ★ 2026-10-16 KI-15 / ★ 2026-10-21 C4：结果拆成三段，故只匹配本用例关心的字段。
     await expect(p.process(sessionId)).resolves.toMatchObject({ summary: 'ok' });
 
-    // Still should mark as summary-processed
-    const processed = eventStore.getById('e-nf');
-    expect(processed!.processed & PROCESSED_SUMMARY).toBe(PROCESSED_SUMMARY);
   });
 });
 
@@ -393,7 +367,6 @@ describe('CronProcessor', () => {
     };
 
     processor = new CronProcessor(
-      eventStore,
       conversationStore,
       knowledgeStore,
       profileStore,
@@ -404,27 +377,6 @@ describe('CronProcessor', () => {
   });
 
   afterEach(() => db.close());
-
-  it('should compact old events (>7 days)', async () => {
-    const oldDate = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString(); // 10 days ago
-    const recentDate = new Date().toISOString();
-
-    const oldEvent = makeEvent({ id: 'old-1', created_at: oldDate, processed: 0 });
-    const recentEvent = makeEvent({ id: 'recent-1', created_at: recentDate, processed: 0 });
-    eventStore.insert(oldEvent);
-    eventStore.insert(recentEvent);
-
-    await processor.process();
-
-    // Old event should be marked with all processed flags
-    const oldProcessed = eventStore.getById('old-1');
-    const allFlags = PROCESSED_PROFILE | PROCESSED_SUMMARY | PROCESSED_PERSONA | PROCESSED_KNOWLEDGE;
-    expect(oldProcessed!.processed & allFlags).toBe(allFlags);
-
-    // Recent event should still be unprocessed
-    const recentProcessed = eventStore.getById('recent-1');
-    expect(recentProcessed!.processed).toBe(0);
-  });
 
   it('should deep profile summarize all facts into basics', async () => {
     const now = new Date().toISOString();

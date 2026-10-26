@@ -30,7 +30,6 @@ import type { MemoryEvent } from '../../src/memory/types';
 import type { ILLMService } from '../../src/memory/interfaces/ILLMService';
 import type { IEmbedService } from '../../src/memory/interfaces/IEmbedService';
 import type { IVectorStore } from '../../src/memory/interfaces/IVectorStore';
-import { PROCESSED_PROFILE, PROCESSED_KNOWLEDGE } from '../../src/memory/types';
 
 /** 服务端会给 dsh 合成注入打的两个标记（见 `packages/server/src/ingest.ts`） */
 const SYNTHETIC = { skip_profile: true, synthetic: 'runtime-context', dsh_source: 'runtime-context' };
@@ -73,7 +72,6 @@ function makeEvent(overrides: Partial<MemoryEvent> & { payload?: Record<string, 
     payload: { role: 'user', content: '普通消息' },
     importance: 0.5,
     created_at: new Date().toISOString(),
-    processed: 0,
     ...overrides,
   };
 }
@@ -131,17 +129,6 @@ describe('★ 合成注入不进学习管道（KI-20）', () => {
     expect(vectorStore.insert, '合成注入被嵌入进向量库了（日后会被召回）').not.toHaveBeenCalled();
   });
 
-  it('★ 合成注入不被标成"画像已处理"（否则下游会以为它参与过画像）', async () => {
-    const event = makeEvent({ payload: { role: 'user', content: RUNTIME_CONTEXT_TEXT, ...SYNTHETIC } });
-    eventStore.insert(event);
-
-    await processor.process(event);
-
-    const after = eventStore.getById(event.id)!;
-    expect(after.processed & PROCESSED_PROFILE).toBe(0);
-    expect(after.processed & PROCESSED_KNOWLEDGE).toBe(PROCESSED_KNOWLEDGE);
-  });
-
   it('★ 回归：普通用户消息照常走画像与嵌入（别把闸焊死）', async () => {
     const spy = vi.spyOn(personaAdapter, 'processSignal');
     const event = makeEvent({ payload: { role: 'user', content: '我家猫最近怎么样' } });
@@ -192,8 +179,8 @@ describe('★ 合成注入不进学习管道（KI-20）', () => {
 
     expect(spy, '委托会话被当成"用户说了什么"去做人格扫描了').not.toHaveBeenCalled();
     expect(vectorStore.insert, '委托会话被嵌入进向量库了（日后会被召回）').not.toHaveBeenCalled();
-    // 与合成注入一样，只留流水账
-    expect(eventStore.getById(event.id)!.processed).toBe(PROCESSED_KNOWLEDGE);
+    // 与合成注入一样，只留流水账（事件仍在，只是不进学习管道）
+    expect(eventStore.getById(event.id)).not.toBeNull();
   });
 
   it('★ 回归：群聊 NPC 的 skip_profile **不许**因此变吵（那量很大，会淹掉日志）', async () => {

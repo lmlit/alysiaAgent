@@ -12,7 +12,6 @@ import { describe, it, expect, vi } from 'vitest';
 import { RealtimeProcessor } from '../../src/memory/processors/RealtimeProcessor';
 import { SessionEndProcessor } from '../../src/memory/processors/SessionEndProcessor';
 import { ProfileExtractor } from '../../src/memory/engines/ProfileExtractor';
-import { PROCESSED_KNOWLEDGE, PROCESSED_PERSONA, PROCESSED_PROFILE } from '../../src/memory/types';
 import type { ILLMService } from '../../src/memory/interfaces/ILLMService';
 import type { MemoryEvent } from '../../src/memory/types';
 
@@ -34,7 +33,6 @@ function makeEvent(overrides: Partial<MemoryEvent> & { payload?: Record<string, 
     payload: { role: 'user', content: '我今天去看了海' },
     importance: 0.5,
     created_at: new Date().toISOString(),
-    processed: 0,
     ...overrides,
   } as MemoryEvent;
 }
@@ -44,15 +42,12 @@ function makeEvent(overrides: Partial<MemoryEvent> & { payload?: Record<string, 
 // ══════════════════════════════════════════════════════════════════
 describe('★ E4 人格扫描与纠正快路径只认用户发言', () => {
   function harness() {
-    const marks: Array<{ id: string; flags: number }> = [];
     const personaSpy = vi.fn(async () => null);
     const correctionSpy = vi.fn(async () => ({ isCorrection: false, rawText: '' }));
     const insertSpy = vi.fn(async () => {});
 
     const processor = new RealtimeProcessor(
-      {
-        markProcessed: (id: string, flags: number) => marks.push({ id, flags }),
-      } as any,
+      {} as any,
       { match: async () => [] } as any,
       { processSignal: personaSpy, apply: () => {} } as any,
       // ★ C2：纠正候选池读的是**当前态**（`getCurrentFacts`），全量 `getAllFacts` 已是审计专用
@@ -61,7 +56,7 @@ describe('★ E4 人格扫描与纠正快路径只认用户发言', () => {
       { embed: async () => [0.1, 0.2], dimension: () => 2 } as any,
       { insert: insertSpy, search: async () => [], delete: async () => {}, count: async () => 0 } as any,
     );
-    return { processor, marks, personaSpy, correctionSpy, insertSpy };
+    return { processor, personaSpy, correctionSpy, insertSpy };
   }
 
   it('★★ 她说的话不进人格扫描、不做纠正判定（同样的文本换 role=user 就会进）', async () => {
@@ -82,25 +77,11 @@ describe('★ E4 人格扫描与纠正快路径只认用户发言', () => {
     expect(h.correctionSpy).toHaveBeenCalled();
   });
 
-  it('★ 处理位如实反映做过什么：assistant 事件不置画像/人格位', async () => {
+  it('★ 用户发言仍触发人格扫描与纠正（别把闸焊死）', async () => {
     const h = harness();
-    const evt = makeEvent({ payload: { role: 'assistant', content: '我在河边坐了很久' } });
-    await h.processor.process(evt);
-
-    const flags = h.marks.find(m => m.id === evt.id)!.flags;
-    expect(flags & PROCESSED_PROFILE, '没做画像却记成"画像已处理"').toBe(0);
-    expect(flags & PROCESSED_PERSONA, '没做人格扫描却记成"人格已处理"').toBe(0);
-    expect(flags & PROCESSED_KNOWLEDGE).toBe(PROCESSED_KNOWLEDGE);
-  });
-
-  it('★ 用户发言仍然两个位都置（别把闸焊死）', async () => {
-    const h = harness();
-    const evt = makeEvent({ payload: { role: 'user', content: '我喜欢看海' } });
-    await h.processor.process(evt);
-
-    const flags = h.marks.find(m => m.id === evt.id)!.flags;
-    expect(flags & PROCESSED_PROFILE).toBe(PROCESSED_PROFILE);
-    expect(flags & PROCESSED_PERSONA).toBe(PROCESSED_PERSONA);
+    await h.processor.process(makeEvent({ payload: { role: 'user', content: '我喜欢看海' } }));
+    expect(h.personaSpy).toHaveBeenCalled();
+    expect(h.correctionSpy).toHaveBeenCalled();
   });
 });
 
@@ -132,7 +113,7 @@ describe('★ E1 正常摘要与补处理共用同一个对话渲染器', () => 
 
   function makeProcessor(events: MemoryEvent[], llm: ILLMService, updated: any[]) {
     return new SessionEndProcessor(
-      { getBySession: () => events, markProcessed: () => {}, updateImportance: () => {} } as any,
+      { getBySession: () => events, updateImportance: () => {} } as any,
       {
         insert: async () => {},
         updateSummaryResult: async (...args: any[]) => { updated.push(args); return { rows: 1, vector: 'stored' }; },

@@ -235,7 +235,6 @@ export function buildProjectTaskResultEvent(input: ProjectTaskResultInput): Memo
     },
     importance: 0.5,
     created_at: (input.now ?? new Date()).toISOString(),
-    processed: 0,
     // 视角：这是**她自己的**事，不是与用户的互动
     perspective: 'self',
   };

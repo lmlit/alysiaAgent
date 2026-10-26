@@ -52,7 +52,7 @@ const mockEmbed: IEmbedService = { embed: async () => [0.1], dimension: () => 2 
 const msgEvent = (id: string, sid: string, content: string, at: string): MemoryEvent => ({
   id, session_id: sid, source: 'chat', type: 'message',
   payload: { role: 'user', content },
-  importance: 0.6, created_at: at, processed: 0,
+  importance: 0.6, created_at: at,
 });
 
 describe('★ KI-19 残余：同一会话并发结算', () => {

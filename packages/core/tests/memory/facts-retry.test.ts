@@ -60,7 +60,7 @@ function makeMM(behaviour: { extract: () => string }) {
 const msg = (id: string, content: string, at: Date): MemoryEvent => ({
   id, session_id: SID, source: 'chat', type: 'message',
   payload: { role: 'user', content },
-  importance: 0, created_at: at.toISOString(), processed: 0,
+  importance: 0, created_at: at.toISOString(),
 });
 
 function latestConv(db: Database.Database): any {

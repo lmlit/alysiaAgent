@@ -40,7 +40,8 @@ describe('Database Schema', () => {
     const names = indexes.map(i => i.name);
     expect(names).toContain('idx_events_session');
     expect(names).toContain('idx_events_created');
-    expect(names).toContain('idx_events_unprocessed');
+    // ★ 2026-10-26（KI-27）：processed 位掩码退役，该索引不再创建。
+    expect(names).not.toContain('idx_events_unprocessed');
   });
 });
 

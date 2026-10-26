@@ -19,7 +19,6 @@ const ev = (id: string, content: string): MemoryEvent => ({
   payload: { content, role: 'user' },
   importance: 0,
   created_at: new Date().toISOString(),
-  processed: 0,
 });
 
 /** 完整 mock：覆盖 process() 全路径，捕获真正写库/嵌入的内容 */
@@ -27,12 +26,10 @@ function makeHarness(llm: { response?: string; throws?: Error }) {
   const events = [ev('e1', '我今天养了只猫'), ev('e2', '好可爱呀')];
   const inserted: Array<{ conv: any; vec?: number[] }> = [];
   const embedded: string[] = [];
-  const processed: string[] = [];
 
   const p = new SessionEndProcessor(
     {
       getBySession: () => events,
-      markProcessed: (id: string) => processed.push(id),
       updateImportance: () => {},
     } as any,
     { insert: async (conv: any, vec?: number[]) => inserted.push({ conv, vec }), updateFactsStatus: () => ({ rows: 1 }), incrementFactsAttempts: () => {} } as any,
@@ -50,7 +47,7 @@ function makeHarness(llm: { response?: string; throws?: Error }) {
     { embed: async (t: string) => { embedded.push(t); return [0.1, 0.2]; } } as any,
     { insert: async () => {} } as any,
   );
-  return { p, inserted, embedded, processed };
+  return { p, inserted, embedded };
 }
 
 describe('成功路径 — 围栏响应必须能解析', () => {
@@ -122,11 +119,6 @@ describe('失败路径 — 绝不写占位符', () => {
     expect(conv.ended_at).toBeTruthy();
   });
 
-  it('失败不阻塞后续步骤：事件仍被标记处理，画像提取照常跑', async () => {
-    const h = makeHarness({ response: '不是 JSON' });
-    await h.p.process('s1');
-    expect(h.processed).toEqual(['e1', 'e2']);
-  });
 });
 
 describe('★ 反例测试 —— 把事故固化成断言', () => {
@@ -168,7 +160,6 @@ describe('★ 补处理：0 行更新不算成功（KI-17）', () => {
     return new SessionEndProcessor(
       {
         getBySession: () => [ev('e1', '内容')],
-        markProcessed: () => {},
         updateImportance: () => {},
       } as any,
       { insert: async () => {}, updateSummaryResult: async () => updateResult, updateFactsStatus: () => ({ rows: 1 }), incrementFactsAttempts: () => {} } as any,

@@ -40,13 +40,14 @@ export function initializeDatabase(db: Database.Database): void {
       payload     TEXT NOT NULL,
       importance  REAL DEFAULT 0.0,
       created_at  TEXT NOT NULL,
-      processed   INTEGER DEFAULT 0,
       archived    INTEGER DEFAULT 0   -- ★ 8-15 会话归档(软删除):归档会话从列表消失,数据保留
     );
 
     CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id);
     CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at);
-    CREATE INDEX IF NOT EXISTS idx_events_unprocessed ON events(processed, created_at);
+    -- ★ 2026-10-26（retire-processed-bitmask，KI-27）：不再建 processed 列/索引。
+    --   旧库里的这两样是历史遗留、无人读写；不清掉是为了避免破坏性迁移
+    --   （新建库从源头就没有它们）。
 
     CREATE TABLE IF NOT EXISTS user_profile (
       id          INTEGER PRIMARY KEY DEFAULT 1,

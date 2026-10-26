@@ -12,7 +12,7 @@ import type { MemoryEvent } from '../../src/memory/types.js';
 
 const ev = (id: string, content: string, createdAt = '2026-09-26T00:00:00Z'): MemoryEvent => ({
   id, session_id: 's1', source: 'chat', type: 'message',
-  payload: { content, role: 'user' }, importance: 0, created_at: createdAt, processed: 0,
+  payload: { content, role: 'user' }, importance: 0, created_at: createdAt,
 });
 
 function makeProcessor(opts: {
@@ -22,10 +22,9 @@ function makeProcessor(opts: {
 } = {}) {
   const events = opts.events ?? [ev('e1', '你好')];
   const inserted: any[] = [];
-  const processed: string[] = [];
   const factsStatuses: Array<{ id: string; status: string }> = [];
   const p = new SessionEndProcessor(
-    { getBySession: () => events, markProcessed: (id: string) => processed.push(id), updateImportance: () => {} } as any,
+    { getBySession: () => events, updateImportance: () => {} } as any,
     {
       insert: async (c: any) => inserted.push(c),
       updateSummaryResult: async () => {},
@@ -46,7 +45,7 @@ function makeProcessor(opts: {
     { embed: async () => [0.1] } as any,
     null,   // 无向量库
   );
-  return { p, inserted, processed, factsStatuses };
+  return { p, inserted, factsStatuses };
 }
 
 describe('process() 返回结果 — 空转必须可区分', () => {

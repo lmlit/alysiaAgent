@@ -4,7 +4,6 @@ import Database from 'better-sqlite3';
 import { EventStore } from '../../../src/memory/stores/EventStore';
 import { initializeDatabase } from '../../../src/memory/database';
 import type { MemoryEvent } from '../../../src/memory/types';
-import { PROCESSED_PROFILE } from '../../../src/memory/types';
 import { logger } from '../../../src/utils/logger';
 
 describe('EventStore', () => {
@@ -29,7 +28,6 @@ describe('EventStore', () => {
     payload: { role: 'user', content: 'hello' },
     importance: 0.5,
     created_at: '2026-06-28T10:00:00Z',
-    processed: 0,
     ...overrides,
   });
 
@@ -46,41 +44,6 @@ describe('EventStore', () => {
   it('should return null for non-existent event', () => {
     const retrieved = store.getById('nonexistent');
     expect(retrieved).toBeNull();
-  });
-
-  it('should return unprocessed events ordered by created_at', () => {
-    store.insert(makeEvent({ id: 'e1', created_at: '2026-06-28T09:00:00Z' }));
-    store.insert(makeEvent({ id: 'e2', created_at: '2026-06-28T10:00:00Z' }));
-    store.insert(makeEvent({ id: 'e3', processed: PROCESSED_PROFILE, created_at: '2026-06-28T11:00:00Z' }));
-
-    const unprocessed = store.getUnprocessed(10);
-    expect(unprocessed).toHaveLength(2);
-    expect(unprocessed[0].id).toBe('e1'); // older first
-    expect(unprocessed[1].id).toBe('e2');
-  });
-
-  it('should respect limit on getUnprocessed', () => {
-    store.insert(makeEvent({ id: 'e1' }));
-    store.insert(makeEvent({ id: 'e2' }));
-    expect(store.getUnprocessed(1)).toHaveLength(1);
-  });
-
-  it('should mark event as processed with bitmask', () => {
-    store.insert(makeEvent({ id: 'e1' }));
-    store.markProcessed('e1', PROCESSED_PROFILE);
-
-    const event = store.getById('e1');
-    expect(event!.processed & PROCESSED_PROFILE).toBeTruthy();
-    expect(store.getUnprocessed(10)).toHaveLength(0);
-  });
-
-  it('should add flag without clearing existing flags', () => {
-    store.insert(makeEvent({ id: 'e1', processed: PROCESSED_PROFILE }));
-    store.markProcessed('e1', 2); // PROCESSED_SUMMARY
-
-    const event = store.getById('e1');
-    expect(event!.processed & PROCESSED_PROFILE).toBeTruthy();
-    expect(event!.processed & 2).toBeTruthy();
   });
 
   it('should count events by session', () => {
@@ -142,7 +105,7 @@ describe('EventStore — 8-09 归档/检索支持', () => {
   it('getActiveSessions：since 之后有消息的 session 去重返回', () => {
     const mk = (id: string, sid: string, at: string) => ({
       id, session_id: sid, source: 'chat', type: 'message', payload: { role: 'user', content: 'x' },
-      importance: 0.5, created_at: at, processed: 0,
+      importance: 0.5, created_at: at,
     });
     store.insert(mk('e1', 'sess-a', '2026-08-09T08:00:00.000Z'));
     store.insert(mk('e2', 'sess-a', '2026-08-09T09:00:00.000Z'));
@@ -189,13 +152,12 @@ describe('EventStore — KI-12 同 id 重投不可变语义', () => {
     payload: { role: 'user', content: 'hello' },
     importance: 0.5,
     created_at: '2026-06-28T10:00:00Z',
-    processed: 0,
     ...overrides,
   });
 
   const rowOf = (id: string) =>
-    db.prepare('SELECT archived, processed, importance, created_at, payload FROM events WHERE id = ?')
-      .get(id) as { archived: number; processed: number; importance: number; created_at: string; payload: string } | undefined;
+    db.prepare('SELECT archived, importance, created_at, payload FROM events WHERE id = ?')
+      .get(id) as { archived: number; importance: number; created_at: string; payload: string } | undefined;
 
   /** 主症：QQ 重连重投软删除会话的事件 → archived 被 INSERT OR REPLACE 回落 0（会话复活） */
   it('同 id 同内容重投：不复活软删除会话（archived 仍为 1）', () => {
@@ -209,17 +171,15 @@ describe('EventStore — KI-12 同 id 重投不可变语义', () => {
     expect(rowOf('evt-dup')!.archived).toBe(1);
   });
 
-  /** 主症：processed / importance / created_at 一概不许被重投改写 */
-  it('同 id 同内容重投：processed / importance / created_at 均不变', () => {
+  /** 主症：importance / created_at 一概不许被重投改写 */
+  it('同 id 同内容重投：importance / created_at 均不变', () => {
     store.insert(makeEvent({ importance: 0.5, created_at: '2026-06-28T10:00:00Z' }));
-    store.markProcessed('evt-dup', PROCESSED_PROFILE);
     store.updateImportance('evt-dup', 0.9);
 
     // 重投带不同元数据 —— 但 payload 相同（= 同内容），状态列一律不许改
-    store.insert(makeEvent({ importance: 0.1, created_at: '2026-07-01T00:00:00Z', processed: 0 }));
+    store.insert(makeEvent({ importance: 0.1, created_at: '2026-07-01T00:00:00Z' }));
 
     const row = rowOf('evt-dup')!;
-    expect(row.processed & PROCESSED_PROFILE).toBeTruthy(); // 不许归 0（否则再摘要 + 再画像提取）
     expect(row.importance).toBeCloseTo(0.9);                // 不许清掉 LLM 打的分数
     expect(row.created_at).toBe('2026-06-28T10:00:00Z');    // 不许挪出摘要窗口
   });
@@ -240,17 +200,14 @@ describe('EventStore — KI-12 同 id 重投不可变语义', () => {
   it('同 id 不同内容重投：冲突时不改任何状态列', () => {
     vi.spyOn(logger, 'warn').mockImplementation(() => {});
     store.insert(makeEvent({ importance: 0.5, created_at: '2026-06-28T10:00:00Z' }));
-    store.markProcessed('evt-dup', PROCESSED_PROFILE);
 
     store.insert(makeEvent({
       payload: { role: 'user', content: '重投内容' },
       importance: 0.99,
       created_at: '2026-09-01T00:00:00Z',
-      processed: 0,
     }));
 
     const row = rowOf('evt-dup')!;
-    expect(row.processed & PROCESSED_PROFILE).toBeTruthy();
     expect(row.importance).toBeCloseTo(0.5);
     expect(row.created_at).toBe('2026-06-28T10:00:00Z');
   });
@@ -270,7 +227,6 @@ describe('EventStore — KI-12 同 id 重投不可变语义', () => {
 
     const row = rowOf('evt-brand-new')!;
     expect(row.archived).toBe(0);
-    expect(row.processed).toBe(0);
     expect(store.getById('evt-brand-new')).not.toBeNull();
     expect(store.countBySession('sess-new')).toBe(1);
   });

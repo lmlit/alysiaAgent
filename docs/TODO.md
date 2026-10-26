@@ -40,35 +40,31 @@
 
 | 条目 | 一句话 | 卡在 | 权威出处 |
 |---|---|---|---|
-| **`pipelineMode` 没有写者**（P9） | 全仓只有默认 `'chat'`，无赋值 ⇒ `assembleCode` 生产不可达，只有单测能到；而 `CLAUDE.md` 写成"控制组装模式" | 🧑 接线 / 标死 / 删 | [PLAN §2.7](PLAN-2026-10-24-context-and-rules.md#L191) |
-| **KI-27** | `processed` 位掩码只写不读；唯一读者只被 compaction 自己调用 | 🧑 赋语义 / 删一半 | [KNOWN-ISSUES #KI-27](KNOWN-ISSUES.md#L876) |
 | **组装器第 4 步 `genres`**（P8） | 8 条生成链路的预算/采样/persona 节数/forbids 还在函数体里；前三步已归档 | 🤖 1–2 天，行为会变（要快照） | [PLAN §2.6](PLAN-2026-10-24-context-and-rules.md#L149) |
-| **P4 `{{alysia_life}}` 恒空** | dsh 模板变量注册了、回调固定 `return undefined`；dsh 已降权 | 🧑 填上 / 删掉 | [PLAN §2.5](PLAN-2026-10-24-context-and-rules.md#L133) |
-| **P5 生活 context 不含画像** | `life.ts` 的事件 context 没有任何 `basics/facts/偏好`；8-29 注释显示**很可能是故意的** | 🧑 澄清：要不要一小块"关于你"（称呼/禁忌） | [PLAN §2.3](PLAN-2026-10-24-context-and-rules.md#L104) |
 | **KI-10** | 内核缺「只排序、不依赖服务」的表达（`after?`）；只有 1 处，结论是暂不加 | ⏸ 记着待观察 | [KNOWN-ISSUES #KI-10](KNOWN-ISSUES.md#L420) |
+
+> ✅ P9（`pipelineMode` 标死）、KI-27（位掩码退役）、P4（删 `alysia_life`）、
+> P5（写清设计意图）已按 2026-10-26 决定处理，见 F 段。
 
 ## C. 能力机会（不是缺陷，是"要不要做"）
 
 | 条目 | 一句话 | 卡在 | 权威出处 |
 |---|---|---|---|
-| `build-alysia-console-plugin` | 面板 1/2 已做；剩 3 个面板（世界书/生活模板、记忆旋钮、审计）+ `install_bundle` 真机验收 + A.3–A.5 | 🧑 dsh 已降权，**还投不投** | [tasks](../openspec/changes/build-alysia-console-plugin/tasks.md) |
-| `add-approval-gate` | 设计完整（answerer + 待批表 + QQ 提问 + 会话早检 + `needs_approval`），**一条没实现** | 🧑 现在要不要做 | [proposal](../openspec/changes/add-approval-gate/proposal.md) |
-| `retire-glm-vision-bridge` | DeepSeek 原生能看图，GLM 层冗余；但 GLM 免费、记忆是纯文本 | ⏸ 你说"先不改，记一下" | [proposal](../openspec/changes/retire-glm-vision-bridge/proposal.md) |
-| `improve-sticker-selection` | 无权重/冷却/管理入口；动手前先定三件事（场景分组 / 启停位置 / 冷却作用域） | 🧑 先定判据 | [proposal](../openspec/changes/improve-sticker-selection/proposal.md) |
+| `build-alysia-console-plugin` | 面板 1/2 已做；剩 3 个面板 + `install_bundle` 真机验收 + A.3–A.5 | ⏸ **2026-10-26 冻结**（dsh 已降权） | [tasks](../openspec/changes/build-alysia-console-plugin/tasks.md) |
+| `add-approval-gate` | 设计完整（answerer + 待批表 + QQ 提问 + 会话早检 + `needs_approval`），**一条没实现** | ⏸ **2026-10-26 缓**：等委托任务真的跑危险动作 | [proposal](../openspec/changes/add-approval-gate/proposal.md) |
+| `retire-glm-vision-bridge` | DeepSeek 原生能看图，GLM 层冗余；但 GLM 免费、记忆是纯文本 | ⏸ 保持现状（你说"先不改，记一下"） | [proposal](../openspec/changes/retire-glm-vision-bridge/proposal.md) |
+| `improve-sticker-selection` | 无权重/冷却/管理入口；动手前先定三件事（场景分组 / 启停位置 / 冷却作用域） | ⏸ **2026-10-26 先不做**（三件事未定） | [proposal](../openspec/changes/improve-sticker-selection/proposal.md) |
 | `tune-recall-with-runtime-data` | 召回系数是拍的；`[Recall]` 观测已有 | ⏳ 等真实分布 | [proposal](../openspec/changes/tune-recall-with-runtime-data/proposal.md) |
-| `add-ops-health-report` | 缺正确性指标（22 天摘要全灭时 health 全绿）；前置是日志源头分级/限频 | 🧑 原话"日报算了" | [proposal](../openspec/changes/add-ops-health-report/proposal.md) |
-| `console-a11y-motion` | console 17 处动画无 `prefers-reduced-motion` | ⏸ 先记着 | [proposal](../openspec/changes/console-a11y-motion/proposal.md) |
-| `record-out-of-band-server-config-change` | 生产 `sampling` 等配置与仓库漂移；6 条未做 | 🧑 需连服务器 diff | [proposal](../openspec/changes/record-out-of-band-server-config-change/proposal.md) |
-| 看门狗提醒的"硬度" | 提不提完全交给她（真机验时只寒暄了）；可加一句"碍着活就说" | 🧑 一句话的事 | [archive](../openspec/archive/2026-10-19-watch-for-stuck-work/tasks.md) |
+| `add-ops-health-report` | 缺正确性指标（22 天摘要全灭时 health 全绿）；前置是日志源头分级/限频 | ⏸ **2026-10-26 不做**（要做先清日志源） | [proposal](../openspec/changes/add-ops-health-report/proposal.md) |
+| `record-out-of-band-server-config-change` | 两个预算已进默认值；剩 `life.generateSummary`/`deepRewrite` 校准 + 完整服务器 diff | ⏳ 等数据 / 🧑 需 host | [proposal](../openspec/changes/record-out-of-band-server-config-change/proposal.md) |
 | 唤醒派发多实例租约 | 派发是单实例进程内的；开第二个实例会重复领队列 | ⏳ 等多实例需求 | [project-tasks §18](../openspec/specs/project-tasks/spec.md) |
 
 ## D. 部署 / 数据债
 
 | 条目 | 一句话 | 卡在 | 权威出处 |
 |---|---|---|---|
-| **历史画像回填** | 线上 `basics`/`facts` 长期稀疏，修复只保证从此往后；回填要重跑历史 `onSessionEnd`（真 LLM，且会改画像/人格） | 🧑 做不做、做多大 | [KNOWN-ISSUES](KNOWN-ISSUES.md#L900) |
-| **31 条 `needs_review`** | 10-19 存量（24 条卡 `intent`，18 条结果 ≤80 字）；不阻塞、watchdog 不报 | 🧑 清不清（**当前线上数量未复查**） | [验收记录 §4](ACCEPTANCE-2026-10-19-WAKE.md) |
-| **本机 ~498MB 杂物** | `packages/server/alysia-image.tar` 125.6MB、`packages/core/alysia-deploy.tar.gz` 123.1MB、`.tools/staging/*.tar.gz` 2×124.8MB，均未跟踪 | 🧑 点头就删 | [prune tasks](../openspec/archive/2026-10-25-prune-old-rollback-images/tasks.md) |
+| **历史画像回填** | 线上 `basics`/`facts` 稀疏；**只读盘点脚本已就绪**（`scripts/audit-historical-profile.cjs`），重放未做 | ⏳ 等 host 跑盘点，再选 D 案（只补 failed 窗口） | [KNOWN-ISSUES](KNOWN-ISSUES.md#L914) |
+| **31 条 `needs_review`** | 10-19 存量（24 条卡 `intent`，18 条结果 ≤80 字）；不阻塞、watchdog 不报 | ⏸ **2026-10-26 不动** | [验收记录 §4](ACCEPTANCE-2026-10-19-WAKE.md) |
 
 ## E. 暂停 / 不做
 
@@ -80,11 +76,18 @@
 
 ## F. 最近销账（2026-10-24 ～ 10-26）
 
-> 26 条 KI 中 **21 条已修**，在办 5 条（KI-1 / 2 / 10 / 11 / 25）；KI-27 单列待决策。
-> 证据在各 archive 的 proposal / tasks。
+> 26 条 KI 中 **21 条已修**，在办 5 条（KI-1 / 2 / 10 / 11 / 25）；
+> 另有 KI-27 已于 2026-10-26 销账。证据在各 archive 的 proposal / tasks。
 
 | 日期 | 条目 | 依据 |
 |---|---|---|
+| 10-26 | **预算默认值**：personalize 256→1024、session.summary 2048→4096 | [`apply-decisions-2026-10-26`](../openspec/archive/2026-10-26-apply-decisions-2026-10-26/proposal.md) |
+| 10-26 | **KI-27** `processed` 位掩码退役（含 compaction） | 同上 |
+| 10-26 | **P4** 删 `{{alysia_life}}` 空变量；**P5** 写清生活 context 不含画像 | 同上 |
+| 10-26 | **P9** `pipelineMode` 标死（保留 `assembleCode`，文档改为仅 API/测试可达） | 同上 |
+| 10-26 | **console a11y** 17 处动画加 `prefers-reduced-motion` | 同上 |
+| 10-26 | **看门狗**加“正挡着活就说一声” | 同上 |
+| 10-26 | 本机 498.2MB 部署杂物已删 | 同上 |
 | 10-26 | **KI-5** 最后 2 处裸 catch（QQ 适配器）+ `check-bare-catch` 机器闸 | [`harden-silent-failures`](../openspec/archive/2026-10-26-harden-silent-failures/proposal.md) |
 | 10-26 | **KI-26** 摘要锚点（早已修，本次销账） | [`fix-summary-anchor-floor`](../openspec/archive/2026-10-16-fix-summary-anchor-floor/proposal.md) |
 | 10-26 | **P6** 表态时钟 / 值得说 | [`worth-telling-and-silence-clock`](../openspec/archive/2026-10-25-worth-telling-and-silence-clock/proposal.md) |

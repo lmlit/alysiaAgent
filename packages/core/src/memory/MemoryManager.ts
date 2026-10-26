@@ -236,7 +236,7 @@ export class MemoryManager {
       this.personaAdapter, summaryLlm, this.embedService, this.vectorStore,
     );
     this.cronProcessor = new CronProcessor(
-      this.eventStore, this.conversationStore, this.knowledgeStore,
+      this.conversationStore, this.knowledgeStore,
       this.profileStore, this.profileExtractor, deepRewriteLlm, this.vectorStore,
     );
 
@@ -1410,7 +1410,7 @@ export class MemoryManager {
       // ★ **从未摘要过** ⇒ 从头摘（**不设时间上限**，理由见"为什么无界是安全的"）。
       //
       //   ⚠️ **为什么"从头摘"不会造成二次摘要**：
-      //       `getBySession` **不按 `processed` 过滤**，所以窗口锚点是唯一的闸；
+      //       `getBySession` **不按"已处理"状态过滤**，所以窗口锚点是唯一的闸；
       //       而这里的前提是「一条会话记录都没有」⇒ 这个会话**从来没被摘过** ⇒
       //       从头摘正是它该做的事。一旦摘过一次，下面就走 `ended_at` 分支。
       //
@@ -1444,7 +1444,7 @@ export class MemoryManager {
     // 有历史摘要 → 从它之后继续。`ended_at` 是**数据边界**（§5.4.1 契约 4）。
     // ⚠️ 有记录却 `ended_at` 为空 → **保守到底，就是旧的 24h**（**不要**跟着放宽）：
     //    那个分支**没有已知边界**（正常写入路径一定会填 `ended_at`），
-    //    而 `getBySession` 不按 `processed` 过滤 ⇒ 窗口放宽多少就可能重摘多少。
+    //    而 `getBySession` 不按"已处理"状态过滤 ⇒ 窗口放宽多少就可能重摘多少。
     //    宁可漏（它至少还会被下一次的窗口重新考虑），也不要回头重摘已学过的历史。
     const anchor = last.ended_at
       ? new Date(last.ended_at)

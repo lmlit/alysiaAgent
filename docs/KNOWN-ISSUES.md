@@ -885,7 +885,12 @@
 
 ---
 
-### KI-27 🟡 `processed` 位掩码**只写不读**（"已处理"没有消费者）
+### KI-27 ✅ `processed` 位掩码**只写不读**（"已处理"没有消费者）—— 2026-10-26 已删
+
+> ✅ **2026-10-26 结项**（change: `apply-decisions-2026-10-26`，用户选 B 案）：
+> `PROCESSED_*`、`EventStore.getUnprocessed/markProcessed`、`CronProcessor.compactOldEvents`
+> 全部删除；旧库的 `processed` 列保留但**无人读写**（避免破坏性迁移），新库不再创建。
+> 真实状态只认 `summary_status` / `facts_status` / `archived`。下面保留原始记录。
 
 - **现象**：`events.processed` 是位掩码（1=画像 / 2=摘要 / 4=人格 / 8=知识），
   写入点遍布 `RealtimeProcessor` / `SessionEndProcessor` / `CronProcessor`，
@@ -913,4 +918,4 @@
 
 | 名字 | 内容 | 出处 |
 |---|---|---|
-| 历史画像回填 | 线上 `basics`/`facts` 长期稀疏，修复只保证从此往后；回填需重跑历史 `onSessionEnd`，成本与副作用待评估 | `fix-profile-extract-empty-response` tasks 遗留 |
+| 历史画像回填 | 线上 `basics`/`facts` 长期稀疏，修复只保证从此往后；回填需重跑历史 `onSessionEnd`，成本与副作用待评估。★ **2026-10-26**：只读盘点脚本已就绪 `scripts/audit-historical-profile.cjs`（统计从未结算的 session / `facts_status=failed` / basics 空洞；**不写入**）；生产盘点待 host，**重放未做** | `fix-profile-extract-empty-response` tasks 遗留 + `apply-decisions-2026-10-26` |

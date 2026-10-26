@@ -4,7 +4,7 @@
 
 - **日期**: 2026-10-18
 - **类型**: NEW（人在环上的逐次审批）
-- **状态**: **pending**（已设计、未实现；按 `openspec/project.md` 的「已声明但暂时不做」登记）
+- **状态**: **pending（2026-10-26 决定缓做）**：设计保留；等委托任务真的跑“删库/暴露网关”这类动作再实现
 - **影响 spec**: `project-tasks`（新增 `needs_approval` 状态与审批契约）、`dsh-adapter`（新插件）
 - **前置**：`harden-delegated-runtime`（能力边界已立：非 root + 读不到凭据/记忆库 + 独立 DSH_HOME）
 

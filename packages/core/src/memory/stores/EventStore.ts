@@ -64,7 +64,7 @@ export class EventStore {
     // 旧实现 `INSERT OR REPLACE` 的列单**不含 `archived`**（而它是 `DEFAULT 0`），于是
     // 同 id 重投（QQ 重连 / dsh 重传）会**静默**：
     //   - 复活软删除的会话（archived 回落 0）
-    //   - 把已摘要事件的 processed 归 0 → **再摘要 + 再画像提取**（重复学习副作用）
+    //   - 把已摘要事件的状态归 0 → **再摘要 + 再画像提取**（重复学习副作用）
     //   - 清掉 LLM 打的 importance
     //   - 改写 created_at（可能把事件挪出摘要窗口）
     //
@@ -78,7 +78,7 @@ export class EventStore {
       .get(event.id) as { payload: string; session_id: string } | undefined;
 
     if (existing) {
-      // ① 同 id 同内容 → 幂等空转：**任何列都不许改**（archived/processed/importance/created_at）
+      // ① 同 id 同内容 → 幂等空转：**任何列都不许改**（archived/importance/created_at）
       if (normalizePayload(existing.payload) === normalizePayload(payload)) return;
 
       // ② 同 id 不同内容 → **不覆盖**，保留原有事件，响亮报冲突
@@ -91,11 +91,11 @@ export class EventStore {
       return;
     }
 
-    // ③ 新 id → 正常插入（列单与旧实现一致；archived 走表默认 0，这是对的）
+    // ③ 新 id → 正常插入（archived 走表默认 0，这是对的）
     // ★ 8-28 perspective 列（memory-character-perspective）
     this.db.prepare(`
-      INSERT INTO events (id, session_id, source, type, payload, importance, created_at, processed, perspective, channel)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO events (id, session_id, source, type, payload, importance, created_at, perspective, channel)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       event.id,
       event.session_id,
@@ -104,7 +104,6 @@ export class EventStore {
       payload,
       event.importance,
       event.created_at,
-      event.processed,
       event.perspective ?? 'interaction',
       // ★ 2026-10-16（add-memory-channel-field）：渠道**写入时**就记下来。
       //   显式给了就用给的；没给则从 session_id 派生（判据在 utils/channel.ts，有测试锁）。
@@ -119,22 +118,12 @@ export class EventStore {
     return this.rowToEvent(row);
   }
 
-  getUnprocessed(limit: number): MemoryEvent[] {
-    const rows = this.db.prepare(
-      'SELECT * FROM events WHERE processed = 0 ORDER BY created_at ASC LIMIT ?'
-    ).all(limit) as Record<string, unknown>[];
-    return rows.map(r => this.rowToEvent(r));
-  }
-
-  markProcessed(id: string, flag: number): void {
-    const r = this.db.prepare(
-      'UPDATE events SET processed = processed | ? WHERE id = ?'
-    ).run(flag, id);
-    traceZeroRows('EventStore.markProcessed', r.changes);
-  }
+  // ★ 2026-10-26（retire-processed-bitmask，KI-27）：`getUnprocessed` / `markProcessed`
+  //   已删除。位掩码只写不读，唯一读者只被 compaction 自己调用 —— 那是"看起来在工作"。
+  //   需要判断"学过没有"时看 `summary_status` / `facts_status` / `archived`。
 
   /** ★ 9-25 wire-importance-signal：回填重要性（SessionEnd 的 LLM 顺带打分）。
-   *  与 markProcessed 一样走 UPDATE，不重写整行（避免覆盖其他字段）。 */
+   *  走 UPDATE，不重写整行（避免覆盖其他字段）。 */
   updateImportance(id: string, importance: number): void {
     const r = this.db.prepare('UPDATE events SET importance = ? WHERE id = ?')
       .run(Math.min(1, Math.max(0, importance)), id);
@@ -348,7 +337,6 @@ export class EventStore {
       payload: JSON.parse(row.payload as string),
       importance: row.importance as number,
       created_at: row.created_at as string,
-      processed: row.processed as number,
     };
   }
 }
