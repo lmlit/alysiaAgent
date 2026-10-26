@@ -51,4 +51,4 @@
 ## 验证与归档
 - [x] 全量测试 Node 24：**170 文件 / 1985 用例全绿**
 - [x] 归档到 `openspec/archive/2026-10-26-apply-decisions-2026-10-26/`
-- [ ] 提交 + 推送到 origin/master
+- [x] 提交 + 推送到 origin/master（`a107297`）
