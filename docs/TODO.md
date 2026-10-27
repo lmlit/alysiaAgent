@@ -63,7 +63,7 @@
 
 | 条目 | 一句话 | 卡在 | 权威出处 |
 |---|---|---|---|
-| **历史画像回填** | **2026-10-27 线上只读盘点**：events 3105 / conversations 350 / 95 个 session 有事件、**84 个从未结算**；summary 全 `ok`；facts `ok 15 / pending 330 / skipped 5 / failed 0`；`basics` 1226 字、facts 117、character_facts 56。⇒ 真缺口不是“basics 空”，而是 **330 个 pending 窗口 + 84 个未结算 session** | 🧑 要不要补 pending/未结算（需先定性 pending 是历史默认值还是漏跑）；重放未做 | [KNOWN-ISSUES](KNOWN-ISSUES.md#L914) |
+| **历史画像回填** | **2026-10-27 线上只读细分**：`pending 330` 实为 **12 个 session 的窗口**（313 个来自同一个 QQ 私聊），其中 **315/330 所属 session 已有 facts**（`facts_attempts` 全 0）⇒ 是**状态滞后，不是学习缺口**。`84 个未结算` 中 **69 个是委托/合成会话**（388 事件，按设计不学），**真正该结算的只有 15 个 session / 415 事件**（13 dsh + 2 QQ，7-26～10-02） | 🧑 是否补这 15 个（dsh 写通道已切；建议至多补 2 个 QQ）；重放未做 | [KNOWN-ISSUES](KNOWN-ISSUES.md#L914) |
 | **31 条 `needs_review`** | 10-19 存量（24 条卡 `intent`，18 条结果 ≤80 字）；不阻塞、watchdog 不报 | ⏸ **2026-10-26 不动** | [验收记录 §4](ACCEPTANCE-2026-10-19-WAKE.md) |
 
 ## E. 暂停 / 不做
