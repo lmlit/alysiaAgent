@@ -83,7 +83,7 @@ ALYSIA_DEPLOY_HOST=root@<host> pnpm deploy       # 真部署（内部**强制**�
 ## Current State
 
 **记忆系统核心 + 架构重构 + Feature Flag + AI 主动生活系统 + 模块化内核 + dsh 通道全部完成。**
-测试基线：**1985**（**170** 个测试文件，★ 2026-10-26 实测全绿；原写 1911 已过期，
+测试基线：**1992**（**171** 个测试文件，★ 2026-10-28 实测全绿；原写 1911 已过期，
 分 package 的数字以 `docs/HANDOFF.md` 顶部为准 —— 本行只是快照）
 + **E2E 5/5**（真实 API）。⚠️ 跑测试**必须用 Node 24**（`E:\nodejs24\node.exe`），
 PATH 上的 node 是 v20，而 better-sqlite3 是给 24 编的 —— 否则 401 条全挂（`NODE_MODULE_VERSION` 不匹配）。

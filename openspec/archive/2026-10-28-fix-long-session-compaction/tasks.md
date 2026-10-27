@@ -19,5 +19,6 @@
 ## 4. 验证与归档
 - [x] Node 24 全量测试：**171 文件 / 1992 用例全绿**
 - [x] 本地 `pnpm chat -- --fresh --turns 4` 真聊（4 轮均正常，1.6–1.9s）
-- [ ] 部署生产 + 记录回滚点/健康检查
-- [ ] 更新 memory-system spec、归档
+- [x] 部署生产：镜像 `200e6f1127e4`，回滚点 `rollback-20261028-010920`；
+      `Up (healthy)`、health 200、Bot ONLINE、13/13 模块；容器 dist 已核对冷却/facts required
+- [x] 更新 memory-system spec §12、归档
