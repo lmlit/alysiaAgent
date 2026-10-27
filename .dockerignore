@@ -25,3 +25,23 @@ tests
 tmp-*.ts
 Dockerfile
 compose.yml
+
+# ★ 2026-10-27：构建上下文曾膨胀到数 GB（.video-demo 760MB / blog 537MB /
+#   .probe 475MB / .tmp 382MB / packages 905MB），docker compose build 卡在
+#   “Building” 7 小时无进展。镜像真正需要的只有：根 package/lock/workspace、
+#   core+server 的 src/package/tsconfig、console/out。
+.video-demo
+.probe
+.tmp
+.tools
+blog
+cyrene-assets
+packages/halo-theme-xilian
+packages/dsh-adapter
+packages/dsh-console
+packages/console/.next
+packages/console/app
+packages/console/public
+packages/console/scripts
+packages/*/tests
+packages/*/scripts

@@ -918,4 +918,4 @@
 
 | 名字 | 内容 | 出处 |
 |---|---|---|
-| 历史画像回填 | 线上 `basics`/`facts` 长期稀疏，修复只保证从此往后；回填需重跑历史 `onSessionEnd`，成本与副作用待评估。★ **2026-10-26**：只读盘点脚本已就绪 `scripts/audit-historical-profile.cjs`（统计从未结算的 session / `facts_status=failed` / basics 空洞；**不写入**）；生产盘点待 host，**重放未做** | `fix-profile-extract-empty-response` tasks 遗留 + `apply-decisions-2026-10-26` |
+| 历史画像回填 | 线上 `basics`/`facts` 长期稀疏，修复只保证从此往后；回填需重跑历史 `onSessionEnd`，成本与副作用待评估。★ **2026-10-27 线上只读盘点**（`scripts/audit-historical-profile.cjs`）：events 3105 / conversations 350 / 95 个 session 有事件、**84 个从未结算**；summary 全 `ok`；facts `ok 15 / pending 330 / skipped 5 / failed 0`；basics 1226 字、facts 117、character_facts 56、basics_source 3 键。⇒ 真缺口是 **pending 窗口 + 未结算 session**（不是 basics 空）。**重放未做** | `fix-profile-extract-empty-response` tasks 遗留 + `apply-decisions-2026-10-26` |
