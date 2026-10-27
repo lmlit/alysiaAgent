@@ -918,4 +918,4 @@
 
 | 名字 | 内容 | 出处 |
 |---|---|---|
-| 历史画像回填 | 线上 `basics`/`facts` 长期稀疏，修复只保证从此往后；回填需重跑历史 `onSessionEnd`，成本与副作用待评估。★ **2026-10-27 线上只读细分**（`scripts/audit-historical-profile.cjs`）：events 3105 / conversations 350 / basics 1226 字 / facts 118 / character_facts 56；`pending 330` 实为 12 个 session 的窗口（313 个来自同一个 QQ 私聊），**315/330 所属 session 已有 facts**（`facts_attempts` 全 0）⇒ **状态滞后，不是学习缺口**；`84 个未结算` 中 **69 个是委托/合成会话**（388 事件，按设计不学），**真正该结算的只有 15 个 session / 415 事件**（13 dsh + 2 QQ，7-26～10-02）。**重放未做** | `fix-profile-extract-empty-response` tasks 遗留 + `apply-decisions-2026-10-26` |
+| ~~历史画像回填~~ ✅ 定案不补 | 线上 `basics`/`facts` 长期稀疏，修复只保证从此往后；回填需重跑历史 `onSessionEnd`。★ **2026-10-27 只读细分**：`pending 330` 实为 12 个 session 的窗口（313 个来自同一个 QQ 私聊），**315/330 所属 session 已有 facts**（`facts_attempts` 全 0）⇒ **状态滞后，不是学习缺口**；`84 个未结算` 中 **69 个是委托/合成会话**（388 事件，按设计不学），真正干净的只有 15 个 session / 415 事件。★ **2026-10-28 定案：不补** —— 15 个干净会话里的 2 个 QQ 实际只有 **1 条 5 字私聊 + 2 条 0/4 字群聊**（补了只会产生噪声/群成员污染），13 个 dsh 已切写。**未写库。** | `fix-profile-extract-empty-response` tasks 遗留 + `apply-decisions-2026-10-26` |

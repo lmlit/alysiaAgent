@@ -63,7 +63,6 @@
 
 | 条目 | 一句话 | 卡在 | 权威出处 |
 |---|---|---|---|
-| **历史画像回填** | **2026-10-27 线上只读细分**：`pending 330` 实为 **12 个 session 的窗口**（313 个来自同一个 QQ 私聊），其中 **315/330 所属 session 已有 facts**（`facts_attempts` 全 0）⇒ 是**状态滞后，不是学习缺口**。`84 个未结算` 中 **69 个是委托/合成会话**（388 事件，按设计不学），**真正该结算的只有 15 个 session / 415 事件**（13 dsh + 2 QQ，7-26～10-02） | 🧑 是否补这 15 个（dsh 写通道已切；建议至多补 2 个 QQ）；重放未做 | [KNOWN-ISSUES](KNOWN-ISSUES.md#L914) |
 | **31 条 `needs_review`** | 10-19 存量（24 条卡 `intent`，18 条结果 ≤80 字）；不阻塞、watchdog 不报 | ⏸ **2026-10-26 不动** | [验收记录 §4](ACCEPTANCE-2026-10-19-WAKE.md) |
 
 ## E. 暂停 / 不做
@@ -88,6 +87,7 @@
 | 10-26 | **console a11y** 17 处动画加 `prefers-reduced-motion` | 同上 |
 | 10-26 | **看门狗**加“正挡着活就说一声” | 同上 |
 | 10-26 | 本机 498.2MB 部署杂物已删 | 同上 |
+| 10-28 | **历史画像回填：定案不补**。细分：330 pending 是状态滞后（315/330 所属 session 已有 facts）；84 未结算里 69 个是机器会话；真正干净的 15 个中，2 个 QQ 分别只有 1 条 5 字私聊、2 条 0/4 字群聊（补了只会产生噪声/群成员污染），13 个 dsh 已切写 ⇒ 不值得 | 本条已关闭；证据在 [KNOWN-ISSUES](KNOWN-ISSUES.md#L921) |
 | 10-27 | **已发版**：`rollback-20261027-083150`，health 200 / Bot ONLINE；容器内预算已核对 | [apply-decisions tasks](../openspec/archive/2026-10-26-apply-decisions-2026-10-26/tasks.md) |
 | 10-27 | **构建上下文瘦身**（曾卡 7 小时）：`.dockerignore` 排掉素材/实验目录 | [`slim-docker-build-context`](../openspec/archive/2026-10-27-slim-docker-build-context/proposal.md) |
 | 10-26 | **KI-5** 最后 2 处裸 catch（QQ 适配器）+ `check-bare-catch` 机器闸 | [`harden-silent-failures`](../openspec/archive/2026-10-26-harden-silent-failures/proposal.md) |
