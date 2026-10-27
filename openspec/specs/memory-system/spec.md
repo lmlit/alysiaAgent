@@ -1891,3 +1891,32 @@ CLI `/clear`、`/new`、上下文压缩钩子、Web `extractProfile` 都已按�
 - **判据唯一化**：`conversations.summary_status` / `facts_status` / `events.archived`。
 - 旧库的 `processed` 列与索引保留但**无人读写**（避免破坏性迁移）；新库不再创建。
 - 任何“这条学过没有”的新逻辑**禁止**再引入第二套状态。
+
+## 12. 单 session 长会话：窗口、压缩与预算（2026-10-28，change: `fix-long-session-compaction`）
+
+### 12.1 不依赖 session 结束
+
+- QQ 私聊的 session id 是**固定**的，不能靠切 session 做记忆边界。
+- 记忆边界是 **`summaryAnchor`**：该 session 最新一条 `conversations.ended_at`；
+  从未摘要过则从最早事件开始（减 1ms，窗口下界排他）。
+- `SessionEndProcessor.process(sessionId, since)` 只摘 `since` 之后的事件，写完一条
+  `conversations` 行并推进锚点。**一条长会话因此变成多个摘要窗口**；cron 每 6h 兜底。
+- 事件流水 + 单条向量是底层：即使窗口还没生成，旧消息仍可被 `memories` 召回。
+
+### 12.2 线上暴露的三个调度问题与修法
+
+- **请求太密**：旧实现 `usage.input > 8000` 后**每轮**都请求 `onSessionEnd`；摘要 20–30s，
+  后来者被 per-session mutex 判 `in-flight` 跳过。线上 7 天同一 session 产生 313 个窗口。
+  ⇒ 新增 `shouldRequestCompaction()` + `COMPACTION_COOLDOWN_MS = 10min`，per-session 冷却。
+- **跳过被当成失败**：`skipped(in-flight/no-events/no-dialogue)` 也 `markCompactionFailed`
+  ⇒ 暂停截断 ⇒ 上下文继续涨。⇒ 只有 `summary === 'failed'` 或抛错才 hold；
+  `shouldHoldTruncation()` 是这条判据的唯一出处。
+- **facts 被预算挤掉**：facts 原为 optional，3200 预算下 7 天整块丢 **89 次**（memories 48 次）。
+  ⇒ facts 改 `required`，并在组装层限量取**置信度前 40 条**（`FACTS_IN_PROMPT`）；
+  超预算先丢 optional 块，不丢“关于你的事实”。被截掉的 facts 仍留库、可检索。
+
+### 12.3 明确未变
+
+- `summaryAnchor` 的窗口语义不变（窗口化本身是正确的）。
+- cron `archiveStaleSessions` 的 6h 兜底不变，不受对话内联冷却影响。
+- 召回链路（p50 ~14s）与 `summaryAnchor` 历史窗口合并不在本节范围。

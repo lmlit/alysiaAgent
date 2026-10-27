@@ -61,9 +61,10 @@ describe('块注册表 —— 策略由注册表派生', () => {
     }
   });
 
-  it('required 只有 selfNotice / persona / brevity', () => {
+  it('required 只有 selfNotice / persona / facts / brevity', () => {
     const required = CHAT_BLOCKS.filter((b) => b.policy === 'required').map((b) => b.key);
-    expect(required).toEqual(['selfNotice', 'persona', 'brevity']);
+    // ★ 2026-10-28（fix-long-session-compaction）：facts 从 optional 提升为 required。
+    expect(required).toEqual(['selfNotice', 'persona', 'facts', 'brevity']);
   });
 });
 

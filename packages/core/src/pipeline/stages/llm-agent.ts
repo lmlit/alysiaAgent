@@ -8,6 +8,12 @@ import { logger } from '../../utils/logger.js';
 import { dialogueSpeaker } from '../../memory/render-dialogue.js';
 // ★ 2026-10-20（change: observe-and-hold-context-compaction）
 import { markCompactionFailed, clearCompactionFailed } from '../../memory/compaction-status.js';
+// ★ 2026-10-28（change: fix-long-session-compaction）：压缩请求节流
+import {
+  COMPACTION_COOLDOWN_MS,
+  shouldRequestCompaction,
+  shouldHoldTruncation,
+} from '../../memory/compaction-scheduler.js';
 
 /**
  * ★ 2026-10-20：触发记忆压缩的 input token 阈值。
@@ -61,6 +67,8 @@ export function parseIntentMarks(text: string): {
 export class LLMAgentStage implements Stage {
   private runner!: AgentRunner;
   private ctx!: PipelineContext;
+  /** ★ 2026-10-28：per-session 上次请求压缩的时间（只控对话内联触发，cron 不受影响） */
+  private lastCompactionRequestAt = new Map<string, number>();
 
   async initialize(ctx: PipelineContext): Promise<void> {
     this.ctx = ctx;
@@ -315,39 +323,67 @@ export class LLMAgentStage implements Stage {
       // 上下文超过阈值 → 触发记忆压缩（生成会话摘要，下轮以【最近对话】回到 prompt）
       if (usage.input > CONTEXT_COMPACT_TRIGGER_TOKENS) {
         const sid = event.unifiedMsgOrigin;
-        // ★ 2026-10-20（change: `observe-and-hold-context-compaction`）：
-        //   这个阈值以前**完全无痕** —— 不打印、不计数，没人知道线上触发过几次、
-        //   成功过几次。更要紧的是它与 `ctx.truncate` **没有联动**：
-        //   摘要失败时，截断照旧把"还没被摘要覆盖"的对话丢掉 ⇒ 那段真的没了。
-        //   现在：触发留痕 + 结果留痕 + 失败登记（runner 据此暂缓截断）。
-        logger.info(
-          `[Compact] input=${usage.input} > ${CONTEXT_COMPACT_TRIGGER_TOKENS} → 触发会话摘要` +
-          ` session=${sid.slice(-12)}`,
-        );
-        this.ctx.memoryManager.onSessionEnd(sid)
-          .then((r) => {
-            // ★ 2026-10-21（change: `unify-memory-eligibility`，C4/E6）：
-            //   原来这里**.then 就等于"摘要完成"** —— 而摘要失败是**返回值**不是异常，
-            //   于是失败也会恢复截断：那段没被摘要覆盖的对话照样被丢掉。
-            //   现在按真实结果分支：只有 `summary === 'ok'` 才算摘到。
-            if (r.summary === 'ok') {
-              clearCompactionFailed(sid);
-              logger.info(`[Compact] 摘要完成 → 恢复截断 session=${sid.slice(-12)}`);
-            } else {
+        const now = Date.now();
+        // ★ 2026-10-28（change: `fix-long-session-compaction`）：
+        //   旧行为是“每轮超阈值都请求一次”，而摘要要 20–30s；后来者被 mutex 判成
+        //   `in-flight` 跳过，跳过又被当成失败 ⇒ 暂停截断 ⇒ 上下文继续涨。
+        //   这里加 per-session 冷却：超阈值只代表“该考虑压缩”，不代表“每轮都请求”。
+        if (!shouldRequestCompaction({
+          inputTokens: usage.input,
+          triggerTokens: CONTEXT_COMPACT_TRIGGER_TOKENS,
+          now,
+          lastRequestAt: this.lastCompactionRequestAt.get(sid),
+          cooldownMs: COMPACTION_COOLDOWN_MS,
+        })) {
+          logger.debug(
+            `[Compact] 冷却中（<${COMPACTION_COOLDOWN_MS / 60_000}min）→ 本轮不重复请求` +
+            ` session=${sid.slice(-12)}`,
+          );
+        } else {
+          this.lastCompactionRequestAt.set(sid, now);
+          // ★ 2026-10-20（change: `observe-and-hold-context-compaction`）：
+          //   这个阈值以前**完全无痕** —— 不打印、不计数，没人知道线上触发过几次、
+          //   成功过几次。更要紧的是它与 `ctx.truncate` **没有联动**：
+          //   摘要失败时，截断照旧把"还没被摘要覆盖"的对话丢掉 ⇒ 那段真的没了。
+          //   现在：触发留痕 + 结果留痕 + 失败登记（runner 据此暂缓截断）。
+          logger.info(
+            `[Compact] input=${usage.input} > ${CONTEXT_COMPACT_TRIGGER_TOKENS} → 请求会话摘要` +
+            `（冷却 ${COMPACTION_COOLDOWN_MS / 60_000}min） session=${sid.slice(-12)}`,
+          );
+          this.ctx.memoryManager.onSessionEnd(sid)
+            .then((r) => {
+              // ★ 2026-10-21（change: `unify-memory-eligibility`，C4/E6）：
+              //   原来这里**.then 就等于"摘要完成"** —— 而摘要失败是**返回值**不是异常，
+              //   于是失败也会恢复截断：那段没被摘要覆盖的对话照样被丢掉。
+              //   现在按真实结果分支：只有 `summary === 'ok'` 才算摘到。
+              //
+              // ★ 2026-10-28：`skipped`（in-flight / no-events / no-dialogue）**不是失败**。
+              //   旧代码把它也 mark 成失败 ⇒ 暂停截断；而 in-flight 恰恰说明另一个摘要
+              //   正在覆盖这段对话，本来就不该 hold。只有 `failed` / 抛错才 hold。
+              if (r.summary === 'ok') {
+                clearCompactionFailed(sid);
+                logger.info(`[Compact] 摘要完成 → 恢复截断 session=${sid.slice(-12)}`);
+              } else if (shouldHoldTruncation(r.summary)) {
+                markCompactionFailed(sid);
+                logger.warn(
+                  `[Compact] 摘要**失败**（${r.reason ?? r.summary}）→ **暂停截断**` +
+                  `（保住未摘要的对话） session=${sid.slice(-12)}`,
+                );
+              } else {
+                logger.info(
+                  `[Compact] 跳过摘要（${r.reason ?? r.summary}）→ 不暂停截断` +
+                  ` session=${sid.slice(-12)}`,
+                );
+              }
+            })
+            .catch((err: any) => {
               markCompactionFailed(sid);
               logger.warn(
-                `[Compact] 摘要**未生成**（${r.reason ?? r.summary}）→ **暂停截断**（保住未摘要的对话）` +
-                ` session=${sid.slice(-12)}`,
+                `[Compact] 摘要失败 → **暂停截断**（保住未摘要的对话）session=${sid.slice(-12)}：` +
+                `${err?.message ?? err}`,
               );
-            }
-          })
-          .catch((err: any) => {
-            markCompactionFailed(sid);
-            logger.warn(
-              `[Compact] 摘要失败 → **暂停截断**（保住未摘要的对话）session=${sid.slice(-12)}：` +
-              `${err?.message ?? err}`,
-            );
-          });
+            });
+        }
       }
     }
 

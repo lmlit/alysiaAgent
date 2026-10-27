@@ -127,4 +127,30 @@ describe('PromptAssembler', () => {
     for (const n of [1, 2, 3, 4]) expect(prompt).not.toContain(`第${n}条自我认知`);
     expect(prompt).toContain('[关于我]');
   });
+
+  // ★ 2026-10-28（fix-long-session-compaction）：facts 改为 required + 限量。
+  //   线上 118 条 facts 在 3200 预算下被整块丢过 89 次；现在必须保证块在，且只取前 40 条。
+  it('【关于你的事实】注入置信度前 40 条，且预算不足时整块不丢', async () => {
+    const now = Date.now();
+    const facts = Array.from({ length: 50 }, (_, i) => ({
+      fact: `测试事实${String(i).padStart(2, '0')}`,
+      confidence: 1 - i * 0.01,
+      evidence: `证据${i}`,
+      source_event: `evt-${i}`,
+      updated_at: new Date(now).toISOString(),
+      source: 'user' as const,
+      valid_from: new Date(now).toISOString(),
+      valid_until: null,
+      status: 'active' as const,
+      category: 'general' as const,
+    }));
+    profileStore.replaceFacts(facts);
+
+    const prompt = await assembler.assemble('chat');
+    const injected = prompt.match(/- 测试事实\d{2}/g) ?? [];
+    expect(injected).toHaveLength(40);
+    expect(prompt).toContain('测试事实00');   // 置信度最高
+    expect(prompt).not.toContain('测试事实49'); // 第 41 条之后不注入
+    expect(prompt).toContain('[关于你的事实]');
+  });
 });

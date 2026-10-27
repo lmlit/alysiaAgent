@@ -30,6 +30,15 @@ import { warnThrottled } from '../utils/write-trace.js';
  */
 const CHARACTER_FACTS_IN_PROMPT = 8;
 
+/**
+ * ★ 2026-10-28（change: `fix-long-session-compaction`）：关于用户的事实最多注入多少条。
+ *
+ * 线上 `facts` 已有 118 条；旧策略是 optional，3200 预算下 7 天被整块丢弃 89 次。
+ * 改为 required 之后仍要限量：全量 118 条会挤掉 memories/life 等块。
+ * 取置信度前 40 条（`getActiveFacts` 已按 confidence 降序），其余仍在库、可被检索。
+ */
+const FACTS_IN_PROMPT = 40;
+
 // ── 块的投放策略（★ 2026-10-20，change: `tabular-prompt-blocks`）─────────────
 //
 // ## 为什么要有这张表
@@ -299,7 +308,15 @@ ${rangeText}`;
         if (dup) continue; // 已有同义事实（保留置信度更高的第一条）
         kept.push(f);
       }
-      const factsText = kept
+      // ★ 2026-10-28：限量，避免 facts 块自己把预算吃穿（全量 118 条会挤掉 memories/life）。
+      //   排序已是 confidence 降序，取前 N 条；被截掉的仍在库，可被检索/后续重排。
+      const inPrompt = kept.slice(0, FACTS_IN_PROMPT);
+      if (kept.length > inPrompt.length) {
+        logger.debug(
+          `[PromptAssembler] facts ${kept.length} 条 → 注入前 ${inPrompt.length} 条（其余留库）`,
+        );
+      }
+      const factsText = inPrompt
         .map(f => {
           const marker = f.source === 'inferred' ? '(待确认)' : '';
           const sourceNote = f.source === 'user' ? ' [你说过]' : '';
