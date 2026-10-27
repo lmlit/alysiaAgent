@@ -52,3 +52,10 @@
 - [x] 全量测试 Node 24：**170 文件 / 1985 用例全绿**
 - [x] 归档到 `openspec/archive/2026-10-26-apply-decisions-2026-10-26/`
 - [x] 提交 + 推送到 origin/master（`a107297`）
+
+## 部署（2026-10-27）
+- [x] `pnpm deploy --skip-build`（镜像 `bc523e71e338`，回滚点 `rollback-20261027-083150`）
+- [x] `docker ps` = `Up (healthy)`；`/api/health` = `{"status":"ok"}`
+- [x] 启动日志：13/13 模块、QQ `Bot ONLINE — READY`、无 ERROR
+- [x] 容器内默认值核对：`personalize {max_tokens:1024}` / `summary {max_tokens:4096}`
+- [x] 旧回滚点回收：删 1 个，保留 3 个；镜像 4 个 / 1.099GB；磁盘 15G/40G

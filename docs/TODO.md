@@ -88,6 +88,8 @@
 | 10-26 | **console a11y** 17 处动画加 `prefers-reduced-motion` | 同上 |
 | 10-26 | **看门狗**加“正挡着活就说一声” | 同上 |
 | 10-26 | 本机 498.2MB 部署杂物已删 | 同上 |
+| 10-27 | **已发版**：`rollback-20261027-083150`，health 200 / Bot ONLINE；容器内预算已核对 | [apply-decisions tasks](../openspec/archive/2026-10-26-apply-decisions-2026-10-26/tasks.md) |
+| 10-27 | **构建上下文瘦身**（曾卡 7 小时）：`.dockerignore` 排掉素材/实验目录 | [`slim-docker-build-context`](../openspec/archive/2026-10-27-slim-docker-build-context/proposal.md) |
 | 10-26 | **KI-5** 最后 2 处裸 catch（QQ 适配器）+ `check-bare-catch` 机器闸 | [`harden-silent-failures`](../openspec/archive/2026-10-26-harden-silent-failures/proposal.md) |
 | 10-26 | **KI-26** 摘要锚点（早已修，本次销账） | [`fix-summary-anchor-floor`](../openspec/archive/2026-10-16-fix-summary-anchor-floor/proposal.md) |
 | 10-26 | **P6** 表态时钟 / 值得说 | [`worth-telling-and-silence-clock`](../openspec/archive/2026-10-25-worth-telling-and-silence-clock/proposal.md) |
