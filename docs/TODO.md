@@ -80,6 +80,7 @@
 
 | 日期 | 条目 | 依据 |
 |---|---|---|
+| 10-28 | **生产形态回归**：100 facts / 3 recent / 5 memories / life + 60s×25min 冷却 + skipped hold 断言 | [`add-production-trace-eval`](../openspec/archive/2026-10-28-add-production-trace-eval/proposal.md) |
 | 10-28 | **长会话压缩调度**：10min/会话冷却、`skipped` 不暂停截断、facts required + 前 20 条（40 条会挤掉 recent/life/memories） | [`fix-long-session-compaction`](../openspec/archive/2026-10-28-fix-long-session-compaction/proposal.md) |
 | 10-26 | **预算默认值**：personalize 256→1024、session.summary 2048→4096 | [`apply-decisions-2026-10-26`](../openspec/archive/2026-10-26-apply-decisions-2026-10-26/proposal.md) |
 | 10-26 | **KI-27** `processed` 位掩码退役（含 compaction） | 同上 |

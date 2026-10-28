@@ -1924,3 +1924,27 @@ CLI `/clear`、`/new`、上下文压缩钩子、Web `extractProfile` 都已按�
 - `summaryAnchor` 的窗口语义不变（窗口化本身是正确的）。
 - cron `archiveStaleSessions` 的 6h 兜底不变，不受对话内联冷却影响。
 - 召回链路（p50 ~14s）与 `summaryAnchor` 历史窗口合并不在本节范围。
+
+## 13. 生产形态回归（2026-10-28，change: `add-production-trace-eval`）
+
+### 13.1 为什么单测不够
+
+`fix-long-session-compaction` 的 1,992 条单测全绿，但线上仍出现“facts 被挤掉 /
+每轮请求摘要 / in-flight 当成失败”——这些是**时序与容量**问题，不是逻辑分支。
+回归必须按真实形态搭：
+
+- 单 QQ 会话（不结束）、1.2k 字 basics、100+ facts；
+- 3 条最近摘要 + 5 条召回 + 生活注入，同时竞争 3,200 prompt 预算；
+- 60 秒一轮、持续 25 分钟，摘要每次 20–30 秒。
+
+### 13.2 契约
+
+`packages/core/tests/eval/production-trace.test.ts`：
+
+1. **预算**：一次 `assembleWithReport` 后，`facts` 不在 `dropped`，且
+   `[关于你的事实] / [最近对话] / [相关记忆] / 生活注入` 都在；facts 条数 = `FACTS_IN_PROMPT`。
+2. **节奏**：60s × 25min、input=10k、10min 冷却 ⇒ 只请求 **3 次**摘要（0/10/20）。
+3. **hold**：`skipped` 不 hold、`failed` 才 hold（唯一判据 `shouldHoldTruncation()`）。
+
+首次运行结果：`dropped = (none)`——20 条 facts 下四类块都能装进 3,200。
+该测试是**测试专用**，不进镜像、无需部署。
