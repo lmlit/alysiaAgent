@@ -1,5 +1,8 @@
 FROM node:22-alpine AS builder
-RUN apk add --no-cache python3 make g++  # for better-sqlite3 native build
+# ★ 2026-10-29：dl-cdn.alpinelinux.org 在本机 TLS 握手失败（构建直接卡死），
+#   改用阿里云镜像；只影响构建期，不进运行时。
+RUN sed -i 's#https://dl-cdn.alpinelinux.org#https://mirrors.aliyun.com#g' /etc/apk/repositories \
+    && apk add --no-cache python3 make g++  # for better-sqlite3 native build
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/core/package.json packages/core/
