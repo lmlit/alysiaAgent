@@ -12,9 +12,11 @@
 
 ## 3. facts 预算保护
 - [x] `block-registry`：`facts.policy` 改 `required`，note 说明原因
-- [x] `PromptAssembler`：facts 去重后取置信度前 40 条（`FACTS_IN_PROMPT`）
+- [x] `PromptAssembler`：facts 去重后取置信度前 **20** 条（`FACTS_IN_PROMPT`；
+      初版 40 ≈ 1,146 tokens，18h 后下调）
 - [x] 更新 `block-registry.test.ts` 的 required 清单
-- [x] `PromptAssembler` 单测：50 条事实 → 只注入 40 条且块不丢
+- [x] `PromptAssembler` 单测：50 条事实 → 只注入 20 条且块不丢
+- [x] 丢弃日志带每块 token 估算（`facts(595tok)`），不再靠猜
 
 ## 4. 验证与归档
 - [x] Node 24 全量测试：**171 文件 / 1992 用例全绿**

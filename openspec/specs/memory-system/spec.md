@@ -1912,8 +1912,12 @@ CLI `/clear`、`/new`、上下文压缩钩子、Web `extractProfile` 都已按�
   ⇒ 暂停截断 ⇒ 上下文继续涨。⇒ 只有 `summary === 'failed'` 或抛错才 hold；
   `shouldHoldTruncation()` 是这条判据的唯一出处。
 - **facts 被预算挤掉**：facts 原为 optional，3200 预算下 7 天整块丢 **89 次**（memories 48 次）。
-  ⇒ facts 改 `required`，并在组装层限量取**置信度前 40 条**（`FACTS_IN_PROMPT`）；
+  ⇒ facts 改 `required`，并在组装层限量取**置信度前 20 条**（`FACTS_IN_PROMPT`）；
   超预算先丢 optional 块，不丢“关于你的事实”。被截掉的 facts 仍留库、可检索。
+- **2026-10-28 18h 复盘**：facts 丢弃 **0 次**；压缩 2 次请求 / 2 次完成，0 次 in-flight 跳过、
+  0 次 hold。但 40 条 ≈ **1,146 tokens（36%）**，唯一一轮对话把
+  `recentConversations / life / memories` 全挤掉。⇒ 降到 20 条 ≈ **595 tokens（19%）**，
+  给“最近聊了什么”留预算；丢弃日志同时带每块 token 估算，后续不再靠猜。
 
 ### 12.3 明确未变
 

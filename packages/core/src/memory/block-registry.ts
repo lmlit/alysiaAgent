@@ -67,7 +67,7 @@ export const CHAT_BLOCKS: ReadonlyArray<BlockSpec<ChatBlockKey>> = [
     key: 'facts', policy: 'required', effect: 'read',
     source: 'profileStore.getActiveFacts()（组装层去重）',
     note: '★ 2026-10-28：改为 required。线上 7 天 facts 被整块丢 89 次（“关于你”没了）；'
-      + '丢它不是预算问题，是 bug。块内限量取置信度前 40 条（FACTS_IN_PROMPT），其余仍留库。',
+      + '丢它不是预算问题，是 bug。块内限量取置信度前 20 条（FACTS_IN_PROMPT；40 条会挤掉 recent/life/memories），其余仍留库。',
   },
   {
     key: 'characterFacts', policy: 'optional', effect: 'read', source: 'profileStore.getActiveCharacterFacts()',

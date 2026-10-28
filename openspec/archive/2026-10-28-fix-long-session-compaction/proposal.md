@@ -21,13 +21,13 @@
 
 ## 需求
 
-- [ ] 压缩请求加 per-session 冷却（默认 10 分钟）：超阈值不再每轮触发，只按节奏请求。
-- [ ] `skipped`（in-flight / no-events / no-dialogue）**不再标记压缩失败**，不暂停截断；
+- [x] 压缩请求加 per-session 冷却（默认 10 分钟）：超阈值不再每轮触发，只按节奏请求。
+- [x] `skipped`（in-flight / no-events / no-dialogue）**不再标记压缩失败**，不暂停截断；
       只有 `summary === 'failed'` 或抛错才 hold。
-- [ ] `facts` 改为 `required`，并限量（置信度前 40 条）；超预算时先丢 optional 块，
-      不丢“关于你的事实”。
-- [ ] 单测覆盖：冷却判定、facts 策略/限量、skipped 不 mark。
-- [ ] 本地 `pnpm chat` 真聊验证；部署生产并记录回滚点。
+- [x] `facts` 改为 `required`，并限量（置信度前 **20** 条）；超预算时先丢 optional 块，
+      不丢“关于你的事实”。（初版 40 条，18h 复盘发现会挤掉 recent/life/memories，已下调。）
+- [x] 单测覆盖：冷却判定、facts 策略/限量、skipped 不 mark。
+- [x] 本地 `pnpm chat` 真聊验证；部署生产并记录回滚点。
 
 ## 明确不做
 

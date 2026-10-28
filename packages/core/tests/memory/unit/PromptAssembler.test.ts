@@ -129,8 +129,8 @@ describe('PromptAssembler', () => {
   });
 
   // ★ 2026-10-28（fix-long-session-compaction）：facts 改为 required + 限量。
-  //   线上 118 条 facts 在 3200 预算下被整块丢过 89 次；现在必须保证块在，且只取前 40 条。
-  it('【关于你的事实】注入置信度前 40 条，且预算不足时整块不丢', async () => {
+  //   40 条 ≈ 1,146 tokens（36%），会把 recent/life/memories 全挤掉；降到 20 条 ≈ 595 tokens。
+  it('【关于你的事实】注入置信度前 20 条，且预算不足时整块不丢', async () => {
     const now = Date.now();
     const facts = Array.from({ length: 50 }, (_, i) => ({
       fact: `测试事实${String(i).padStart(2, '0')}`,
@@ -148,9 +148,10 @@ describe('PromptAssembler', () => {
 
     const prompt = await assembler.assemble('chat');
     const injected = prompt.match(/- 测试事实\d{2}/g) ?? [];
-    expect(injected).toHaveLength(40);
+    expect(injected).toHaveLength(20);
     expect(prompt).toContain('测试事实00');   // 置信度最高
-    expect(prompt).not.toContain('测试事实49'); // 第 41 条之后不注入
+    expect(prompt).toContain('测试事实19');   // 第 20 条
+    expect(prompt).not.toContain('测试事实20'); // 第 21 条之后不注入
     expect(prompt).toContain('[关于你的事实]');
   });
 });

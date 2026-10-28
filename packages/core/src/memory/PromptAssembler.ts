@@ -35,9 +35,29 @@ const CHARACTER_FACTS_IN_PROMPT = 8;
  *
  * 线上 `facts` 已有 118 条；旧策略是 optional，3200 预算下 7 天被整块丢弃 89 次。
  * 改为 required 之后仍要限量：全量 118 条会挤掉 memories/life 等块。
- * 取置信度前 40 条（`getActiveFacts` 已按 confidence 降序），其余仍在库、可被检索。
+ *
+ * ★ 2026-10-28 18h 复盘：40 条 ≈ **1,146 tokens（占 3,200 的 36%）**，
+ *   结果 facts 保住了，但 `recentConversations / life / memories` 被整块丢掉。
+ *   ⇒ 降到 20 条 ≈ **595 tokens（19%）**，把预算留给“最近聊了什么”。
+ *   取置信度前 20 条（`getActiveFacts` 已按 confidence 降序），其余仍在库、可被检索。
  */
-const FACTS_IN_PROMPT = 40;
+const FACTS_IN_PROMPT = 20;
+
+/**
+ * `dropped` 数组 → 每块被丢时的 token 估算。
+ * 用 WeakMap 是为了不改 `pushBlock` 的签名与 `AssembleReport.dropped: string[]` 的公开契约。
+ */
+const DROPPED_TOKENS = new WeakMap<string[], Map<string, number>>();
+
+function formatDropped(dropped: string[]): string {
+  const sizes = DROPPED_TOKENS.get(dropped);
+  return dropped
+    .map(k => {
+      const t = sizes?.get(k);
+      return t === undefined ? k : `${k}(${t}tok)`;
+    })
+    .join(', ');
+}
 
 // ── 块的投放策略（★ 2026-10-20，change: `tabular-prompt-blocks`）─────────────
 //
@@ -161,6 +181,11 @@ export class PromptAssembler {
       blocks.push(block);
       return;
     }
+    // ★ 2026-10-28：丢弃时记下该块的 token 估算，日志里带上尺寸。
+    //   否则只知道“丢了 memories”，不知道它占多少 —— 调预算只能猜。
+    const sizes = DROPPED_TOKENS.get(dropped) ?? new Map<string, number>();
+    sizes.set(key, budget.estimateTokens(block));
+    DROPPED_TOKENS.set(dropped, sizes);
     dropped.push(key);
   }
 
@@ -446,7 +471,7 @@ ${rangeText}`;
     // ★ tabular-prompt-blocks：预算不足丢掉的块**必须留痕** ——
     //   否则"她今天没读到自己的自省"与"她读到了"在日志里同形（10-15 那次事故=22 天无人发现）。
     if (dropped.length > 0) {
-      logger.info(`[Prompt] 预算不足，本轮丢弃 ${dropped.length} 块：${dropped.join(', ')}`);
+      logger.info(`[Prompt] 预算不足，本轮丢弃 ${dropped.length} 块：${formatDropped(dropped)}`);
     }
 
     return { text: blocks.join('\n\n'), dropped, worldbookInjected };
@@ -523,7 +548,7 @@ ${persona.name} 编程助手模式。语气: ${tone.formality < 0 ? '随意' : '
 
     // ★ tabular-prompt-blocks：丢弃留痕（与 chat 同款）
     if (dropped.length > 0) {
-      logger.info(`[Prompt] 预算不足（code），本轮丢弃 ${dropped.length} 块：${dropped.join(', ')}`);
+      logger.info(`[Prompt] 预算不足（code），本轮丢弃 ${dropped.length} 块：${formatDropped(dropped)}`);
     }
 
     // ★ 2026-10-24：code 表**行为不变** —— 它一直注入 code/both scope 的世界书
