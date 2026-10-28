@@ -59,10 +59,11 @@
 | `record-out-of-band-server-config-change` | 两个预算已进默认值；剩 `life.generateSummary`/`deepRewrite` 校准 + 完整服务器 diff | ⏳ 等数据 / 🧑 需 host | [proposal](../openspec/changes/record-out-of-band-server-config-change/proposal.md) |
 | 唤醒派发多实例租约 | 派发是单实例进程内的；开第二个实例会重复领队列 | ⏳ 等多实例需求 | [project-tasks §18](../openspec/specs/project-tasks/spec.md) |
 
-## D. 部署 / 数据债
+## D. 部署 / 数据债 / 观察
 
 | 条目 | 一句话 | 卡在 | 权威出处 |
 |---|---|---|---|
+| **长会话修复 24h 观察** | 2026-10-28 19:55 发版（facts 20 + 冷却 + skipped 不 hold）；待看 **facts 丢弃=0**、`recent/life/memories` 是否回来、压缩请求/ hold、端到端 p50 | ⏳ **2026-10-29 20:20 后**收数据 | [fix-long-session-compaction tasks](../openspec/archive/2026-10-28-fix-long-session-compaction/tasks.md) |
 | **31 条 `needs_review`** | 10-19 存量（24 条卡 `intent`，18 条结果 ≤80 字）；不阻塞、watchdog 不报 | ⏸ **2026-10-26 不动** | [验收记录 §4](ACCEPTANCE-2026-10-19-WAKE.md) |
 
 ## E. 暂停 / 不做
@@ -73,7 +74,7 @@
 | `webui-visual-redesign` | 对象（Vue 版 `packages/webui`）已删 | 🗑 superseded，不再推进 |
 | Halo 主题（`packages/halo-theme-xilian`） | 独立试验，只在本地 Halo 验过；**用户 2026-10-26 明确"先别搞"** | ⏸ 不占本表 |
 
-## F. 最近销账（2026-10-24 ～ 10-26）
+## F. 最近销账（2026-10-24 ～ 10-28）
 
 > 26 条 KI 中 **21 条已修**，在办 5 条（KI-1 / 2 / 10 / 11 / 25）；
 > 另有 KI-27 已于 2026-10-26 销账。证据在各 archive 的 proposal / tasks。
