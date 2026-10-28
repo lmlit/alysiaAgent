@@ -8,7 +8,8 @@
  *   本 change 只做结构搬运，不夹带行为变更。
  */
 
-import { DEFAULT_SAMPLING } from '@alysia/core';
+// ★ 2026-10-28（change: `extract-prompt-genres`）：采样槽读体裁表
+import { GENRES } from '@alysia/core';
 // ★ 2026-10-24：问候的人设来源收敛到 DB（见 prompts/proactive.ts 文件头）
 import { buildProactiveSystemPrompt } from '../prompts/proactive.js';
 import { ProactiveService } from '../proactive.js';
@@ -50,7 +51,7 @@ export const proactiveModule: Module = {
       //   后果：改人格不会改到问候。现在只留体裁约束，身份/语气走 `getPersonaSnapshot()`。
       systemPrompt: buildProactiveSystemPrompt(core.memoryManager.getPersonaSnapshot()),
           // ★ 8-10 采样槽：DEFAULT + config.sampling.proactive.personalize 覆盖
-          sampling: { ...DEFAULT_SAMPLING.proactive.personalize, ...(config.sampling?.proactive?.personalize ?? {}) },
+          sampling: { ...GENRES.proactive.sampling, ...(config.sampling?.proactive?.personalize ?? {}) },
         });
         return resp.role === 'assistant' ? resp.completionText : '';
       },

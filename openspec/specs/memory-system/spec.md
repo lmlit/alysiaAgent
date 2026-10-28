@@ -1948,3 +1948,32 @@ CLI `/clear`、`/new`、上下文压缩钩子、Web `extractProfile` 都已按�
 
 首次运行结果：`dropped = (none)`——20 条 facts 下四类块都能装进 3,200。
 该测试是**测试专用**，不进镜像、无需部署。
+
+## 14. 体裁表（2026-10-28，change: `extract-prompt-genres`；P8 第 4 步）
+
+### 14.1 唯一声明处
+
+`memory/genres.ts` 的 `GENRES` 是 8 条生成链路的「预算 / 采样 / persona 注入方式 /
+forbids」唯一声明处：
+
+`chat` / `code` / `life-event` / `life-daily` / `proactive` /
+`session-summary` / `profile-extract` / `profile-rewrite`。
+
+- `budgetTokens`：仅 chat（3200）与 code（2450）；
+- `sampling`：默认采样槽（`config.sampling` 仍可覆盖，表只给 floor）；
+- `persona`：**单值联合**（`compact(sections)` / `worldview(section)` / `name-tone` /
+  `inline-one-line` / `none`），不是布尔组合；
+- `forbids`：结构上不应出现的 prompt 块 key，拼错会在单测变红。
+
+### 14.2 已接线
+
+- `PromptAssembler`：chat/code 预算改读 `GENRES`；
+- `llm-agent`：chat 的 `getCompactPersonaPrompt()` 节数改读 `GENRES.chat.persona.sections`（仍是 4）；
+- `proactive`：采样改读 `GENRES.proactive.sampling`。
+
+### 14.3 不变量
+
+- 8 个 id 固定；新增链路必须登记，否则 `GENRE_IDS` 测试红。
+- `getGenre()` 未知 id **抛错**，不静默回落 chat。
+- `forbids` 的 key 必须存在于 `CHAT_BLOCK_ORDER`。
+- 本次是声明重构：characterization 快照逐字不变（173 文件 / 2002 用例全绿）。

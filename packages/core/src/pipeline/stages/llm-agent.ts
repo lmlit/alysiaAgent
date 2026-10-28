@@ -6,6 +6,8 @@ import { AgentRunner } from '../../agent/runner.js';
 import { MessageChain } from '../../platform/chain.js';
 import { logger } from '../../utils/logger.js';
 import { dialogueSpeaker } from '../../memory/render-dialogue.js';
+// ★ 2026-10-28（change: `extract-prompt-genres`）：persona 节数读体裁表
+import { GENRES } from '../../memory/genres.js';
 // ★ 2026-10-20（change: observe-and-hold-context-compaction）
 import { markCompactionFailed, clearCompactionFailed } from '../../memory/compaction-status.js';
 // ★ 2026-10-28（change: fix-long-session-compaction）：压缩请求节流
@@ -115,7 +117,9 @@ export class LLMAgentStage implements Stage {
     //   这段逻辑原先内联在这里；提出来是为了让 dsh 侧的动态人设能取到**同一份文本**
     //   （见 change: connect-dsh-alysia-bridge）。行为逐字不变。
     // Use compact persona to save context space (worldbook is 66 entries = ~15k chars!)
-    const compactPersona = this.ctx.memoryManager.getCompactPersonaPrompt();
+    const compactPersona = this.ctx.memoryManager.getCompactPersonaPrompt(
+      GENRES.chat.persona.kind === 'compact' ? GENRES.chat.persona.sections : 4,
+    );
     let systemPrompt = [
       compactPersona,
       memoryContext ? '\n---\n## 当前记忆\n' + memoryContext : '',

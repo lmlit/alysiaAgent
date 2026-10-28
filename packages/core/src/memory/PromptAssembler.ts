@@ -81,6 +81,8 @@ function formatDropped(dropped: string[]): string {
 
 import { CHAT_BLOCK_POLICY, CODE_BLOCK_POLICY } from './block-registry.js';
 import type { ChatBlockKey, CodeBlockKey } from './block-registry.js';
+// ★ 2026-10-28（change: `extract-prompt-genres`）：预算不再写死在函数体
+import { GENRES } from './genres.js';
 export type { ChatBlockKey, CodeBlockKey, BlockEffect, BlockSpec } from './block-registry.js';
 export {
   CHAT_BLOCKS, CODE_BLOCKS,
@@ -221,7 +223,7 @@ export class PromptAssembler {
     const profile = this.profileStore.get();
     // ★ 8-09 会话隔离：只取当前会话类型（private/同群）的摘要，防群聊摘要混入私聊
     const recentConvs = this.conversationStore.getRecent(3, sessionId);
-    const budget = new TokenBudget(3200);
+    const budget = new TokenBudget(GENRES.chat.budgetTokens ?? 3200);
 
     const blocks: string[] = [];
     /** ★ tabular-prompt-blocks：本轮因预算不足被丢掉的块（末尾留痕） */
@@ -481,7 +483,7 @@ ${rangeText}`;
     const persona = this.personaStore.get();
     const profile = this.profileStore.get();
     const codeCtx = this.codeContextStore.getActive();
-    const budget = new TokenBudget(2450);
+    const budget = new TokenBudget(GENRES.code.budgetTokens ?? 2450);
 
     const blocks: string[] = [];
     /** ★ tabular-prompt-blocks：本轮因预算不足被丢掉的块（末尾留痕） */

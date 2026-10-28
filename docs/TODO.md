@@ -40,7 +40,6 @@
 
 | 条目 | 一句话 | 卡在 | 权威出处 |
 |---|---|---|---|
-| **组装器第 4 步 `genres`**（P8） | 8 条生成链路的预算/采样/persona 节数/forbids 还在函数体里；前三步已归档 | 🤖 1–2 天，行为会变（要快照） | [PLAN §2.6](PLAN-2026-10-24-context-and-rules.md#L149) |
 | **KI-10** | 内核缺「只排序、不依赖服务」的表达（`after?`）；只有 1 处，结论是暂不加 | ⏸ 记着待观察 | [KNOWN-ISSUES #KI-10](KNOWN-ISSUES.md#L420) |
 
 > ✅ P9（`pipelineMode` 标死）、KI-27（位掩码退役）、P4（删 `alysia_life`）、
@@ -81,6 +80,7 @@
 
 | 日期 | 条目 | 依据 |
 |---|---|---|
+| 10-28 | **P8 第 4 步 `genres`**：8 个体裁的预算/采样/persona/forbids 进声明表；chat/code 预算、chat persona 节数、proactive 采样已改读表，prompt 输出逐字不变 | [`extract-prompt-genres`](../openspec/archive/2026-10-28-extract-prompt-genres/proposal.md) |
 | 10-28 | **生产形态回归**：100 facts / 3 recent / 5 memories / life + 60s×25min 冷却 + skipped hold 断言 | [`add-production-trace-eval`](../openspec/archive/2026-10-28-add-production-trace-eval/proposal.md) |
 | 10-28 | **长会话压缩调度**：10min/会话冷却、`skipped` 不暂停截断、facts required + 前 20 条（40 条会挤掉 recent/life/memories） | [`fix-long-session-compaction`](../openspec/archive/2026-10-28-fix-long-session-compaction/proposal.md) |
 | 10-26 | **预算默认值**：personalize 256→1024、session.summary 2048→4096 | [`apply-decisions-2026-10-26`](../openspec/archive/2026-10-26-apply-decisions-2026-10-26/proposal.md) |
@@ -107,5 +107,5 @@
 
 ## 维护提示
 
-- 本表长度应**长期保持在 30 行量级**（当前在办约 16 行：A 段 4、B 段 2、C 段 8、D 段 2）。超过 45 行说明在办的事太多。
+- 本表长度应**长期保持在 30 行量级**（当前在办约 15 行：A 段 4、B 段 1、C 段 8、D 段 2）。超过 45 行说明在办的事太多。
 - 每条被删掉时，在 commit message 里写清销账依据（`KI-xx → archive xxx`）。

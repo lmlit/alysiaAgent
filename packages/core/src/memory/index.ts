@@ -97,6 +97,9 @@ export {
   WRITE_EFFECT_CHAT_BLOCKS,
 } from './block-registry.js';
 export type { BlockEffect, BlockSpec } from './block-registry.js';
+// ★ 2026-10-28（change: `extract-prompt-genres`；P8 第 4 步）：8 个体裁的声明表。
+export { GENRES, GENRE_IDS, getGenre } from './genres.js';
+export type { GenreId, GenreSpec, PersonaInjection } from './genres.js';
 export { filterPII } from './PIIFilter.js';
 // ★ 2026-10-21（change: `unify-memory-eligibility`，契约 C1）：记忆资格的**唯一出处**。
 //   导出到 barrel 是必需的：server / dsh-adapter 侧判定"这条内容能不能学"时

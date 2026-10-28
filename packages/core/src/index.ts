@@ -12,6 +12,9 @@ export type { LLMJsonResult } from './utils/llm-json.js';
 //   server 侧 config.yml 覆盖时从主入口导入
 export { DEFAULT_SAMPLING, mergeSampling, slotToBody } from './provider/sampling.js';
 export type { SamplingConfig, SamplingSlot, DeepPartial } from './provider/sampling.js';
+// ★ 2026-10-28（change: `extract-prompt-genres`；P8 第 4 步）：体裁声明表
+export { GENRES, GENRE_IDS, getGenre } from './memory/genres.js';
+export type { GenreId, GenreSpec, PersonaInjection } from './memory/genres.js';
 // ★ 2026-10-01 构造选项抽到 options.ts（change: modularize-core-assembly）：
 //   modules/ 要消费 AlysiaFeatures，从 index.ts 导入会形成循环依赖。此处原样 re-export。
 export type { AlysiaFeatures, AlysiaCoreOptions } from './options.js';
