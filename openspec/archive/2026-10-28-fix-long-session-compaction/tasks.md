@@ -21,6 +21,7 @@
 ## 4. 验证与归档
 - [x] Node 24 全量测试：**171 文件 / 1992 用例全绿**
 - [x] 本地 `pnpm chat -- --fresh --turns 4` 真聊（4 轮均正常，1.6–1.9s）
-- [x] 部署生产：镜像 `200e6f1127e4`，回滚点 `rollback-20261028-010920`；
-      `Up (healthy)`、health 200、Bot ONLINE、13/13 模块；容器 dist 已核对冷却/facts required
+- [x] 部署生产（第一版 40 条）：镜像 `200e6f1127e4`，回滚点 `rollback-20261028-010920`
+- [x] 18h 复盘后下调 20 条并复部署：镜像 `89f630673f6b`，回滚点 `rollback-20261028-195512`；
+      `Up (healthy)`、health 200、Bot ONLINE、13/13；容器 dist 已核对 `FACTS_IN_PROMPT=20` / token 日志
 - [x] 更新 memory-system spec §12、归档

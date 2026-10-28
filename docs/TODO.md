@@ -80,7 +80,7 @@
 
 | 日期 | 条目 | 依据 |
 |---|---|---|
-| 10-28 | **长会话压缩调度**：10min/会话冷却、`skipped` 不暂停截断、facts required + 前 40 条 | [`fix-long-session-compaction`](../openspec/archive/2026-10-28-fix-long-session-compaction/proposal.md) |
+| 10-28 | **长会话压缩调度**：10min/会话冷却、`skipped` 不暂停截断、facts required + 前 20 条（40 条会挤掉 recent/life/memories） | [`fix-long-session-compaction`](../openspec/archive/2026-10-28-fix-long-session-compaction/proposal.md) |
 | 10-26 | **预算默认值**：personalize 256→1024、session.summary 2048→4096 | [`apply-decisions-2026-10-26`](../openspec/archive/2026-10-26-apply-decisions-2026-10-26/proposal.md) |
 | 10-26 | **KI-27** `processed` 位掩码退役（含 compaction） | 同上 |
 | 10-26 | **P4** 删 `{{alysia_life}}` 空变量；**P5** 写清生活 context 不含画像 | 同上 |
