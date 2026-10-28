@@ -155,7 +155,10 @@ src/
 ### 人格自适应
 - 3 维度 × 4 参数: tone/speech_style/emotional_range
 - 5 道护栏: |Δ|≤0.1 / 5min 冷却 / ≤3 次同向 / 24h 回归 / 显式指令 bypass
-- 记忆旋钮 memory_config：decay_rate/importance_threshold/recency_weight/confirmation_bias/retention_bias（亲密度已接线，召回管道待接 → backlog）
+- 记忆旋钮 memory_config：**5 个都已使用，但分两处**——
+  - 召回打分（`applyKnobsToRetrieved`）：`decay_rate` / `recency_weight` / `importance_threshold` / `retention_bias`；
+  - 亲密度平滑（`LifeService.updateIntimacy`）：`confirmation_bias`；
+  - ⚠️ `confirmation_bias` **未接事实覆盖/纠正**（“固执地不改看法”这一层没实现，属语义扩展，不是漏接）。
 
 ### Git 推送
 - Clash 代理: **127.0.0.1:7897**（★ 2026-10-02 更正：原写 7890，实测该端口已失效；
