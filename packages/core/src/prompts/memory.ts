@@ -67,11 +67,16 @@ export const PROFILE_EXTRACT_SYSTEM_PROMPT =
   // ★ 8-28 修复（profile-extractor-category-fix）：LLM 实测输出 location/interest/hobby 等
   //   自由词不遵循枚举 → 全回落 general。强化约束：category 必须且只能从这五个值中选择
   'category: 必须且只能从这五个值中选择一个——"identity"(身份：城市/职业/年龄/长期状态)、"preference"(偏好：口味/兴趣/习惯/爱好)、"status"(当前状态：最近在做什么/近况)、"relationship"(与昔涟的关系/互动模式)、"general"(其他稳定事实)。' +
+  // ★ 2026-10-28（resolve-fact-conflicts）：冲突判断与提取**共用同一次调用**，
+  //   不额外加 LLM 成本。模型只在“同一属性、值不同”时标冲突；相关/补充不算。
+  'conflicts_with: 如果这条新事实与【已有事实】里某条是同一属性但值不同（例如城市/职业/喜好/关系状态），' +
+  '填那条已有事实的**原文**（必须是【已有事实】里逐字出现的一条）；只是相关、补充或更具体则填 null。' +
+  '没有【已有事实】时一律 null。不要为了凑冲突而硬标。' +
   // ★ 8-28 角色视角（memory-character-perspective）：除用户事实外，同时提取对话中
   //   反映的**昔涟自己的事**（她的感受/态度/变化/习惯/看法）——结构与用户事实相同。
   //   示例："昔涟在对话中表现出对下雨的喜爱"、"昔涟最近在学做点心"。
   //   character_facts 留空数组也可以（不是每段对话都有角色事实）。
-  '返回JSON: {"facts": [{"fact": "...", "confidence": 0.8, "evidence": "...", "directly_stated": true, "transient": false, "category": "preference"}], "character_facts": [{"fact": "...", "confidence": 0.6, "evidence": "...", "category": "preference"}]}';
+  '返回JSON: {"facts": [{"fact": "...", "confidence": 0.8, "evidence": "...", "directly_stated": true, "transient": false, "category": "preference", "conflicts_with": null}], "character_facts": [{"fact": "...", "confidence": 0.6, "evidence": "...", "category": "preference"}]}';
 
 /**
  * 纠错判断（`ProfileExtractor.detectCorrection`）。

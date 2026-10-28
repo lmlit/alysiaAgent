@@ -32,7 +32,7 @@ function makeProcessor(opts: {
       updateFactsStatus: (id: string, status: string) => { factsStatuses.push({ id, status }); return { rows: 1 }; },
       incrementFactsAttempts: () => {},
     } as any,
-    { addFacts: () => {}, addCharacterFacts: () => {} } as any,
+    { addFacts: () => {}, addCharacterFacts: () => {}, getCurrentFacts: () => [] } as any,
     {} as any, {} as any,
     {
       extract: async () => ({

@@ -236,4 +236,29 @@ describe('ProfileExtractor — 8-28 分类容错映射（profile-extractor-categ
     const { facts } = await new ProfileExtractor(llm).extract([makeEvent('x')]);
     expect(facts[0].category).toBe('general');
   });
+  it('★ 已有事实进提取 prompt，conflicts_with 原样映射', async () => {
+    let captured = '';
+    const llm: ILLMService = {
+      complete: async (_system: string, user: string) => {
+        captured = user;
+        return JSON.stringify({
+          facts: [{
+            fact: '用户在杭州', confidence: 0.8, evidence: '我搬去杭州了',
+            directly_stated: true, category: 'identity', conflicts_with: '用户在长沙',
+          }],
+        });
+      },
+    };
+    const existing = [{
+      fact: '用户在长沙', confidence: 0.9, evidence: 'e', source_event: 'e1',
+      updated_at: new Date().toISOString(), source: 'user' as const,
+      valid_from: new Date().toISOString(), valid_until: null,
+      status: 'active' as const, category: 'identity' as const,
+    }];
+    const { facts } = await new ProfileExtractor(llm).extract([makeEvent('我搬去杭州了')], existing);
+    expect(captured).toContain('【已有事实');
+    expect(captured).toContain('用户在长沙');
+    expect(facts[0].conflicts_with).toBe('用户在长沙');
+  });
+
 });

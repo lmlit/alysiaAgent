@@ -1241,6 +1241,30 @@ export function createWebuiApp(core: AlysiaCore, opts: WebuiAuthOptions = {}) {
     return { ok, found: ok };
   });
 
+  /**
+   * ★ 2026-10-28（resolve-fact-conflicts）：事实冲突候选。
+   *   `pending` 用于 console 展示；`stats` 让“积压/已裁决/已过期”可见。
+   */
+  app.get('/api/profile/conflicts', async () => {
+    return {
+      ok: true,
+      pending: core.memoryManager.listFactConflicts(20),
+      stats: core.memoryManager.getFactConflictStats(),
+    };
+  });
+
+  /** 用户裁决一条冲突：keep=old|new。 */
+  app.post('/api/profile/conflicts/:id/resolve', async (req, reply) => {
+    const keep = (req.body as any)?.keep;
+    if (keep !== 'old' && keep !== 'new') {
+      return reply.code(400).send({ ok: false, error: 'keep 只能是 "old" 或 "new"' });
+    }
+    const id = String((req.params as any)?.id ?? '');
+    const r = core.memoryManager.resolveFactConflict(id, keep);
+    if (!r.ok) return reply.code(404).send({ ok: false, error: r.error ?? 'conflict not found' });
+    return { ok: true, oldFact: r.oldFact, newFact: r.newFact };
+  });
+
   // ── 人格 ──────────────────────────────────────────
   app.get('/api/persona', async () => core.memoryManager.getPersonaSnapshot());
 

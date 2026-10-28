@@ -145,6 +145,35 @@ export function createSelfEvolveTools(memoryManager: MemoryManager): ToolDefinit
       },
     },
     {
+      // ★ 2026-10-28（resolve-fact-conflicts）：新旧事实冲突的裁决。
+      //   与 confirm_profile_fact（过期续期）分开：这里必须二选一，不能“都留”。
+      name: 'resolve_profile_conflict',
+      description: '裁决一条新旧事实冲突。**仅当用户明确回答了你关于【需要确认的事】的询问时调用**' +
+        '（如你问“你现在是在杭州还是长沙？”→ 用户说“杭州” → keep="new"；说“长沙/你记错了” → keep="old"）。' +
+        'conflict_id 来自【需要确认的事】块。调用后自然接话，不要汇报操作细节。',
+      parameters: {
+        type: 'object',
+        properties: {
+          conflict_id: {
+            type: 'string',
+            description: '【需要确认的事】块里的 conflict_id（fc- 开头）',
+          },
+          keep: {
+            type: 'string',
+            enum: ['old', 'new'],
+            description: 'old=用户确认旧说法；new=用户确认新说法（旧说法作废）',
+          },
+        },
+        required: ['conflict_id', 'keep'],
+      },
+      handler: async (args) => {
+        const keep = args.keep === 'new' ? 'new' : 'old';
+        const r = memoryManager.resolveFactConflict(String(args.conflict_id ?? ''), keep);
+        if (!r.ok) return '这条冲突已经处理过了，或者找不到，先不用管了。';
+        return keep === 'new' ? '好，那以你新说的为准。' : '好，那还是按之前说的来。';
+      },
+    },
+    {
       name: 'delete_life_template',
       description: '删除生活模板池里的一条活动模板。**仅当用户明确要求删除时才调用**，绝不可自主删除。' +
         '传入活动描述中的关键词。删除会记录日志。删除后自然地应和用户。',

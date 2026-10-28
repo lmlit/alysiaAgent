@@ -4,6 +4,8 @@ import type { UserProfile, ProfileFact } from '../types.js';
 import { FACT_TTL_BY_CATEGORY, FACT_CONFIRM_WINDOW_MS } from '../types.js';
 // ★ 2026-10-21（C3）：basics 谱系/stale 的留痕
 import { logger } from '../../utils/logger.js';
+// ★ 2026-10-28（resolve-fact-conflicts）：冲突候选队列
+import { FactConflictStore, type FactConflictRow } from './FactConflictStore.js';
 
 const NOW = () => new Date().toISOString();
 
@@ -41,11 +43,22 @@ function migrateFact(f: Partial<ProfileFact>): ProfileFact {
     status: f.status || 'active',
     // ★ 8-28 分类兜底：存量事实 → general（不强制迁移；新写入由提取器/调用方给分类）
     category: f.category ?? 'general',
+    // ★ 2026-10-28：用户确认过的新说法；存量缺失即未确认
+    ...(f.confirmed_at ? { confirmed_at: f.confirmed_at } : {}),
   };
 }
 
 export class ProfileStore {
-  constructor(private db: Database.Database) {}
+  private conflicts: FactConflictStore;
+
+  constructor(private db: Database.Database) {
+    this.conflicts = new FactConflictStore(db);
+  }
+
+  /** ★ 2026-10-28：给 PromptAssembler / MemoryManager 用的候选队列。 */
+  getConflictStore(): FactConflictStore {
+    return this.conflicts;
+  }
 
   private ensureRow(): void {
     this.db.prepare(`
@@ -182,48 +195,102 @@ export class ProfileStore {
     return this.getCurrentFacts();
   }
 
-  /** 插入新 fact，带冲突检测 */
+  /** 去掉提取期的冲突标记；它不属于“当前认知”。 */
+  private withoutConflictMeta(fact: ProfileFact): ProfileFact {
+    const { conflicts_with, ...rest } = fact;
+    return rest as ProfileFact;
+  }
+
+  /** 按分类 TTL 补 valid_until；显式值优先。 */
+  private materializeFact(fact: ProfileFact): ProfileFact {
+    const migrated = migrateFact(this.withoutConflictMeta(fact));
+    migrated.status = 'active';
+    migrated.valid_from = migrated.valid_from || NOW();
+    migrated.updated_at = NOW();
+    if (!migrated.valid_until && fact.category && FACT_TTL_BY_CATEGORY[fact.category]) {
+      migrated.valid_until = new Date(Date.now() + FACT_TTL_BY_CATEGORY[fact.category]).toISOString();
+    }
+    return migrated;
+  }
+
+  /**
+   * 找冲突目标：
+   *   1. LLM 显式标了 `conflicts_with` → 按原文归一化匹配（支持包含）；
+   *   2. 否则走旧的同 key/包含（兼容程序化写入与老数据）。
+   */
+  private conflictTargetIndex(all: ProfileFact[], fact: ProfileFact): number {
+    if (fact.conflicts_with && fact.conflicts_with.trim()) {
+      const target = fact.conflicts_with.trim();
+      const tk = normalizeKey(target);
+      let idx = all.findIndex(f => f.status === 'active' && normalizeKey(f.fact) === tk);
+      if (idx < 0) {
+        idx = all.findIndex(f => f.status === 'active'
+          && (normContains(normalizeKey(f.fact), tk) || normContains(tk, normalizeKey(f.fact))));
+      }
+      if (idx >= 0) return idx;
+      logger.warn(`[Profile] conflicts_with 没找到对应活跃事实，按同 key 回退: ${target.slice(0, 40)}`);
+    }
+    const key = normalizeKey(fact.fact);
+    return all.findIndex(f => f.status === 'active'
+      && (normalizeKey(f.fact) === key || normContains(normalizeKey(f.fact), key)));
+  }
+
+  private markSuperseded(all: ProfileFact[], idx: number): void {
+    const old = all[idx];
+    all[idx] = { ...old, status: 'superseded', valid_until: NOW(), updated_at: NOW() };
+    // ★ C3：事实状态变化 → 派生 basics 可能过时
+    this.markBasicsStale();
+  }
+
+  private queueConflict(all: ProfileFact[], idx: number, fact: ProfileFact): void {
+    const old = all[idx];
+    const clean = this.withoutConflictMeta(fact);
+    this.conflicts.create({
+      old_fact_key: normalizeKey(old.fact),
+      old_fact: old.fact,
+      old_source: old.source,
+      old_confidence: old.confidence,
+      new_fact_key: normalizeKey(clean.fact),
+      new_fact: clean.fact,
+      new_source: clean.source || 'inferred',
+      new_confidence: clean.confidence ?? 0.4,
+      new_category: clean.category || 'general',
+      evidence: clean.evidence,
+      source_event: clean.source_event,
+      channel: clean.channel ?? '',
+    });
+  }
+
+  /** 插入新 fact，带冲突检测（★ 2026-10-28 起：非用户来源的冲突入队，不静默覆盖） */
   addFact(fact: ProfileFact): boolean {
     const all = this.getAllFacts();
-    const key = normalizeKey(fact.fact);
+    const idx = this.conflictTargetIndex(all, fact);
+    const clean = this.withoutConflictMeta(fact);
+    let supersededByUser: { oldKey: string; newKey: string } | null = null;
 
-    // ★ 8-09：同 key **或归一化包含**（"用户在长沙" vs "用户目前所在城市是长沙"）视为冲突
-    const existingIdx = all.findIndex(
-      f => f.status === 'active' && (normalizeKey(f.fact) === key || normContains(normalizeKey(f.fact), key))
-    );
-
-    if (existingIdx >= 0) {
-      const existing = all[existingIdx];
-      // 如果旧条是 user 来源，inferred 不能覆盖
-      if (existing.source === 'user' && fact.source === 'inferred') {
+    if (idx >= 0) {
+      const existing = all[idx];
+      // 用户明确陈述/纠正 → 立即生效（硬契约）
+      if (clean.source === 'user') {
+        supersededByUser = { oldKey: normalizeKey(existing.fact), newKey: normalizeKey(clean.fact) };
+        this.markSuperseded(all, idx);
+      } else if (existing.source === 'user') {
+        // 用户亲口说过的事，推断不能覆盖，也不值得拿推断去反问用户
+        logger.info(
+          `[Profile] inferred/behavior fact dropped（旧条来自用户）: "${clean.fact.slice(0, 40)}"`,
+        );
+        return false;
+      } else {
+        this.queueConflict(all, idx, clean);
         return false;
       }
-      // 旧条 superseded
-      all[existingIdx] = {
-        ...existing,
-        status: 'superseded',
-        valid_until: NOW(),
-        updated_at: NOW(),
-      };
-      // ★ C3：有一条事实不再成立 ⇒ 由它派生的 `basics` 可能过时
-      this.markBasicsStale();
     }
 
-    // 插入新条
-    all.push({
-      ...fact,
-      status: 'active',
-      valid_from: fact.valid_from || NOW(),
-      // ★ 8-28 分类过期兜底（profile-facts-classification-confirm）：未显式给 valid_until
-      //   且 category 明确 → 按分类 TTL 设过期（身份 365d/偏好 90d/状态 14d/关系 90d/默认 60d）；
-      //   旧调用无 category → null 保持旧行为（永不过期）
-      valid_until: fact.valid_until ?? (fact.category && FACT_TTL_BY_CATEGORY[fact.category]
-        ? new Date(Date.now() + FACT_TTL_BY_CATEGORY[fact.category]).toISOString()
-        : null),
-      updated_at: NOW(),
-    });
-
+    all.push(this.materializeFact(clean));
     this.writeFacts(all);
+    if (supersededByUser) {
+      this.conflicts.closeForSupersededOld(supersededByUser.oldKey, supersededByUser.newKey);
+    }
     return true;
   }
 
@@ -231,46 +298,38 @@ export class ProfileStore {
   addFacts(newFacts: ProfileFact[]): ProfileFact[] {
     const all = this.getAllFacts();
     const added: ProfileFact[] = [];
+    const supersededByUser: Array<{ oldKey: string; newKey: string }> = [];
 
     for (const fact of newFacts) {
-      const key = normalizeKey(fact.fact);
-      // ★ 8-09：同 key 或归一化包含视为冲突（与 addFact 一致）
-      const existingIdx = all.findIndex(
-        f => f.status === 'active' && (normalizeKey(f.fact) === key || normContains(normalizeKey(f.fact), key))
-      );
+      const clean = this.withoutConflictMeta(fact);
+      const idx = this.conflictTargetIndex(all, fact);
 
-      if (existingIdx >= 0) {
-        const existing = all[existingIdx];
-        if (existing.source === 'user' && (fact.source || 'inferred') === 'inferred') {
-          // 用户主动声明不可被 inferred 覆盖，跳过
+      if (idx >= 0) {
+        const existing = all[idx];
+        if (clean.source === 'user') {
+          supersededByUser.push({ oldKey: normalizeKey(existing.fact), newKey: normalizeKey(clean.fact) });
+          this.markSuperseded(all, idx);
+        } else if (existing.source === 'user') {
+          logger.info(
+            `[Profile] inferred/behavior fact skipped（旧条来自用户）: "${clean.fact.slice(0, 40)}"`,
+          );
+          continue;
+        } else {
+          this.queueConflict(all, idx, clean);
           continue;
         }
-        // supersede 旧条
-        all[existingIdx] = {
-          ...existing,
-          status: 'superseded',
-          valid_until: NOW(),
-          updated_at: NOW(),
-        };
-        // ★ C3：同上 —— 事实状态变化要传播到派生结果
-        this.markBasicsStale();
       }
 
-      const migrated = migrateFact(fact);
-      migrated.status = 'active';
-      migrated.valid_from = migrated.valid_from || NOW();
-      migrated.updated_at = NOW();
-      // ★ 8-28 分类过期兜底（同 addFact）：按**原始** fact.category 判断——
-      //   旧调用没传 category → 保持 null（永不过期，向后兼容）；传了 → 按 TTL
-      if (!migrated.valid_until && fact.category && FACT_TTL_BY_CATEGORY[fact.category]) {
-        migrated.valid_until = new Date(Date.now() + FACT_TTL_BY_CATEGORY[fact.category]).toISOString();
-      }
-      all.push(migrated);
-      added.push(migrated);
+      const materialized = this.materializeFact(clean);
+      all.push(materialized);
+      added.push(materialized);
     }
 
     if (added.length > 0) {
       this.writeFacts(all);
+    }
+    for (const s of supersededByUser) {
+      this.conflicts.closeForSupersededOld(s.oldKey, s.newKey);
     }
     return added;
   }
@@ -491,6 +550,122 @@ export class ProfileStore {
     }
     this.writeFacts(all);
     return true;
+  }
+
+  // ===== ★ 2026-10-28（resolve-fact-conflicts）=====
+
+  /** 过滤掉“旧条已经不在 active”的候选（不拿已作废的旧说法去问）。 */
+  private filterLiveConflicts(rows: FactConflictRow[], limit: number): FactConflictRow[] {
+    const activeKeys = new Set(this.getCurrentFacts().map(f => normalizeKey(f.fact)));
+    return rows.filter(r => activeKeys.has(r.old_fact_key)).slice(0, limit);
+  }
+
+  /** 可供 prompt 使用的冲突候选（默认 1 条；受冷却/提问次数/上限约束）。 */
+  listPendingConflicts(limit: number = 1): FactConflictRow[] {
+    // 先多取一些再按旧条存活过滤，避免过滤后不足 limit
+    return this.filterLiveConflicts(
+      this.conflicts.listPending({ limit: 50 }),
+      limit,
+    );
+  }
+
+  /** ★ 给 Web/console 的“全部 pending”（不受提问冷却限制；仍会过期）。 */
+  listFactConflicts(limit: number = 20): FactConflictRow[] {
+    return this.filterLiveConflicts(
+      this.conflicts.listPending({
+        limit: 50,
+        askCooldownMs: 0,
+        maxAsks: Number.MAX_SAFE_INTEGER,
+      }),
+      limit,
+    );
+  }
+
+  markConflictsAsked(ids: string[]): void {
+    this.conflicts.markAsked(ids);
+  }
+
+  getConflictStats(): Record<string, number> {
+    return this.conflicts.stats();
+  }
+
+  /**
+   * 用户裁决一条冲突：
+   * - keep='new'：旧条 superseded，新说法 active + confirmed_at（basics 标 stale）；
+   * - keep='old'：旧条按分类续期，候选丢弃。
+   * facts 与冲突行在**同一事务**里改，避免“事实变了但队列还 pending”。
+   */
+  resolveFactConflict(id: string, keep: 'old' | 'new'): {
+    ok: boolean; error?: string; oldFact?: string; newFact?: string;
+  } {
+    const conflict = this.conflicts.get(id);
+    if (!conflict) return { ok: false, error: 'conflict not found' };
+    if (conflict.status !== 'pending') return { ok: false, error: `conflict already ${conflict.status}` };
+
+    const all = this.getAllFacts();
+    const oldIdx = all.findIndex(f => f.status === 'active' && normalizeKey(f.fact) === conflict.old_fact_key);
+    const newIdx = all.findIndex(f => f.status === 'active' && normalizeKey(f.fact) === conflict.new_fact_key);
+
+    const tx = this.db.transaction(() => {
+      if (keep === 'new') {
+        const hasSeparateActiveNew = newIdx >= 0 && newIdx !== oldIdx;
+        if (oldIdx >= 0) this.markSuperseded(all, oldIdx);
+        const confirmedAt = NOW();
+        if (hasSeparateActiveNew) {
+          // 理论上不该有（候选不落 active）；有则更新，不再重复插入
+          all[newIdx] = {
+            ...all[newIdx],
+            fact: conflict.new_fact,
+            confidence: Math.max(all[newIdx].confidence, conflict.new_confidence ?? 0),
+            evidence: conflict.evidence,
+            source: conflict.new_source as ProfileFact['source'],
+            category: (conflict.new_category || 'general') as ProfileFact['category'],
+            status: 'active',
+            confirmed_at: confirmedAt,
+            updated_at: confirmedAt,
+          };
+        } else {
+          const category = (conflict.new_category || 'general') as ProfileFact['category'];
+          const ttl = FACT_TTL_BY_CATEGORY[category] ?? FACT_TTL_BY_CATEGORY.general;
+          all.push(this.materializeFact({
+            fact: conflict.new_fact,
+            confidence: conflict.new_confidence ?? 0.8,
+            evidence: conflict.evidence,
+            source_event: conflict.source_event,
+            updated_at: confirmedAt,
+            source: conflict.new_source as ProfileFact['source'],
+            valid_from: confirmedAt,
+            valid_until: new Date(Date.now() + ttl).toISOString(),
+            status: 'active',
+            category,
+            channel: (conflict.channel || undefined) as ProfileFact['channel'],
+            confirmed_at: confirmedAt,
+          }));
+        }
+        this.markBasicsStale();
+      } else if (oldIdx >= 0) {
+        const ttl = FACT_TTL_BY_CATEGORY[all[oldIdx].category] ?? FACT_TTL_BY_CATEGORY.general;
+        all[oldIdx] = {
+          ...all[oldIdx],
+          valid_until: new Date(Date.now() + ttl).toISOString(),
+          updated_at: NOW(),
+        };
+      }
+
+      this.writeFacts(all);
+      this.conflicts.resolve(id, keep);
+      // 旧条被“新的对”取代后，挂在同一个旧条上的其它候选也没有意义了
+      if (keep === 'new') {
+        this.conflicts.closeForSupersededOld(conflict.old_fact_key, conflict.new_fact_key);
+      }
+    });
+    tx();
+
+    logger.info(
+      `[Conflict] resolved ${id.slice(0, 12)} keep=${keep} old="${conflict.old_fact.slice(0, 30)}" ` +
+      `new="${conflict.new_fact.slice(0, 30)}"`,
+    );
+    return { ok: true, oldFact: conflict.old_fact, newFact: conflict.new_fact };
   }
 
   /** 待确认事实：过期 ≤3 天的 active 事实（先清理超窗事实）。

@@ -78,8 +78,10 @@ export class ProfileExtractor {
 
   // ===== Fact 提取 (慢路径，SessionEnd 使用) =====
 
-  /** ★ 8-28 双输出（memory-character-perspective）：用户事实 + 角色事实（昔涟自己的事） */
-  async extract(events: MemoryEvent[]): Promise<ExtractResult> {
+  /** ★ 8-28 双输出（memory-character-perspective）：用户事实 + 角色事实（昔涟自己的事）
+   *  ★ 2026-10-28（resolve-fact-conflicts）：额外传入**当前活跃事实**，让同一次提取
+   *    顺带标出 `conflicts_with`（不增加 LLM 调用）。 */
+  async extract(events: MemoryEvent[], existingFacts: ProfileFact[] = []): Promise<ExtractResult> {
     // ★ 9-25 wire-importance-signal：importance 接线后，启用原注释所写的过滤意图。
     //   原来是 `const significantEvents = events;` —— 当时 importance 恒 0，过滤等于全杀。
     //
@@ -101,11 +103,23 @@ export class ProfileExtractor {
     // ★ C4：**没调过 LLM** 与**调了但失败**必须分开（旧实现两者都返回空数组）
     if (!userMessages.trim()) return { facts: [], characterFacts: [], attempted: false };
 
+    // ★ 2026-10-28：把当前活跃事实带给模型做**同属性冲突判断**。
+    //   上限 120 条（线上 ~118），避免把整个历史塞进提取请求。
+    const activeFacts = existingFacts
+      .filter(f => f.status === 'active')
+      .sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)))
+      .slice(0, 120);
+    const existingBlock = activeFacts.length > 0
+      ? `【已有事实（只用于冲突判断，不要复述）】\n`
+        + activeFacts.map(f => `- ${f.fact}（${f.category}/${f.source}/${f.confidence}）`).join('\n')
+        + `\n\n【本段对话】\n`
+      : '';
+
     try {
       const response = await this.llm.complete(
         // 提示词见 `prompts/memory.ts`（逐字搬移，注释与约束都在那边）
         PROFILE_EXTRACT_SYSTEM_PROMPT,
-        userMessages
+        existingBlock + userMessages
       );
       // parseLLMJson 在 kind === 'json' 时 value 为 any——沿用原实现对该值的宽松处理
       const r = parseLLMJson(response);
@@ -120,7 +134,12 @@ export class ProfileExtractor {
       // ★ 8-28 分类接线：按 category 设 valid_until（TTL：identity 365d/preference 90d/status 14d/
       //   relationship 90d/general 60d）；transient 兼容（无 category 时 transient=true → status 14 天）
       const ttlMs = (cat: string) => FACT_TTL_BY_CATEGORY[cat as keyof typeof FACT_TTL_BY_CATEGORY] ?? FACT_TTL_BY_CATEGORY.general;
-      const toFact = (f: { fact: string; confidence: number; evidence: string; directly_stated?: boolean; transient?: boolean; category?: string }, index: number): ProfileFact => {
+      const toFact = (f: {
+        fact: string; confidence: number; evidence: string;
+        directly_stated?: boolean; transient?: boolean; category?: string;
+        /** ★ 2026-10-28：已有事实原文；只在新旧同属性冲突时由模型给出 */
+        conflicts_with?: string | null;
+      }, index: number): ProfileFact => {
         // ★ 8-28 修复：枚举校验 + 同义词容错映射（LLM 自由词 → 标准枚举）；transient 兼容兜底
         const raw = String(f.category ?? '').trim().toLowerCase();
         const category = (['identity', 'preference', 'status', 'relationship', 'general'] as const).includes(raw as never)
@@ -145,6 +164,10 @@ export class ProfileExtractor {
           //   拿不到事件时记 'unknown'（**不许猜**）。
           //   ⚠️ 不要拿上面的 `source` 当渠道 —— 它是提取方式（user/inferred）。
           channel: channelOfSession(events[0]?.session_id),
+          // ★ 2026-10-28：只在模型真的标了冲突时带字段，避免改变既有输出形状
+          ...(typeof f.conflicts_with === 'string' && f.conflicts_with.trim()
+            ? { conflicts_with: f.conflicts_with.trim() }
+            : {}),
         };
       };
       // ★ 8-28 双输出：用户事实 + 角色事实（角色事实 source 固定 inferred——对话中推断的角色信息）

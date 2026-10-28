@@ -65,6 +65,8 @@
 | 画像 | `GET /api/profile` | 画像快照（`?includeSuperseded=1` 带已作废的） | 🟢 core 已封装 |
 | 画像 | `POST /api/profile/facts/correct` | **纠正**一条用户事实（旧的作废 + 写新的） | 🟢 core 已封装（2026-10-16） |
 | 画像 | `POST /api/profile/facts/confirm` | **失效**（或续期）一条事实 | 🟢 core 已封装（2026-10-16） |
+| 画像 | `GET /api/profile/conflicts` | 新旧事实冲突候选 + 队列统计 | 🟢 2026-10-28（`resolve-fact-conflicts`） |
+| 画像 | `POST /api/profile/conflicts/:id/resolve` | 裁决冲突（`keep=old\|new`） | 🟢 2026-10-28 |
 | 人格 | `GET /api/persona` | 人格状态 | 🟢 core 已封装 |
 | 人格 | `POST /api/persona/adjust` | 手动调整人格参数 | 🟢 core 已封装 |
 | Token | `GET /api/stats` | Token 用量统计 | 🟢 core 已封装 |
@@ -244,6 +246,20 @@ correctProfileFact(oldFact: string, newFact: string): { superseded: boolean; add
 - ⚠️ **这条路此前不存在**：`confirmProfileFact` 早就实现了，但全仓**没有任何调用方**
   ⇒ 能力一直不可达（`/api/profile` 只能看、不能改）。2026-10-16 补上。
 - **Web 用途**: `/memory` 页的「忘掉」按钮。
+
+### 2.3.3 `GET /api/profile/conflicts` + `POST /api/profile/conflicts/:id/resolve` — 新旧事实冲突
+
+**Core 方法**: `MemoryManager.listFactConflicts(limit)` /
+`resolveFactConflict(conflictId, keep)`
+
+- `GET` → `{ ok, pending: FactConflict[], stats: { pending, kept_old, kept_new, expired } }`；
+  `pending` 不受“提问冷却”限制（给 console 看全量），但仍会过期。
+- `POST /:id/resolve` 请求 `{ keep: "old" | "new" }`：
+  - `new` → 旧条 superseded、新条 active + `confirmed_at`；
+  - `old` → 旧条按分类续期、候选丢弃；
+  - 已裁决/找不到 → **404**；`keep` 非法 → **400**。
+- **Web 用途**: 画像页“待确认”区；聊天里的提问由 `[需要确认的事]` 块 + 工具完成，
+  这个 API 是人工排查/后台操作入口。
 
 ---
 

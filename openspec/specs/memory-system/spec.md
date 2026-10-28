@@ -1977,3 +1977,60 @@ forbids」唯一声明处：
 - `getGenre()` 未知 id **抛错**，不静默回落 chat。
 - `forbids` 的 key 必须存在于 `CHAT_BLOCK_ORDER`。
 - 本次是声明重构：characterization 快照逐字不变（173 文件 / 2002 用例全绿）。
+
+## 15. 新旧事实冲突：先问，不静默覆盖（2026-10-28，change: `resolve-fact-conflicts`）
+
+### 15.1 问题
+
+`addFact(s)` 原先遇到同 key/子串就**直接裁决**：旧条 `superseded`，新条 `active`；
+旧条 `source=user`、新条 `inferred` 时**静默丢弃**。这既会覆盖错，也会丢掉该问的信息。
+`[待确认的事实]` / `confirm_profile_fact` 只处理**过期**事实，不处理新旧冲突。
+
+### 15.2 检测
+
+- 画像提取（`ProfileExtractor.extract(events, existingFacts)`）把当前活跃事实（≤120 条）
+  带进**同一次** LLM 调用；每条新事实可带 `conflicts_with`（已有事实原文或 null）。
+  只在“同一属性、值不同”时标；相关/补充不算。
+- 不额外增加 LLM 调用；没有【已有事实】时行为与旧版一致。
+
+### 15.3 写入分流（`ProfileStore.addFact(s)`）
+
+| 新事实 | 旧事实 | 行为 |
+|---|---|---|
+| `source=user` | 任意 | **立即覆盖**（旧条 superseded，新条 active）——用户纠正硬契约 |
+| `inferred/behavior/reflection` | `source=user` | **丢弃**（不拿推断反问用户），日志可见 |
+| `inferred/behavior/reflection` | 其他 | **入候选队列**；旧条保持 active；新条**不激活、不进 facts 块** |
+
+- 无 `conflicts_with` 时回退到旧的同 key/子串判据，保证程序化写入也有保护。
+- `conflicts_with` 在落库前剥离，不写进当前认知。
+
+### 15.4 候选队列 `fact_conflicts`
+
+字段：old/new 的 key/text/source/confidence/category、evidence、source_event、channel、
+status(`pending|kept_old|kept_new|expired`)、occurrences、created_at、last_seen_at、
+asked_at、ask_count、resolved_at、resolution。
+
+- 同一对 `(old_key,new_key)` 只留一个 pending；重复出现累加 `occurrences`。
+- 上限 20 条 pending；超了最旧的标 `expired`（日志可见，不静默丢）。
+- 14 天未裁决 → expired；问满 2 次后再等 3 天 → expired。
+- 问一次后 24h 冷却；`[需要确认的事]` 一次最多 1 条。
+
+### 15.5 提问与裁决
+
+- `pendingConflict` 是 chat 的 **required** 块（保证不被预算丢），内容含旧/新对照与
+  `conflict_id`；真正注入后才 `markAsked`（写 `asked_at`/`ask_count`）。
+- 有冲突时**暂不注入**过期 `pendingConfirm`，避免同一轮问两件事。
+- 工具 `resolve_profile_conflict(conflict_id, keep: old|new)`：
+  - `new` → 旧 superseded、新 active + `confirmed_at`、basics 标 stale；
+  - `old` → 旧条按分类续期、候选丢弃；
+  - facts 与冲突行在**同一事务**里改。
+- 已确认的新说法即使 `source=inferred` 也不再显示“（待确认）”。
+- Web：`GET /api/profile/conflicts`（pending + stats）、
+  `POST /api/profile/conflicts/:id/resolve`（keep=old|new）。
+
+### 15.6 不变量
+
+- 用户明确陈述永远不被“提问”拖延；推断永远不能压过用户陈述。
+- 未确认候选**不得**进入 facts 块或画像重写。
+- `fact_conflicts` 是候选，不是当前认知；`user_profile.facts` 仍是唯一当前态。
+- 测试：175 文件 / 2020 用例全绿（含队列/裁决/提问/API/提取映射）。

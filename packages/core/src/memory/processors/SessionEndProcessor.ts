@@ -314,7 +314,7 @@ export class SessionEndProcessor {
     //      否则"摘要成功"会替它作证，而锚点已经前进，这批事实再也没有机会被提取。
     let factsOutcome: 'ok' | 'failed' | 'skipped' = 'skipped';
     if (messageEvents.length > 0) {
-      const extracted = await this.profileExtractor.extract(messageEvents);
+      const extracted = await this.profileExtractor.extract(messageEvents, this.profileStore.getCurrentFacts());
       if (extracted.facts.length > 0) {
         this.profileStore.addFacts(extracted.facts);
       }
@@ -491,7 +491,7 @@ export class SessionEndProcessor {
       return false;
     }
 
-    const extracted = await this.profileExtractor.extract(messageEvents);
+    const extracted = await this.profileExtractor.extract(messageEvents, this.profileStore.getCurrentFacts());
     if (extracted.error) {
       // D3：次数用尽后留在 failed 且**可见**（不再重试），而不是无限重试 + 日志全绿
       this.conversationStore.incrementFactsAttempts(conv.id);

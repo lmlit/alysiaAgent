@@ -345,7 +345,8 @@ ${rangeText}`;
       }
       const factsText = inPrompt
         .map(f => {
-          const marker = f.source === 'inferred' ? '(待确认)' : '';
+          // ★ 2026-10-28：用户已裁决“保留新说法”的不再标（confirmed_at 存在）
+          const marker = f.source === 'inferred' && !f.confirmed_at ? '(待确认)' : '';
           const sourceNote = f.source === 'user' ? ' [你说过]' : '';
           // ★ 8-28 时间标注（profile-facts-timestamps）：事实时效对 AI 决策关键——
           //   "用户在长沙" 是 3 个月前还是今天的，含义完全不同
@@ -391,27 +392,55 @@ ${rangeText}`;
       );
     }
 
-    // ★ 8-28 过期确认（profile-facts-classification-confirm）：过期 ≤3 天的画像事实 →
-    //   【待确认的事实】块（≤2 条）——昔涟在合适时机自然询问，用户回答后调 confirm_profile_fact 记录
+    // ★ 2026-10-28（resolve-fact-conflicts）：新旧事实冲突优先于“过期确认”。
+    //   一次只问 1 条；required 保证不被预算丢；真正注入后才 markAsked。
+    let hasConflict = false;
     try {
-      const pending = this.profileStore.listPendingConfirmFacts();
-      if (pending.length > 0) {
-        const pendingLines = pending.slice(0, 2).map(f => {
-          const d = new Date(f.validFrom);
-          const dateNote = Number.isNaN(d.getTime()) ? '' : ` (${d.getMonth() + 1}月${d.getDate()}日记录的)`;
-          return `- ${f.fact}${dateNote}`;
-        }).join('\n');
-        const pendingBlock = `[待确认的事实]\n这些关于轻月的事你可能记错了——想确认的话可以在合适的时机自然地问（一次最多问一条），\n问清后用 confirm_profile_fact 工具记录回答（确认 → 续期；否认 → 忘掉）：\n${pendingLines}`;
-        this.pushChatBlock('pendingConfirm', pendingBlock, budget, blocks, dropped);
+      const conflicts = this.profileStore.listPendingConflicts(1);
+      if (conflicts.length > 0) {
+        hasConflict = true;
+        const c = conflicts[0];
+        const conflictBlock = `[需要确认的事]\n`
+          + `你之前说「${c.old_fact}」；最近又提到「${c.new_fact}」。\n`
+          + `如果合适，自然地问一句确认（一次最多问一条）；问清后用 resolve_profile_conflict 工具记录：\n`
+          + `conflict_id=${c.id}，keep="old"（旧的对）或 "new"（新的对）。`;
+        this.pushChatBlock('pendingConflict', conflictBlock, budget, blocks, dropped);
+        // ★ 必须在真正进 prompt 之后记；required 块不会进 dropped，但仍按同一判据写
+        if (!dropped.includes('pendingConflict')) {
+          this.profileStore.markConflictsAsked([c.id]);
+        }
       }
     } catch (err: any) {
-      // ★ KI-5 点名的那一处：`listPendingConfirmFacts()` 内部会先跑
-      //   `expireStaleFacts()` → `writeFacts()` —— 所以这里吞掉的可能是一次**写**失败
-      //   （过期事实永不清理），而日志上完全看不出来。热路径 → 限频。
       warnThrottled(
-        'PromptAssembler.pendingConfirm',
-        `[PromptAssembler] [待确认的事实] 块构建失败（本轮不注入；注意它内部含过期清理的**写**）: ${err?.message ?? err}`,
+        'PromptAssembler.pendingConflict',
+        `[PromptAssembler] [需要确认的事] 块构建失败（本轮不注入；内部含写 asked_at）: ${err?.message ?? err}`,
       );
+    }
+
+    // ★ 8-28 过期确认（profile-facts-classification-confirm）：过期 ≤3 天的画像事实 →
+    //   【待确认的事实】块（≤2 条）——昔涟在合适时机自然询问，用户回答后调 confirm_profile_fact 记录。
+    //   ⚠️ 有冲突待确认时先不问过期（避免同一轮两个“你记错了”）。
+    if (!hasConflict) {
+      try {
+        const pending = this.profileStore.listPendingConfirmFacts();
+        if (pending.length > 0) {
+          const pendingLines = pending.slice(0, 2).map(f => {
+            const d = new Date(f.validFrom);
+            const dateNote = Number.isNaN(d.getTime()) ? '' : ` (${d.getMonth() + 1}月${d.getDate()}日记录的)`;
+            return `- ${f.fact}${dateNote}`;
+          }).join('\n');
+          const pendingBlock = `[待确认的事实]\n这些关于轻月的事你可能记错了——想确认的话可以在合适的时机自然地问（一次最多问一条），\n问清后用 confirm_profile_fact 工具记录回答（确认 → 续期；否认 → 忘掉）：\n${pendingLines}`;
+          this.pushChatBlock('pendingConfirm', pendingBlock, budget, blocks, dropped);
+        }
+      } catch (err: any) {
+        // ★ KI-5 点名的那一处：`listPendingConfirmFacts()` 内部会先跑
+        //   `expireStaleFacts()` → `writeFacts()` —— 所以这里吞掉的可能是一次**写**失败
+        //   （过期事实永不清理），而日志上完全看不出来。热路径 → 限频。
+        warnThrottled(
+          'PromptAssembler.pendingConfirm',
+          `[PromptAssembler] [待确认的事实] 块构建失败（本轮不注入；注意它内部含过期清理的**写**）: ${err?.message ?? err}`,
+        );
+      }
     }
 
     // Recent conversations

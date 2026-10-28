@@ -84,6 +84,40 @@ export function initializeDatabase(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_conv_session ON conversations(session_id);
     CREATE INDEX IF NOT EXISTS idx_conv_time ON conversations(started_at);
 
+    -- ★ 2026-10-28（resolve-fact-conflicts）：事实冲突候选队列。
+    --   旧事实保持 active；新说法只是候选，等用户裁决后再落 user_profile.facts。
+    CREATE TABLE IF NOT EXISTS fact_conflicts (
+      id              TEXT PRIMARY KEY,
+      session_id      TEXT NOT NULL DEFAULT '',
+      old_fact_key    TEXT NOT NULL,
+      old_fact        TEXT NOT NULL,
+      old_source      TEXT NOT NULL,
+      old_confidence  REAL,
+      new_fact_key    TEXT NOT NULL,
+      new_fact        TEXT NOT NULL,
+      new_source      TEXT NOT NULL,
+      new_confidence  REAL,
+      new_category    TEXT NOT NULL DEFAULT 'general',
+      evidence        TEXT NOT NULL DEFAULT '',
+      source_event    TEXT NOT NULL DEFAULT '',
+      channel         TEXT NOT NULL DEFAULT '',
+      status          TEXT NOT NULL DEFAULT 'pending'
+                      CHECK (status IN ('pending','kept_old','kept_new','expired')),
+      occurrences     INTEGER NOT NULL DEFAULT 1,
+      created_at      TEXT NOT NULL,
+      last_seen_at    TEXT NOT NULL,
+      asked_at        TEXT,
+      ask_count       INTEGER NOT NULL DEFAULT 0,
+      resolved_at     TEXT,
+      resolution      TEXT
+    );
+    -- 同一对冲突只留一个 pending；重复出现只累加 occurrences
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_fact_conflicts_pending
+      ON fact_conflicts(old_fact_key, new_fact_key)
+      WHERE status = 'pending';
+    CREATE INDEX IF NOT EXISTS idx_fact_conflicts_status
+      ON fact_conflicts(status, created_at);
+
     CREATE TABLE IF NOT EXISTS knowledge_docs (
       id              TEXT PRIMARY KEY,
       title           TEXT NOT NULL,

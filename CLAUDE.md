@@ -83,7 +83,7 @@ ALYSIA_DEPLOY_HOST=root@<host> pnpm deploy       # 真部署（内部**强制**�
 ## Current State
 
 **记忆系统核心 + 架构重构 + Feature Flag + AI 主动生活系统 + 模块化内核 + dsh 通道全部完成。**
-测试基线：**2002**（**173** 个测试文件，★ 2026-10-28 实测全绿；原写 1911 已过期，
+测试基线：**2021**（**175** 个测试文件，★ 2026-10-28 新增 `resolve-fact-conflicts` 后实测全绿；
 分 package 的数字以 `docs/HANDOFF.md` 顶部为准 —— 本行只是快照）
 + **E2E 5/5**（真实 API）。⚠️ 跑测试**必须用 Node 24**（`E:\nodejs24\node.exe`），
 PATH 上的 node 是 v20，而 better-sqlite3 是给 24 编的 —— 否则 401 条全挂（`NODE_MODULE_VERSION` 不匹配）。
@@ -151,6 +151,13 @@ src/
   → 定时: CronProcessor (深度画像重写 → basics 自然语言)
   → MemoryManager.assemble() → System Prompt 注入
 ```
+
+★ **2026-10-28（`resolve-fact-conflicts`）**：新旧事实冲突不再静默覆盖——
+提取时 LLM 对照活跃事实标 `conflicts_with`（复用同一次调用）；推断冲突进
+`fact_conflicts` 候选队列，**旧条保持 active、新条不激活**；下一轮
+`[需要确认的事]` required 块引导她自然提问；用户回答后用
+`resolve_profile_conflict(conflict_id, keep=old|new)` 裁决。
+`source=user` 的明确陈述仍**立即生效**；推断永远不能压过用户陈述。
 
 ### 人格自适应
 - 3 维度 × 4 参数: tone/speech_style/emotional_range

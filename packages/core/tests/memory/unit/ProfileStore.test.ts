@@ -86,13 +86,16 @@ describe('ProfileStore — 8-09 包含去重', () => {
 
   afterEach(() => { db.close(); });
 
-  it('短事实（用户在长沙）是长事实（用户目前所在城市是长沙）子串 → 视为冲突并 supersede', () => {
-    store.addFacts([{ fact: '用户目前所在城市是长沙', confidence: 0.8, evidence: 'e', source_event: 'e1', updated_at: new Date().toISOString() }]);
-    const added = store.addFacts([{ fact: '用户在长沙', confidence: 0.6, evidence: 'e', source_event: 'e2', updated_at: new Date().toISOString() }]);
-    expect(added).toHaveLength(1);
+  it('短事实是长事实子串 → 非用户来源进冲突队列，旧条保持 active（不再静默 supersede）', () => {
+    store.addFacts([{ fact: '用户目前所在城市是长沙', confidence: 0.8, evidence: 'e', source_event: 'e1', source: 'inferred', updated_at: new Date().toISOString() }]);
+    const added = store.addFacts([{ fact: '用户在长沙', confidence: 0.6, evidence: 'e', source_event: 'e2', source: 'inferred', updated_at: new Date().toISOString() }]);
+    expect(added).toHaveLength(0); // 候选不直接激活
     const all = store.getAllFacts();
-    expect(all.filter(f => f.status === 'active')).toHaveLength(1); // 只有一条 active
-    expect(all.find(f => f.status === 'superseded')?.fact).toBe('用户目前所在城市是长沙');
+    expect(all.filter(f => f.status === 'active')).toHaveLength(1);
+    expect(all.find(f => f.status === 'active')?.fact).toBe('用户目前所在城市是长沙');
+    const pending = store.listPendingConflicts(5);
+    expect(pending).toHaveLength(1);
+    expect(pending[0].new_fact).toBe('用户在长沙');
   });
 
   it('短词（<3 字归一化）不误合并', () => {

@@ -154,4 +154,36 @@ describe('PromptAssembler', () => {
     expect(prompt).not.toContain('测试事实20'); // 第 21 条之后不注入
     expect(prompt).toContain('[关于你的事实]');
   });
+
+  // ★ 2026-10-28（resolve-fact-conflicts）：下一轮 prompt 必须能“问出来”，
+  //   且真正注入后才 markAsked；用户裁决新说法后不再标“待确认”。
+  it('冲突候选 → [需要确认的事] 块 + conflict_id，注入后 ask_count=1', async () => {
+    const base = {
+      confidence: 0.8, evidence: 'e', source_event: 'e1',
+      updated_at: new Date().toISOString(), valid_from: new Date().toISOString(),
+      valid_until: null, status: 'active' as const, category: 'identity' as const,
+    };
+    profileStore.addFacts([{ ...base, fact: '用户在长沙', source: 'inferred' }]);
+    profileStore.addFacts([{
+      ...base, fact: '用户在杭州', source: 'inferred', conflicts_with: '用户在长沙',
+    }]);
+
+    const report = await assembler.assembleWithReport('chat');
+    expect(report.text).toContain('[需要确认的事]');
+    expect(report.text).toContain('用户在长沙');
+    expect(report.text).toContain('用户在杭州');
+    expect(report.text).toContain('conflict_id=fc-');
+    expect(report.dropped).not.toContain('pendingConflict');
+
+    const row = db.prepare('SELECT id, ask_count, asked_at FROM fact_conflicts LIMIT 1').get() as any;
+    expect(row.ask_count).toBe(1);
+    expect(row.asked_at).toBeTruthy();
+
+    // 用户裁决“新的对” → 新事实 active，且因为 confirmed_at 不再标“（待确认）”
+    expect(profileStore.resolveFactConflict(row.id, 'new').ok).toBe(true);
+    const after = await assembler.assembleWithReport('chat');
+    expect(after.text).toContain('用户在杭州');
+    expect(after.text).not.toContain('用户在杭州(待确认)');
+    expect(after.text).not.toContain('[需要确认的事]');
+  });
 });

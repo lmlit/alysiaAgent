@@ -153,4 +153,37 @@ describe('POST /api/profile/facts/confirm — 失效 / 续期', () => {
     expect(res.statusCode).toBe(400);
     expect(confirm).not.toHaveBeenCalled();
   });
+describe('事实冲突 API（2026-10-28 resolve-fact-conflicts）', () => {
+  it('GET /api/profile/conflicts → pending + stats', async () => {
+    const app = await buildApp(makeCore({
+      listFactConflicts: () => [{ id: 'fc-1', old_fact: '长沙', new_fact: '杭州' }],
+      getFactConflictStats: () => ({ pending: 1, kept_old: 0, kept_new: 0, expired: 0 }),
+    }));
+    const res = await app.inject({ method: 'GET', url: '/api/profile/conflicts' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ ok: true, pending: [{ id: 'fc-1' }], stats: { pending: 1 } });
+  });
+
+  it('POST /resolve：keep 非法 → 400；成功 → 透传', async () => {
+    const resolve = vi.fn(() => ({ ok: true, oldFact: '长沙', newFact: '杭州' }));
+    const app = await buildApp(makeCore({ resolveFactConflict: resolve }));
+
+    const bad = await app.inject({ method: 'POST', url: '/api/profile/conflicts/fc-1/resolve', payload: { keep: 'x' } });
+    expect(bad.statusCode).toBe(400);
+
+    const good = await app.inject({ method: 'POST', url: '/api/profile/conflicts/fc-1/resolve', payload: { keep: 'new' } });
+    expect(good.statusCode).toBe(200);
+    expect(resolve).toHaveBeenCalledWith('fc-1', 'new');
+    expect(good.json()).toMatchObject({ ok: true, newFact: '杭州' });
+  });
+
+  it('POST /resolve：已裁决/找不到 → 404', async () => {
+    const app = await buildApp(makeCore({
+      resolveFactConflict: () => ({ ok: false, error: 'conflict already kept_old' }),
+    }));
+    const res = await app.inject({ method: 'POST', url: '/api/profile/conflicts/fc-1/resolve', payload: { keep: 'old' } });
+    expect(res.statusCode).toBe(404);
+  });
+});
+
 });

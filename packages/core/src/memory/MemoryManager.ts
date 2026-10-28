@@ -2323,6 +2323,46 @@ export class MemoryManager {
     }
   }
 
+  // ★ 2026-10-28（resolve-fact-conflicts）：冲突候选的公开面（工具 / console / 测试）
+  listPendingFactConflicts(limit: number = 5): ReturnType<ProfileStore['listPendingConflicts']> {
+    try {
+      return this.profileStore.listPendingConflicts(limit);
+    } catch (err: any) {
+      logger.warn(`[Profile] list fact conflicts failed: ${err?.message ?? err}`);
+      return [];
+    }
+  }
+
+  /** Web/console 用：不受提问冷却限制的全部 pending。 */
+  listFactConflicts(limit: number = 20): ReturnType<ProfileStore['listFactConflicts']> {
+    try {
+      return this.profileStore.listFactConflicts(limit);
+    } catch (err: any) {
+      logger.warn(`[Profile] list all fact conflicts failed: ${err?.message ?? err}`);
+      return [];
+    }
+  }
+
+  resolveFactConflict(conflictId: string, keep: 'old' | 'new'): {
+    ok: boolean; error?: string; oldFact?: string; newFact?: string;
+  } {
+    try {
+      return this.profileStore.resolveFactConflict(conflictId, keep);
+    } catch (err: any) {
+      logger.warn(`[Profile] resolve fact conflict failed: ${err?.message ?? err}`);
+      return { ok: false, error: String(err?.message ?? err) };
+    }
+  }
+
+  getFactConflictStats(): Record<string, number> {
+    try {
+      return this.profileStore.getConflictStats();
+    } catch (err: any) {
+      logger.warn(`[Profile] conflict stats failed: ${err?.message ?? err}`);
+      return {};
+    }
+  }
+
   /**
    * ★ 手动纠正一条**用户事实**：让旧的失效，并写入新的（`source: 'user'`）。
    *

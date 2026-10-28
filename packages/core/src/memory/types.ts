@@ -246,6 +246,17 @@ export interface ProfileFact {
    * 老数据可能缺这个字段（判不出来就是 `'unknown'`，**不许猜**）。
    */
   channel?: MemoryChannel;
+  /**
+   * ★ 2026-10-28（resolve-fact-conflicts）：**提取期的冲突标记**，不是持久字段。
+   * 指向【已有事实】里与新事实语义冲突的那条原文；只用于 addFacts 分流，
+   * 落库前会被剥掉（避免把“候选关系”写进当前认知）。
+   */
+  conflicts_with?: string | null;
+  /**
+   * ★ 2026-10-28：用户裁决“保留新说法”的时间。
+   * 存在时即使 `source=inferred` 也不再显示“（待确认）”——因为它已经被用户确认过。
+   */
+  confirmed_at?: string;
 }
 
 /** ★ 8-28 分类过期时长（ms）：identity 365 天 / preference 90 天 / status 14 天 /

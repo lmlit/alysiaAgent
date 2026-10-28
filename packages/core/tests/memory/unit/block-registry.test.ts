@@ -18,14 +18,14 @@ import {
 /** 与 `ChatBlockKey` 联合类型等价的运行期清单 —— 类型新增而忘了登记时，这里会红 */
 const ALL_CHAT_KEYS = [
   'selfNotice', 'persona', 'overlay', 'basics', 'preferences',
-  'facts', 'characterFacts', 'pendingConfirm', 'recentConversations',
+  'facts', 'characterFacts', 'pendingConfirm', 'pendingConflict', 'recentConversations',
   'worldbook', 'life', 'memories', 'brevity',
 ] as const;
 
 const ALL_CODE_KEYS = ['persona', 'techProfile', 'projectContext', 'worldbook', 'life', 'memories'] as const;
 
 describe('块注册表 —— 完整性', () => {
-  it('★ chat：13 个 key 全部登记，且没有多余项', () => {
+  it('★ chat：14 个 key 全部登记，且没有多余项', () => {
     expect(CHAT_BLOCKS).toHaveLength(ALL_CHAT_KEYS.length);
     expect([...CHAT_BLOCK_ORDER].sort()).toEqual([...ALL_CHAT_KEYS].sort());
   });
@@ -61,16 +61,16 @@ describe('块注册表 —— 策略由注册表派生', () => {
     }
   });
 
-  it('required 只有 selfNotice / persona / facts / brevity', () => {
+  it('required 只有 selfNotice / persona / facts / pendingConflict / brevity', () => {
     const required = CHAT_BLOCKS.filter((b) => b.policy === 'required').map((b) => b.key);
-    // ★ 2026-10-28（fix-long-session-compaction）：facts 从 optional 提升为 required。
-    expect(required).toEqual(['selfNotice', 'persona', 'facts', 'brevity']);
+    // facts：2026-10-28 提升；pendingConflict：冲突必须能问出来，不能被预算丢。
+    expect(required).toEqual(['selfNotice', 'persona', 'facts', 'pendingConflict', 'brevity']);
   });
 });
 
 describe('块注册表 —— effect 声明', () => {
-  it('★ 会写库的块只有 pendingConfirm（读路径带写副作用）', () => {
-    expect([...WRITE_EFFECT_CHAT_BLOCKS]).toEqual(['pendingConfirm']);
+  it('★ 会写库的块：pendingConfirm + pendingConflict', () => {
+    expect([...WRITE_EFFECT_CHAT_BLOCKS]).toEqual(['pendingConfirm', 'pendingConflict']);
   });
 
   it('★ 该块的 note 必须说清"为什么读路径要写"（否则这条声明会变成没人敢动的黑盒）', () => {

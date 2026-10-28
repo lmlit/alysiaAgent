@@ -121,7 +121,7 @@ describe('★ E1 正常摘要与补处理共用同一个对话渲染器', () => 
         updateFactsStatus: () => ({ rows: 1 }),
         incrementFactsAttempts: () => {},
       } as any,
-      { addFacts: () => {}, addCharacterFacts: () => {} } as any,
+      { addFacts: () => {}, addCharacterFacts: () => {}, getCurrentFacts: () => [] } as any,
       {} as any,
       {} as any,
       { extract: async () => ({ facts: [], characterFacts: [] }) } as any,

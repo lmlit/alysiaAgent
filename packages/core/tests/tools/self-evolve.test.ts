@@ -19,10 +19,10 @@ function makeMm(overrides: Record<string, any> = {}) {
 }
 
 describe('createSelfEvolveTools', () => {
-  it('注册 5 个工具，名字与参数形状正确', () => {
+  it('注册 6 个工具，名字与参数形状正确', () => {
     const tools = createSelfEvolveTools(makeMm());
     const names = tools.map(t => t.name);
-    expect(names).toEqual(['write_worldbook', 'add_life_template', 'delete_worldbook_entry', 'confirm_profile_fact', 'delete_life_template']);
+    expect(names).toEqual(['write_worldbook', 'add_life_template', 'delete_worldbook_entry', 'confirm_profile_fact', 'resolve_profile_conflict', 'delete_life_template']);
     // ★ 8-28 确认工具：参数形状 + 仅当用户明确回答才调用
     expect(tools[3].parameters.required).toEqual(['fact_id', 'still_valid']);
     expect(tools[3].description).toContain('仅当对话中用户明确回答');
@@ -82,7 +82,7 @@ describe('createSelfEvolveTools', () => {
   it('delete_life_template：按关键词匹配删除', async () => {
     const mm = makeMm();
     const tools = createSelfEvolveTools(mm);
-    const result = await tools[4].handler({ keyword: '多肉' });
+    const result = await tools[5].handler({ keyword: '多肉' });
     expect(mm.deleteLifeTemplate).toHaveBeenCalledWith('lt_self_1');
     expect(result).toContain('删掉了');
   });
@@ -110,4 +110,13 @@ describe('createSelfEvolveTools', () => {
     const result = await tools[3].handler({ fact_id: '不存在的事实', still_valid: true });
     expect(result).toContain('没有找到');
   });
+  it('resolve_profile_conflict：转发裁决（keep=new）并返回文案', async () => {
+    const mm = makeMm({ resolveFactConflict: vi.fn().mockReturnValue({ ok: true }) });
+    const tool = createSelfEvolveTools(mm).find(t => t.name === 'resolve_profile_conflict')!;
+    expect(tool.parameters.required).toEqual(['conflict_id', 'keep']);
+    const result = await tool.handler({ conflict_id: 'fc-1', keep: 'new' });
+    expect(mm.resolveFactConflict).toHaveBeenCalledWith('fc-1', 'new');
+    expect(result).toContain('新说的');
+  });
+
 });

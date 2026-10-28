@@ -158,7 +158,7 @@ describe('SessionEndProcessor — vectorOutcome 四态（KI-15）', () => {
     return new SessionEndProcessor(
       { getBySession: () => [ev], updateImportance: () => {} } as any,
       { insert: async () => opts.insertReturns, updateSummaryResult: async () => 'stored', updateFactsStatus: () => ({ rows: 1 }), incrementFactsAttempts: () => {} } as any,
-      { addFacts: () => {}, addCharacterFacts: () => {} } as any,
+      { addFacts: () => {}, addCharacterFacts: () => {}, getCurrentFacts: () => [] } as any,
       {} as any, {} as any,
       { extract: async () => ({ facts: [], characterFacts: [] }) } as any,
       { processSignal: async () => null, apply: () => {} } as any,

@@ -135,7 +135,12 @@ describe('反代 createProxyHandler', () => {
         { url: '/alysia-api/profile?x=1', method: 'GET', headers: { accept: 'application/json' } },
         res as never,
       )
-      await new Promise(r => setTimeout(r, 100))
+      // ★ 2026-10-28：固定 100ms 在满载并行测试时会假红（proxy 本身没坏）。
+      //   改成等 mock 真正被调用，最多 3s。
+      const deadline = Date.now() + 3000
+      while (res.writeHead.mock.calls.length === 0 && Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, 20))
+      }
       expect(res.writeHead).toHaveBeenCalledWith(200, expect.objectContaining({ 'content-type': 'application/json' }))
       const raw = res.end.mock.calls[0][0]
       const text = raw instanceof Uint8Array ? new TextDecoder().decode(raw) : String(raw)

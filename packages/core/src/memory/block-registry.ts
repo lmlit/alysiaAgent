@@ -28,7 +28,7 @@
 
 export type ChatBlockKey =
   | 'selfNotice' | 'persona' | 'overlay' | 'basics' | 'preferences'
-  | 'facts' | 'characterFacts' | 'pendingConfirm' | 'recentConversations'
+  | 'facts' | 'characterFacts' | 'pendingConfirm' | 'pendingConflict' | 'recentConversations'
   | 'worldbook' | 'life' | 'memories' | 'brevity';
 
 export type CodeBlockKey = 'persona' | 'techProfile' | 'projectContext' | 'worldbook' | 'life' | 'memories';
@@ -78,6 +78,12 @@ export const CHAT_BLOCKS: ReadonlyArray<BlockSpec<ChatBlockKey>> = [
     source: 'profileStore.listPendingConfirmFacts()',
     note: '★ 该调用内部会 expireStaleFacts() → writeFacts()：读路径带写副作用（KI-5）',
   },
+  {
+    key: 'pendingConflict', policy: 'required', effect: 'write',
+    source: 'profileStore.listPendingConflicts(1)',
+    note: '★ 2026-10-28（resolve-fact-conflicts）：新旧事实冲突。required 保证不被预算丢；'
+      + '注入后 markAsked 写 asked_at/ask_count（effect=write）。一次只问 1 条，有冷却与上限。',
+  },
   { key: 'recentConversations', policy: 'optional', effect: 'read', source: 'conversationStore.getRecent(3, sessionId)' },
   {
     key: 'worldbook', policy: 'optional', effect: 'read', source: '入参 triggers（按 worldbookScope 过滤）',
@@ -111,6 +117,6 @@ export const CODE_BLOCK_POLICY: Record<CodeBlockKey, 'required' | 'optional'> = 
 export const CHAT_BLOCK_ORDER: ReadonlyArray<ChatBlockKey> = CHAT_BLOCKS.map((b) => b.key);
 export const CODE_BLOCK_ORDER: ReadonlyArray<CodeBlockKey> = CODE_BLOCKS.map((b) => b.key);
 
-/** 会写库的块（当前只有 pendingConfirm）。上面的层可据此在只读场景里跳过它们。 */
+/** 会写库的块（pendingConfirm / pendingConflict）。上面的层可据此在只读场景里跳过它们。 */
 export const WRITE_EFFECT_CHAT_BLOCKS: ReadonlyArray<ChatBlockKey> =
   CHAT_BLOCKS.filter((b) => b.effect === 'write').map((b) => b.key);
