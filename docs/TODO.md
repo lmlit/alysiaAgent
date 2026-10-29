@@ -81,6 +81,7 @@
 |---|---|---|
 | 10-28 | **P8 第 4 步 `genres`**：8 个体裁的预算/采样/persona/forbids 进声明表；chat/code 预算、chat persona 节数、proactive 采样已改读表，prompt 输出逐字不变 | [`extract-prompt-genres`](../openspec/archive/2026-10-28-extract-prompt-genres/proposal.md) |
 | 10-28 | **生产形态回归**：100 facts / 3 recent / 5 memories / life + 60s×25min 冷却 + skipped hold 断言 | [`add-production-trace-eval`](../openspec/archive/2026-10-28-add-production-trace-eval/proposal.md) |
+| 10-29 | **Docker 构建修复**：`dl-cdn.alpinelinux.org` 本机 TLS 握手失败导致 `apk add` 卡死；Dockerfile 改用阿里云 Alpine 镜像，构建恢复 | commit `197ee8e` |
 | 10-29 | **长会话修复 24h 观察**（10-28 20:20 → 10-29 20:20）：`facts` 丢弃 **0**；prompt 仅 1 次丢 `memories(361tok)`，`recent/life` 0；`[Compact]` **2 请求 / 2 完成**，0 skipped/failed/hold；2 次 SessionEnd 均 summary/facts/vector=ok（36.7s / 20.1s） | [fix-long-session-compaction tasks](../openspec/archive/2026-10-28-fix-long-session-compaction/tasks.md)；生产日志 10-29 |
 | 10-28 | **新旧事实冲突**：提取时 LLM 标 `conflicts_with`（不额外调用）、冲突进 `fact_conflicts` 队列、下一轮 `[需要确认的事]` 必选块、`resolve_profile_conflict` 工具 + Web API；用户明确陈述仍立即生效 | [`resolve-fact-conflicts`](../openspec/archive/2026-10-28-resolve-fact-conflicts/proposal.md) |
 | 10-28 | **长会话压缩调度**：10min/会话冷却、`skipped` 不暂停截断、facts required + 前 20 条（40 条会挤掉 recent/life/memories） | [`fix-long-session-compaction`](../openspec/archive/2026-10-28-fix-long-session-compaction/proposal.md) |
