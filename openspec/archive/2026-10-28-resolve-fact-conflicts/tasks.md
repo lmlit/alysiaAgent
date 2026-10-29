@@ -39,6 +39,11 @@
 - [x] 本地真服务冲突 API 端到端：GET pending → POST keep=new → facts 旧 superseded / 新 active + confirmed_at
 
 ## 6. 部署与归档
-- [ ] 提交并部署生产；记录 `docker ps` + `/api/health` + 回滚标签
-- [ ] 归档到 `openspec/archive/2026-10-28-resolve-fact-conflicts/`
-- [ ] 更新 `docs/TODO.md` 链接（change → archive）、`openspec/specs/index.md`
+- [x] 提交：`384fba5`（feature）+ `197ee8e`（Docker Alpine mirror）
+- [x] 部署生产：2026-10-29 22:11（`rollback-20261029-221119`）
+  - `docker ps`: `server-alysia:latest Up (healthy)`
+  - `/api/health`: `{"status":"ok"}` / HTTP 200
+  - 生产库 `fact_conflicts` 表存在，22 列齐全，pending=0
+  - 容器内 dist 含 `pendingConflict` / `resolve_profile_conflict`
+- [x] 归档到 `openspec/archive/2026-10-28-resolve-fact-conflicts/`
+- [x] 更新 `docs/TODO.md` 链接（change → archive）

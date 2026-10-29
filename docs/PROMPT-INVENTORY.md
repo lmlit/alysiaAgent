@@ -69,7 +69,7 @@
 
 ## 3. 两张块表（`assembleChat` / `assembleCode`）
 
-### 3.1 chat 表（3200 token，**13 块**）
+### 3.1 chat 表（3200 token，**14 块**）
 
 | 序 | key | 策略 | 数据源 | 副作用 |
 |---|---|---|---|---|
@@ -78,14 +78,15 @@
 | 3 | `overlay` | optional | `getOverlayNotes()`（已固化演化） | read |
 | 4 | `basics` | optional | `profile.basics`（三档：新鲜 / 过时但有事实→跳过 / 过时且无事实→降级标题） | read |
 | 5 | `preferences` | optional | `profile.preferences` | read |
-| 6 | `facts` | optional | `getActiveFacts()` + 组装层去重 + 时间标注 | read |
+| 6 | `facts` | **required**（2026-10-28） | `getActiveFacts()` 前 20 条 + 组装层去重 + 时间标注 | read |
 | 7 | `characterFacts` | optional | `getActiveCharacterFacts().slice(-8)` | read |
 | 8 | `pendingConfirm` | optional | `listPendingConfirmFacts()` | ⚠️ **write**（内部 `expireStaleFacts()`） |
-| 9 | `recentConversations` | optional | `conversationStore.getRecent(3, sessionId)` | read |
-| 9.5 | `worldbook` | optional | **仅 `worldbookScope` 显式给出时**才出现（2026-10-24 前是死参数） | read |
-| 10 | `life` | optional | 外面的 `getLifeEventInjection()` | read |
-| 11 | `memories` | optional | 外面的 `retrieved` | read |
-| 12 | `brevity` | **required** | 代码常量（≤3 句，像发微信） | — |
+| 9 | `pendingConflict` | **required**（2026-10-28） | `listPendingConflicts(1)` | ⚠️ **write**（真正注入后 `markAsked`） |
+| 10 | `recentConversations` | optional | `conversationStore.getRecent(3, sessionId)` | read |
+| 10.5 | `worldbook` | optional | **仅 `worldbookScope` 显式给出时**才出现（2026-10-24 前是死参数） | read |
+| 11 | `life` | optional | 外面的 `getLifeEventInjection()` | read |
+| 12 | `memories` | optional | 外面的 `retrieved` | read |
+| 13 | `brevity` | **required** | 代码常量（≤3 句，像发微信） | — |
 
 **required 会超预算**：`pushBlock` 对 required 忽略 `reserve()` 返回值（刻意的）。所以 3200 是软上限。
 **optional 先到先得**：这就是历史上 `[关于我]` 被整块挤掉的原因（10-15 事故）。
@@ -95,7 +96,7 @@
 `persona`(required，压成 1 行) / `techProfile` / `projectContext` / **`worldbook`（只有这张表注入）** /
 `life` / `memories`。
 
-⇒ **人味块（basics/preferences/facts/关于我/待确认/最近对话）在这张表里全不存在**，
+⇒ **人味块（basics/preferences/facts/关于我/待确认/待确认冲突/最近对话）在这张表里全不存在**，
     而 `brevity` 也不在。这是 dsh 选 chat 表的原因（见 §6.1）。
 
 ---

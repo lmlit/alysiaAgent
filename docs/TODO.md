@@ -62,7 +62,6 @@
 
 | 条目 | 一句话 | 卡在 | 权威出处 |
 |---|---|---|---|
-| **长会话修复 24h 观察** | 2026-10-28 19:55 发版（facts 20 + 冷却 + skipped 不 hold）；待看 **facts 丢弃=0**、`recent/life/memories` 是否回来、压缩请求/ hold、端到端 p50 | ⏳ **2026-10-29 20:20 后**收数据 | [fix-long-session-compaction tasks](../openspec/archive/2026-10-28-fix-long-session-compaction/tasks.md) |
 | **31 条 `needs_review`** | 10-19 存量（24 条卡 `intent`，18 条结果 ≤80 字）；不阻塞、watchdog 不报 | ⏸ **2026-10-26 不动** | [验收记录 §4](ACCEPTANCE-2026-10-19-WAKE.md) |
 
 ## E. 暂停 / 不做
@@ -73,7 +72,7 @@
 | `webui-visual-redesign` | 对象（Vue 版 `packages/webui`）已删 | 🗑 superseded，不再推进 |
 | Halo 主题（`packages/halo-theme-xilian`） | 独立试验，只在本地 Halo 验过；**用户 2026-10-26 明确"先别搞"** | ⏸ 不占本表 |
 
-## F. 最近销账（2026-10-24 ～ 10-28）
+## F. 最近销账（2026-10-24 ～ 10-29）
 
 > 26 条 KI 中 **21 条已修**，在办 5 条（KI-1 / 2 / 10 / 11 / 25）；
 > 另有 KI-27 已于 2026-10-26 销账。证据在各 archive 的 proposal / tasks。
@@ -82,7 +81,8 @@
 |---|---|---|
 | 10-28 | **P8 第 4 步 `genres`**：8 个体裁的预算/采样/persona/forbids 进声明表；chat/code 预算、chat persona 节数、proactive 采样已改读表，prompt 输出逐字不变 | [`extract-prompt-genres`](../openspec/archive/2026-10-28-extract-prompt-genres/proposal.md) |
 | 10-28 | **生产形态回归**：100 facts / 3 recent / 5 memories / life + 60s×25min 冷却 + skipped hold 断言 | [`add-production-trace-eval`](../openspec/archive/2026-10-28-add-production-trace-eval/proposal.md) |
-| 10-28 | **新旧事实冲突**：提取时 LLM 标 `conflicts_with`（不额外调用）、冲突进 `fact_conflicts` 队列、下一轮 `[需要确认的事]` 必选块、`resolve_profile_conflict` 工具 + Web API；用户明确陈述仍立即生效 | [`resolve-fact-conflicts`](../openspec/changes/resolve-fact-conflicts/proposal.md) |
+| 10-29 | **长会话修复 24h 观察**（10-28 20:20 → 10-29 20:20）：`facts` 丢弃 **0**；prompt 仅 1 次丢 `memories(361tok)`，`recent/life` 0；`[Compact]` **2 请求 / 2 完成**，0 skipped/failed/hold；2 次 SessionEnd 均 summary/facts/vector=ok（36.7s / 20.1s） | [fix-long-session-compaction tasks](../openspec/archive/2026-10-28-fix-long-session-compaction/tasks.md)；生产日志 10-29 |
+| 10-28 | **新旧事实冲突**：提取时 LLM 标 `conflicts_with`（不额外调用）、冲突进 `fact_conflicts` 队列、下一轮 `[需要确认的事]` 必选块、`resolve_profile_conflict` 工具 + Web API；用户明确陈述仍立即生效 | [`resolve-fact-conflicts`](../openspec/archive/2026-10-28-resolve-fact-conflicts/proposal.md) |
 | 10-28 | **长会话压缩调度**：10min/会话冷却、`skipped` 不暂停截断、facts required + 前 20 条（40 条会挤掉 recent/life/memories） | [`fix-long-session-compaction`](../openspec/archive/2026-10-28-fix-long-session-compaction/proposal.md) |
 | 10-26 | **预算默认值**：personalize 256→1024、session.summary 2048→4096 | [`apply-decisions-2026-10-26`](../openspec/archive/2026-10-26-apply-decisions-2026-10-26/proposal.md) |
 | 10-26 | **KI-27** `processed` 位掩码退役（含 compaction） | 同上 |
